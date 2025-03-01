@@ -59,7 +59,7 @@ SAMPLING_FREQUENCY = (
 )
 # For probe checks you may want to manually specify dates where recordings exist for all subjects
 # see also get_first_last_df()
-MANUAL_START_DATE = date(2024, 12, 11)  # None or date object such as date(1970,1,1)
+MANUAL_START_DATE = date(2022, 6, 23)  # None or date object such as date(1970,1,1)
 MANUAL_END_DATE = None  # None or date object such as date(2012,12,02)
 PROBE_LABELS = ["ProbeA", "ProbeB"]  # standard openephys probe labels for multi-probe data
 # %% Global Variables
@@ -826,12 +826,9 @@ def check_rec_probe(raw_rec, subject_ID, probe_label=None):
             raise print("WARNING: Locations not matching saved probe. \n See check_rec_probe() to specify next step.")
     except:
         # PLEASE SPECIFY overwrite  !!
-        overwrite = False  # if this happens we may want to overwrite with saved probe info:
-        if (readable_probe) and (overwrite == False):
-            print("Using readable probe information from recording")
-        else:
-            print("Loading probe from saved data.")
-            raw_rec = raw_rec.set_probe(Probe.from_dataframe(saved_probe), group_mode="by_shank")
+        print("Could not load probe from recording object")
+        print("Loading probe from saved data")
+        raw_rec = raw_rec.set_probe(Probe.from_dataframe(saved_probe), group_mode="by_shank")
 
     return raw_rec
 
