@@ -128,7 +128,12 @@ def get_optim_df():
                         continue
                     good_clusters = ks_labels[ks_labels.KSLabel == "good"]
                     qual_df = sps.pd.read_csv(session_path / "quality_metrics.htsv", sep="\t")
-                    single_units = sps.get_single_units(qual_df)
+                    single_units = sps.get_single_units(
+                        qual_df,
+                        firing_rate_thres=0.5,
+                        presence_ratio_thres=0.8,
+                        amplitude_median_thres=30,
+                    )
                     # save out info to dictionary
                     optim_info.append(
                         {
