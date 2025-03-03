@@ -53,7 +53,7 @@ def get_ephys_preprocessing_SLURM_script(
     RAM="64GB",
     time_limit="12:00:00",
     IBL_preprocessing=True,
-    kilosort_Ths=[13, 12],
+    kilosort_Ths=[9, 8],
     spikesort_path=sps.SPIKESORTING_PATH,  # parameters relevant for optimising kilosort.
     jobs_folder=JOBS_FOLDER,
     python_path=".",

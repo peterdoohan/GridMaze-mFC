@@ -45,6 +45,7 @@ from spikeinterface import qualitymetrics as qm
 from spikeinterface import exporters as sx
 from spikeinterface import qualitymetrics as sq
 
+
 # get probe data for cambridge neurotech probe
 from probeinterface.plotting import plot_probe
 from probeinterface import Probe, get_probe
@@ -135,7 +136,16 @@ def preprocess_ephys_session(
                 print("loading cached preprocessed data")
                 preprocessed_rec = si.load_extractor(preprocessed_path / "temp_preprocessed")
             print("running spikesorting")
-            sorter = run_kilosort4(preprocessed_rec, preprocessed_path, kilosort_Ths, IBL_preprocessing)
+            try:
+                sorter = run_kilosort4(preprocessed_rec, preprocessed_path, kilosort_Ths, IBL_preprocessing)
+            except ss.utils.misc.SpikeSortingError:
+                # KS can fail with multishank probes, recommended fix is to stack shanks vertically
+                print("Kilosort 4 failed, trying to stack shanks and retry")
+                stacked_shanks_rec = _stack_shanks(preprocessed_rec)
+                KS_path = preprocessed_path / "kilosort4"
+                if KS_path.exists():
+                    shutil.rmtree(KS_path)
+                sorter = run_kilosort4(stacked_shanks_rec, preprocessed_path, kilosort_Ths, IBL_preprocessing)
             print("Computing quality metrics...")
             quality_metrics_df = get_quality_metrics(
                 sorter, preprocessed_rec, preprocessed_path, save_cluster_reports=True
@@ -446,9 +456,10 @@ def run_kilosort4(preprocessed_rec, preprocessed_path, kilosort_Ths=[9, 8], IBL_
 
         # Set up parameters for kilosort
         sorter_params = ss.get_default_sorter_params("kilosort4")
-        # For optional changes to kilosort parameters
         sorter_params["Th_universal"] = kilosort_Ths[0]
         sorter_params["Th_learned"] = kilosort_Ths[1]
+        # troubleshoot params
+        sorter_params["batch_size"] = 100_000
         if IBL_preprocessing == True:
             sorter_params["do_CAR"] = False  # we perform IBL destriping instead using spikeinterface
         n_shanks = len(np.unique(preprocessed_rec.get_property("group")))
@@ -456,7 +467,7 @@ def run_kilosort4(preprocessed_rec, preprocessed_path, kilosort_Ths=[9, 8], IBL_
             sorter_params["nblocks"] = (
                 5  # Default is 1 (rigid), 5 is recommended for single shank neuropixel. Shouldn't have a big influence regardless.
             )
-
+        # sorter_params["do_CAR"] = True
         sorter = ss.run_sorter(
             "kilosort4",
             recording=preprocessed_rec,
@@ -474,6 +485,35 @@ def run_kilosort4(preprocessed_rec, preprocessed_path, kilosort_Ths=[9, 8], IBL_
             register_recording=preprocessed_rec,
         )
     return sorter
+
+
+# %% Sometimes KS4 fails with multishanks suggeseted fix: https://github.com/MouseLand/Kilosort/issues/617 is to stack shanks vertically
+
+
+def _stack_shanks(preprocessed_rec, vert_spacing=5):
+    """
+    sometimes KS4 fails with multishanks, Error:
+     " ValueError: Found array with 0 sample(s) (shape=(0, 61)) while a minimum of 1 is required by TruncatedSVD."
+    Suggeseted fix: https://github.com/MouseLand/Kilosort/issues/617 is to stack shanks vertically
+    and sort from that prove config - should make minimal difference to the sorted output
+    ---
+    vert_spacing: spacing between stacked shanks (um)
+    outputs preocessed_rec with overwritten probe obj that has shanks positioned vertically
+    """
+    prb = preprocessed_rec.get_probe()
+    probe_df = prb.to_dataframe()
+    probe_df["device_channel_indices"] = prb.device_channel_indices
+    shank_spacing = probe_df.groupby("shank_ids").x.mean().diff().mean()  # um
+    top_channel_height = probe_df.y.max()
+    n_shanks = len(probe_df.shank_ids.unique())
+    for i in range(n_shanks):
+        shank_mask = probe_df["shank_ids"] == f"{i}"
+        probe_df.loc[shank_mask, "x"] -= i * shank_spacing
+        probe_df.loc[shank_mask, "y"] += i * (top_channel_height + vert_spacing)
+    # probe_df is now has shanks vertically stacked
+    new_probe = Probe.from_dataframe(probe_df)
+    new_probe_rec = preprocessed_rec.set_probe(new_probe, group_mode="by_shank")
+    return new_probe_rec
 
 
 # %% _3. Spike sorting quality control via spikeinterface
@@ -680,7 +720,9 @@ def get_probe_recordings(subject_ID, datetime, ephys_path, spikesort_path=SPIKES
     if n_probes == 1:  # start with simple case
         preprocessed_paths.append(Path(spikesort_path) / subject_ID / datetime)
         stream_id = get_stream_id(ephys_path, data_type="AP")
-        raw_rec = se.read_openephys(ephys_path, stream_id=stream_id)  # stream_id="0" is assumed to be AP data
+        raw_rec = se.read_openephys(
+            ephys_path, stream_id=stream_id, block_index=0
+        )  # stream_id="0" is assumed to be AP data
         raw_rec = check_rec_probe(raw_rec, subject_ID)
         recordings.append(raw_rec)
 
@@ -695,7 +737,7 @@ def get_probe_recordings(subject_ID, datetime, ephys_path, spikesort_path=SPIKES
             ):  # renaming probes could happen at preprocessed -> processed data stage.
                 preprocessed_paths.append(Path(spikesort_path) / subject_ID / datetime / f"{probe}")
                 stream_id = get_stream_id(ephys_path, probe_label=probe)
-                raw_rec = se.read_openephys(ephys_path, stream_id=stream_id)
+                raw_rec = se.read_openephys(ephys_path, stream_id=stream_id, block_index=0)
                 # TODO: may need to split recordings in a different way
                 # split by total number of channels
                 total_channels = raw_rec.get_num_channels()
@@ -712,7 +754,9 @@ def get_probe_recordings(subject_ID, datetime, ephys_path, spikesort_path=SPIKES
             # assume there's a unique stream id for each recording, as with neuropixel 2.0 dual probes
             for probe in PROBE_LABELS:
                 preprocessed_paths.append(Path(spikesort_path) / subject_ID / datetime / f"{probe}")
-                probe_rec = se.read_openephys(ephys_path, stream_id=get_stream_id(ephys_path, probe_label=probe))
+                probe_rec = se.read_openephys(
+                    ephys_path, stream_id=get_stream_id(ephys_path, probe_label=probe), block_index=0
+                )
                 probe_rec = check_rec_probe(probe_rec, subject_ID, probe_label=probe)
                 recordings.append(probe_rec)
     else:
@@ -773,7 +817,7 @@ def get_stream_id(ephys_path, data_type=None, probe_label=None):
         subject_str = Path(ephys_path).parts[-2].replace("_", "")  # open_ephys doesn't allow underscores.
         try:
             for i in range(8):  # iterate over some number of files
-                rec = se.read_openephys(ephys_path, stream_id=f"{i}")
+                rec = se.read_openephys(ephys_path, stream_id=f"{i}", block_index=0)
                 subject_match = subject_str == rec.get_annotation("probes_info")[0]["name"]
                 data_match = True if f"{data_type}" in rec.channel_ids[0] else False
                 if subject_match and data_match:
@@ -786,7 +830,7 @@ def get_stream_id(ephys_path, data_type=None, probe_label=None):
     if probe_label is not None:
         try:
             for i in range(8):  # iterate over some number of possible stream_id's
-                rec = se.read_openephys(ephys_path, stream_id=f"{i}")
+                rec = se.read_openephys(ephys_path, stream_id=f"{i}", block_index=0)
                 probe_match = probe_label == rec.get_annotation("probes_info")[0]["name"]
                 if probe_match:
                     stream_id = i  # we found the right stream_id!
@@ -869,7 +913,7 @@ def save_rec_probe(
     if manual_ephys_path is not None:
         ephys_path = manual_ephys_path
     stream_id = get_stream_id(ephys_path, probe_label=probe_label)
-    raw_rec = se.read_openephys(ephys_path, stream_id=stream_id)
+    raw_rec = se.read_openephys(ephys_path, stream_id=stream_id, block_index=0)
     try:
         probe = raw_rec.get_probe()
         print("Succesfully retrieved probe from recording")
@@ -914,7 +958,7 @@ def get_loc_err():
     property_error = []
     for each_session in ephys_paths_df.ephys_path:
         try:
-            raw_rec = se.read_openephys(each_session, stream_id="0")
+            raw_rec = se.read_openephys(each_session, stream_id="0", block_index=0)
             checked_location = location = np.load(SPIKESORTING_PATH / "probe_params" / "location.npy")
             if raw_rec.get_property("inter_sample_shift") is None:
                 property_error.append("missing")
