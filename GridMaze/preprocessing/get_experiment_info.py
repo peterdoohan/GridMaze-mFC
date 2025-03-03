@@ -379,32 +379,32 @@ IGNORE_SESSIONS = pd.DataFrame(
 # depths stable between date entries
 PROBE_DEPTH_DF = pd.DataFrame(
     [
-        {"subject": "m2", "date": "2022-06-20", "probe_depth": 1150, "probe_sample": "A"},
-        {"subject": "m3", "date": "2022-06-20", "probe_depth": 1200, "probe_sample": "A"},
-        {"subject": "m4", "date": "2022-06-20", "probe_depth": 1150, "probe_sample": "A"},
-        {"subject": "m6", "date": "2022-06-20", "probe_depth": 1000, "probe_sample": "A"},
-        {"subject": "m7", "date": "2022-06-20", "probe_depth": 1150, "probe_sample": "A"},
-        {"subject": "m8", "date": "2022-06-20", "probe_depth": 1150, "probe_sample": "A"},
-        {"subject": "m2", "date": "2022-07-02", "probe_depth": 1300, "probe_sample": "B"},
-        {"subject": "m3", "date": "2022-07-02", "probe_depth": 1350, "probe_sample": "B"},
-        {"subject": "m4", "date": "2022-07-02", "probe_depth": 1300, "probe_sample": "B"},
-        {"subject": "m6", "date": "2022-07-02", "probe_depth": 1150, "probe_sample": "B"},
-        {"subject": "m7", "date": "2022-07-02", "probe_depth": 1300, "probe_sample": "B"},
-        {"subject": "m8", "date": "2022-07-02", "probe_depth": 1300, "probe_sample": "B"},
-        {"subject": "m2", "date": "2022-07-14", "probe_depth": 1450, "probe_sample": "C"},
-        {"subject": "m3", "date": "2022-07-14", "probe_depth": 1500, "probe_sample": "C"},
-        {"subject": "m4", "date": "2022-07-14", "probe_depth": 1450, "probe_sample": "C"},
-        {"subject": "m6", "date": "2022-07-14", "probe_depth": 1300, "probe_sample": "C"},
-        {"subject": "m7", "date": "2022-07-14", "probe_depth": 1450, "probe_sample": "C"},
-        {"subject": "m8", "date": "2022-07-14", "probe_depth": 1400, "probe_sample": "C"},
-        {"subject": "m4", "date": "2022-07-21", "probe_depth": 1000, "probe_sample": "D"},  # retracted
-        {"subject": "m2", "date": "2022-07-26", "probe_depth": 1600, "probe_sample": "D"},
-        {"subject": "m3", "date": "2022-07-26", "probe_depth": 1650, "probe_sample": "D"},
-        {"subject": "m4", "date": "2022-07-26", "probe_depth": 1150, "probe_sample": "E"},
-        {"subject": "m6", "date": "2022-07-26", "probe_depth": 1450, "probe_sample": "D"},
-        {"subject": "m7", "date": "2022-07-26", "probe_depth": 1600, "probe_sample": "D"},
-        {"subject": "m8", "date": "2022-07-26", "probe_depth": 1550, "probe_sample": "D"},
-        {"subject": "m8", "date": "2022-07-28", "probe_depth": 1350, "probe_sample": "E"},  # retracted
+        {"subject": "m2", "date": "2022-06-20", "probe_depth": 1150, "tissue_sample": "A"},
+        {"subject": "m3", "date": "2022-06-20", "probe_depth": 1200, "tissue_sample": "A"},
+        {"subject": "m4", "date": "2022-06-20", "probe_depth": 1150, "tissue_sample": "A"},
+        {"subject": "m6", "date": "2022-06-20", "probe_depth": 1000, "tissue_sample": "A"},
+        {"subject": "m7", "date": "2022-06-20", "probe_depth": 1150, "tissue_sample": "A"},
+        {"subject": "m8", "date": "2022-06-20", "probe_depth": 1150, "tissue_sample": "A"},
+        {"subject": "m2", "date": "2022-07-02", "probe_depth": 1300, "tissue_sample": "B"},
+        {"subject": "m3", "date": "2022-07-02", "probe_depth": 1350, "tissue_sample": "B"},
+        {"subject": "m4", "date": "2022-07-02", "probe_depth": 1300, "tissue_sample": "B"},
+        {"subject": "m6", "date": "2022-07-02", "probe_depth": 1150, "tissue_sample": "B"},
+        {"subject": "m7", "date": "2022-07-02", "probe_depth": 1300, "tissue_sample": "B"},
+        {"subject": "m8", "date": "2022-07-02", "probe_depth": 1300, "tissue_sample": "B"},
+        {"subject": "m2", "date": "2022-07-14", "probe_depth": 1450, "tissue_sample": "C"},
+        {"subject": "m3", "date": "2022-07-14", "probe_depth": 1500, "tissue_sample": "C"},
+        {"subject": "m4", "date": "2022-07-14", "probe_depth": 1450, "tissue_sample": "C"},
+        {"subject": "m6", "date": "2022-07-14", "probe_depth": 1300, "tissue_sample": "C"},
+        {"subject": "m7", "date": "2022-07-14", "probe_depth": 1450, "tissue_sample": "C"},
+        {"subject": "m8", "date": "2022-07-14", "probe_depth": 1400, "tissue_sample": "C"},
+        {"subject": "m4", "date": "2022-07-21", "probe_depth": 1000, "tissue_sample": "D"},  # retracted
+        {"subject": "m2", "date": "2022-07-26", "probe_depth": 1600, "tissue_sample": "D"},
+        {"subject": "m3", "date": "2022-07-26", "probe_depth": 1650, "tissue_sample": "D"},
+        {"subject": "m4", "date": "2022-07-26", "probe_depth": 1150, "tissue_sample": "E"},
+        {"subject": "m6", "date": "2022-07-26", "probe_depth": 1450, "tissue_sample": "D"},
+        {"subject": "m7", "date": "2022-07-26", "probe_depth": 1600, "tissue_sample": "D"},
+        {"subject": "m8", "date": "2022-07-26", "probe_depth": 1550, "tissue_sample": "D"},
+        {"subject": "m8", "date": "2022-07-28", "probe_depth": 1350, "tissue_sample": "E"},  # retracted
     ]
 )
 # %% Main Function
