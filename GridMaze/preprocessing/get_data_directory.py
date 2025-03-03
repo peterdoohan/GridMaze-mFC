@@ -396,55 +396,7 @@ def _get_spikesorting_paths_df():
         )
     return pd.DataFrame(paths_info)
 
-#%% Kilosort
 
-def add_kilosort_paths(data_directory):
-    """
-    Adds Kilosort file paths to each session in the init_data_directory.
-    Note data_directory must have ephys paths already added (output from add_ephys_paths function).
-    """
-    kilosort_paths_df = _get_kilosort_paths_df()
-    sorted_kilosort_paths = []
-    for row in data_directory.itertuples():
-        # easiest to match ks files to the ephys files they were processed from (no need to match session types)
-        subject_mask = kilosort_paths_df.subject_ID == row.subject_ID
-        date_mask = kilosort_paths_df.datetime == datetime.strptime(row.ephys_data_path.name, '%Y-%m-%d_%H-%M-%S')
-        filtered_kilosort_path = kilosort_paths_df[subject_mask & date_mask]
-        if not len(filtered_kilosort_path) == 1:
-            if row.session_type == "rest":
-                # rest sessions currently not spikesorted
-                sorted_kilosort_paths.append(np.nan)
-                continue
-            else:
-                print(f"No unique kilosort file found for {row}")
-                sorted_kilosort_paths.append(np.nan)
-                continue
-        sorted_kilosort_paths.append(filtered_kilosort_path.kilosort_folder.values[0])
-    return sorted_kilosort_paths
-
-def _get_kilosort_paths_df():
-    """
-    Extracts subject ID and datetime from kilosor sorter output file paths for all spikesorted sessions, returned as a DataFrame
-    """
-    all_kilosort_paths = [x for p in KILOSORT_PATH.iterdir() if p.is_dir() for x in p.iterdir() if x.is_dir() and not x.name =="ignore"]
-    kilosort_info = []
-    for filepath in all_kilosort_paths:
-        subject_ID = filepath.parts[-2]
-        dt = datetime.strptime('_'.join(filepath.name.split('_')[:2]), '%Y-%m-%d_%H-%M-%S')
-        if dt.date() < EXPERIMENT_START_DATE:
-            # some ephys recordings were made before the start of the experiment
-            # might become useful for control analyses but not processed here
-            continue
-        if _ignore_session(subject_ID, dt, reason="reran session in afternoon"):
-            # only sessions rerun in the afternoon will have multiple kilosort folders
-            continue
-        else:
-            kilosort_info.append({
-                "subject_ID": subject_ID,
-                "datetime": dt,
-                "kilosort_folder": filepath / "Phy"
-            })
-    return pd.DataFrame(kilosort_info)
 
 #%% Handling ignored sessions & processing exceptions
 
