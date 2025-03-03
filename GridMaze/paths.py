@@ -17,12 +17,28 @@ else:
             "Raw data directory not found. Check Ceph drive is mounted if working locally. Check relative path is available if working on HPC."
         )
 
+RAW_DATA_PATH = Path("../data/raw_data")
+
 EXPERIMENT_INFO_PATH = Path("../data/experiment_info")
 
 PROCESSED_DATA_PATH = Path("../data/processed_data")
+
+PREPROCESSED_DATA_PATH = Path("../data/preprocessed_data")
 
 ANALYSIS_DATA_PATH = Path("../data/analysis_data")
 
 ANALYSIS_INFO_PATH = Path("../data/analysis_data/analysis_info")
 
 RESULTS_PATH = Path("../results")
+
+#%% Subpaths
+
+PYCONTROL_PATH = RAW_DATA_PATH / "pycontrol"
+
+EPHYS_PATH = RAW_DATA_PATH / "ephys"
+
+VIDEO_PATH = RAW_DATA_PATH / "video"
+
+DLC_PATH = PREPROCESSED_DATA_PATH / "DeepLabCut"
+
+SPIKESORTING_PATH = PREPROCESSED_DATA_PATH / "spikesorting"

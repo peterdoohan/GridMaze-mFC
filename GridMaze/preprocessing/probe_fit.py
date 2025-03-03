@@ -30,7 +30,7 @@ import vedo
 vedo.settings.default_backend = "vtk"
 
 # %% Globs
-from GridMaze.paths import PROCESSED_DATA_PATH, PREPROCESSED_DATA_PATH, EXPERIMENT_INFO_PATH
+from GridMaze.paths import PREPROCESSED_DATA_PATH, EXPERIMENT_INFO_PATH
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
