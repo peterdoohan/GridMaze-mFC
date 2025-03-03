@@ -3,15 +3,17 @@ Library to organise experiment datafiles. Generates a session data directory tha
 and preprocessed data files for a given session. Rows of this data frame are passed to functions in the
 GridMaze preprocessing module to generate the standardised processed data file types.
 """
-#%% Imports
+
+# %% Imports
 import json
 import numpy as np
 import pandas as pd
 from datetime import datetime, date, timedelta
-from pathlib import Path 
+from pathlib import Path
 from GridMaze.preprocessing.pycontrol_data_import import session_dataframe
 from GridMaze.preprocessing.get_frames_dfs import open_dlc_output_as_df
-#%% Global Variables
+
+# %% Global Variables
 
 from GridMaze.paths import PYCONTROL_PATH, EPHYS_PATH, VIDEO_PATH, DLC_PATH, SPIKESORTING_PATH, EXPERIMENT_INFO_PATH
 
@@ -19,17 +21,19 @@ with open(EXPERIMENT_INFO_PATH / "maze_configs.json", "r") as infile:
     MAZE_CONFIGS = json.load(infile)
 
 # define experiment start date to ignore ephys recordings before day 1 on big maze
-EXPERIMENT_START_DATE = date.fromisoformat(MAZE_CONFIGS['maze_1']['start'])
+EXPERIMENT_START_DATE = date.fromisoformat(MAZE_CONFIGS["maze_1"]["start"])
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as infile:
     SUBJECT_IDS = json.load(infile)
 
-SESSION_TYPES = ["maze", "rest"] # recorded in that order
+SESSION_TYPES = ["maze", "rest"]  # recorded in that order
 
 IGNORE_SESSIONS = pd.read_csv(EXPERIMENT_INFO_PATH / "ignore_sessions.htsv", sep="\t")
 
 FRAME_RATE = 60
-#%% 
+
+
+# %%
 def get_sessions_data_directory(overwrite=False):
     """
     Returns a dataframe with rows corresponding to each session recorded in the experiment,
@@ -40,30 +44,37 @@ def get_sessions_data_directory(overwrite=False):
     Rows of this dataframe are passed to functions in the GridMaze preprocessing module to generate the
     standardised processed data file types.
     """
-    # initialise data directory from experiment info (see global variables)
-    data_directory = init_data_directory()
-    # add pycontrol data
-    pycontrol_paths, pycontrol_datetimes = add_pycontrol_paths(data_directory)
-    data_directory["pycontrol_path"] = pycontrol_paths
-    data_directory["pycontrol_datetime"] = pycontrol_datetimes
-    data_directory["pycontrol_duration"] = data_directory.pycontrol_path.apply(get_pycontrol_duration)
-    # add video data
-    video_paths, sync_paths = add_video_paths(data_directory)
-    data_directory["video_path"] = video_paths
-    data_directory["video_sync_path"] = sync_paths
-    # add dlc data
-    data_directory["dlc_path"] = add_dlc_paths(data_directory)
-    data_directory["video_duration"] = data_directory.dlc_path.apply(get_video_duration)
-    # add ephys data
-    ephys_data_paths, ephys_sync_paths, ephys_datetimes = add_ephys_paths(data_directory)
-    data_directory["ephys_data_path"] = ephys_data_paths
-    data_directory["ephys_sync_path"] = ephys_sync_paths
-    data_directory["ephys_datetime"] = ephys_datetimes
-    # add spikesorting data
-    spikesorting_paths, spikesorting_completed = add_spikesorting_paths(data_directory)
-    data_directory["spikesorting_path"] = spikesorting_paths
-    data_directory["spikesorting_complete"] = spikesorting_completed
+    data_directory_path = EXPERIMENT_INFO_PATH / "data_directory.tsv"
+    if not data_directory_path.exists() or overwrite:
+        # initialise data directory from experiment info (see global variables)
+        data_directory = init_data_directory()
+        # add pycontrol data
+        pycontrol_paths, pycontrol_datetimes = add_pycontrol_paths(data_directory)
+        data_directory["pycontrol_path"] = pycontrol_paths
+        data_directory["pycontrol_datetime"] = pycontrol_datetimes
+        data_directory["pycontrol_duration"] = data_directory.pycontrol_path.apply(get_pycontrol_duration)
+        # add video data
+        video_paths, sync_paths = add_video_paths(data_directory)
+        data_directory["video_path"] = video_paths
+        data_directory["video_sync_path"] = sync_paths
+        # add dlc data
+        data_directory["dlc_path"] = add_dlc_paths(data_directory)
+        data_directory["video_duration"] = data_directory.dlc_path.apply(get_video_duration)
+        # add ephys data
+        ephys_data_paths, ephys_sync_paths, ephys_datetimes = add_ephys_paths(data_directory)
+        data_directory["ephys_data_path"] = ephys_data_paths
+        data_directory["ephys_sync_path"] = ephys_sync_paths
+        data_directory["ephys_datetime"] = ephys_datetimes
+        # add spikesorting data
+        spikesorting_paths, spikesorting_completed = add_spikesorting_paths(data_directory)
+        data_directory["spikesorting_path"] = spikesorting_paths
+        data_directory["spikesorting_complete"] = spikesorting_completed
+        # save
+        data_directory.to_csv(data_directory_path, index=False, sep="\t")
+    else:  # load from disk
+        data_directory = pd.read_csv(data_directory_path, sep="\t")
     return data_directory
+
 
 def init_data_directory():
     """
@@ -72,34 +83,34 @@ def init_data_directory():
     """
     session_info = []
     for maze_name in MAZE_CONFIGS.keys():
-        start_date = date.fromisoformat(MAZE_CONFIGS[maze_name]['start'])
-        end_date = date.fromisoformat(MAZE_CONFIGS[maze_name]['end'])
+        start_date = date.fromisoformat(MAZE_CONFIGS[maze_name]["start"])
+        end_date = date.fromisoformat(MAZE_CONFIGS[maze_name]["end"])
         d = start_date
         while d <= end_date:
             for subject_ID in SUBJECT_IDS:
                 for session_type in SESSION_TYPES:
-                    session_info.append({
-                        "maze_name": maze_name,
-                        "subject_ID": subject_ID,
-                        "date": d,
-                        "session_type": session_type
-                    })
-            d += timedelta(days=1)   
-    return pd.DataFrame(session_info)   
+                    session_info.append(
+                        {"maze_name": maze_name, "subject_ID": subject_ID, "date": d, "session_type": session_type}
+                    )
+            d += timedelta(days=1)
+    return pd.DataFrame(session_info)
 
-#%% Pycontrol
+
+# %% Pycontrol
+
 
 def get_pycontrol_duration(pycontrol_path):
     """Returns duration of pycontrol session in mins"""
     if pycontrol_path is np.nan:
         return np.nan
     else:
-        return session_dataframe(pycontrol_path).time.iloc[-1]/(60*1000)
+        return session_dataframe(pycontrol_path).time.iloc[-1] / (60 * 1000)
+
 
 def add_pycontrol_paths(init_data_directory):
     """
     Matches pycontrol files to each session (row) of the init_data_directory.
-    Returns a list of paths ordered by the rows of the init_data_directory. Note 'rest' 
+    Returns a list of paths ordered by the rows of the init_data_directory. Note 'rest'
     sessions will not have pycontrol files, values will be np.nan.
 
     Note newer version of pycontrol output files in a .tsv format whereas older versions
@@ -123,6 +134,7 @@ def add_pycontrol_paths(init_data_directory):
             sorted_pycontrol_datetimes.append(filted_pycontrol_path.datetime)
     return sorted_pycontrol_paths, sorted_pycontrol_datetimes
 
+
 def _get_pycontrol_paths_df():
     """Extracts subject ID and datetime from pycontrol file names and returns a DataFrame"""
     all_pycontrol_paths = [p for p in PYCONTROL_PATH.glob("*.txt") if not p.name.startswith(".")]
@@ -130,20 +142,18 @@ def _get_pycontrol_paths_df():
     for filepath in all_pycontrol_paths:
         filename = filepath.name
         subject_ID = filename.split("-")[0]
-        dt = datetime.strptime(filename.split(".")[0].split("-",1)[1], '%Y-%m-%d-%H%M%S')
+        dt = datetime.strptime(filename.split(".")[0].split("-", 1)[1], "%Y-%m-%d-%H%M%S")
         if _ignore_session(subject_ID, dt, reason="any"):
             continue
         else:
-            pycontrol_info.append({
-                "subject_ID": subject_ID,
-                "datetime": dt,
-                "pycontrol_filepath": filepath
-            })
+            pycontrol_info.append({"subject_ID": subject_ID, "datetime": dt, "pycontrol_filepath": filepath})
     return pd.DataFrame(pycontrol_info)
 
-#%% Video
 
-def add_video_paths(init_data_directory):    
+# %% Video
+
+
+def add_video_paths(init_data_directory):
     """
     Matches video & vidoe sync files to each session (row) of the init_data_directory.
     """
@@ -169,10 +179,11 @@ def add_video_paths(init_data_directory):
         sorted_datetimes.append(filtered_video_path.datetime.values[0])
     return sorted_video_paths, sorted_sync_paths
 
+
 def _get_video_paths_df():
     """
     Extracts subject ID and datetime from video file names (.mp4) and video sync file names (.csv)
-    and returns a DataFrame the video file paths and video sync file paths associated with each 
+    and returns a DataFrame the video file paths and video sync file paths associated with each
     session (one subject, one datetime).
     Note session in ignore session that were rerun in the afternoon will have multiple video files and must
     be ignored.
@@ -183,15 +194,11 @@ def _get_video_paths_df():
     for filepath in all_video_paths:
         filename = filepath.name
         subject_ID = filename.split("_")[0]
-        dt = datetime.strptime(filename.split(".")[0].split("_")[1], '%Y-%m-%d-%H%M%S')
+        dt = datetime.strptime(filename.split(".")[0].split("_")[1], "%Y-%m-%d-%H%M%S")
         if _ignore_session(subject_ID, dt, reason="reran session in afternoon", window=timedelta(seconds=20)):
             continue
         else:
-            video_info.append({
-                "subject_ID": subject_ID,
-                "datetime": dt,
-                "video_filepath": filepath
-            })
+            video_info.append({"subject_ID": subject_ID, "datetime": dt, "video_filepath": filepath})
     video_df = pd.DataFrame(video_info)
 
     # process sync files
@@ -200,21 +207,19 @@ def _get_video_paths_df():
     for filepath in all_sync_paths:
         filename = filepath.name
         subject_ID = filename.split("_")[0]
-        dt =datetime.strptime(filename.split(".")[0].split("_",-1)[-1], '%Y-%m-%d-%H%M%S')
+        dt = datetime.strptime(filename.split(".")[0].split("_", -1)[-1], "%Y-%m-%d-%H%M%S")
         if _ignore_session(subject_ID, dt, reason="reran session in afternoon", window=timedelta(seconds=20)):
             continue
         else:
-            sync_info.append({
-                "subject_ID": subject_ID,
-                "datetime": dt,
-                "video_sync_filepath": filepath
-            })
+            sync_info.append({"subject_ID": subject_ID, "datetime": dt, "video_sync_filepath": filepath})
     sync_df = pd.DataFrame(sync_info)
 
     # merge video and sync dataframes
     return video_df.merge(sync_df, on=["subject_ID", "datetime"], how="outer")
 
-#%% Ephys
+
+# %% Ephys
+
 
 def add_ephys_paths(init_data_directory):
     """
@@ -238,6 +243,7 @@ def add_ephys_paths(init_data_directory):
         sorted_ephys_datetimes.append(filtered_ephys_path.datetime.values[0])
     return sorted_ephys_data_paths, sorted_ephys_sync_paths, sorted_ephys_datetimes
 
+
 def _get_ephys_paths_df():
     """
     Extracts the subject_ID and datetime from ephys information, with the ephys data folder and ephys sync file path.
@@ -245,15 +251,17 @@ def _get_ephys_paths_df():
     to the timestamps.npy file in the ephys data folder that holds the sync pulses for aligning data. Note the function also
     includes some logic to interate through each base ephys folder to find the correct Record node subfolder, either:
     "Record Node 121" or "Record Node 122" (a silly feature of how Open Ephys recorded the data from rest or maze).
-    Function also assigns session type to each session (maze or rest) based on the order they were conducted. See 
+    Function also assigns session type to each session (maze or rest) based on the order they were conducted. See
     _get_session_type_order function for more details about execptions are handeled.
     """
-    internal_sync_filepath="experiment1/recording1/events/Rhythm_FPGA-109.0/TTL_1/timestamps.npy"
-    all_ephys_paths = [x for p in EPHYS_PATH.iterdir() if p.is_dir() for x in p.iterdir() if x.is_dir() and not x.name == "ignore"]
+    internal_sync_filepath = "experiment1/recording1/events/Rhythm_FPGA-109.0/TTL_1/timestamps.npy"
+    all_ephys_paths = [
+        x for p in EPHYS_PATH.iterdir() if p.is_dir() for x in p.iterdir() if x.is_dir() and not x.name == "ignore"
+    ]
     ephys_info = []
     for filepath in all_ephys_paths:
         subject_ID = filepath.parts[-2]
-        dt = datetime.strptime(filepath.name, '%Y-%m-%d_%H-%M-%S')
+        dt = datetime.strptime(filepath.name, "%Y-%m-%d_%H-%M-%S")
         if dt.date() < EXPERIMENT_START_DATE:
             # some ephys recordings were made before the start of the experiment
             # might become useful for control analyses but not processed here
@@ -263,12 +271,15 @@ def _get_ephys_paths_df():
             # sessions where pycontrol was restarted will have just one assoicated ephys file
             continue
         else:
-            ephys_info.append({
-                "subject_ID": subject_ID,
-                "datetime": dt,
-                "ephys_data_folder": filepath,
-                "ephys_sync_filepath": list(filepath.iterdir())[0] / internal_sync_filepath #first interate through to the folder rocord node then add internal filepath
-            })
+            ephys_info.append(
+                {
+                    "subject_ID": subject_ID,
+                    "datetime": dt,
+                    "ephys_data_folder": filepath,
+                    "ephys_sync_filepath": list(filepath.iterdir())[0]
+                    / internal_sync_filepath,  # first interate through to the folder rocord node then add internal filepath
+                }
+            )
     ephys_paths_df = pd.DataFrame(ephys_info)
     # assign sessions as maze or rest, knowing they were conducted in that order
     ephys_paths_df["session_type"] = None
@@ -276,7 +287,9 @@ def _get_ephys_paths_df():
     all_dates = ephys_paths_df.datetime.apply(lambda x: x.date()).unique()
     for subject_ID in all_subject_IDs:
         for d in all_dates:
-            filtered_paths_df = ephys_paths_df[(ephys_paths_df.subject_ID == subject_ID) & (ephys_paths_df.datetime.apply(lambda x: x.date()) == d)]
+            filtered_paths_df = ephys_paths_df[
+                (ephys_paths_df.subject_ID == subject_ID) & (ephys_paths_df.datetime.apply(lambda x: x.date()) == d)
+            ]
             filtered_paths_df = filtered_paths_df.sort_values("datetime")
             if not len(filtered_paths_df) == 2:
                 raise FileNotFoundError(f"Expected 2 ephys files for {subject_ID} {d}, got {len(filtered_paths_df)}")
@@ -288,8 +301,9 @@ def _get_ephys_paths_df():
     return ephys_paths_df
 
 
-#%% DeepLabCut
-    
+# %% DeepLabCut
+
+
 def get_video_duration(dlc_path):
     """
     Returns video duration in mins by reading DLC file
@@ -300,7 +314,7 @@ def get_video_duration(dlc_path):
     else:
         with open(dlc_path, "rb") as f:
             rows = sum(chunk.count(b"\n") for chunk in iter(lambda: f.read(1024 * 1024), b""))
-        return (rows-1)/FRAME_RATE/60 # mins
+        return (rows - 1) / FRAME_RATE / 60  # mins
 
 
 def add_dlc_paths(init_data_directory):
@@ -322,6 +336,7 @@ def add_dlc_paths(init_data_directory):
         sorted_dlc_paths.append(filtered_dlc_path.dlc_filepath.values[0])
     return sorted_dlc_paths
 
+
 def _get_dlc_paths_df():
     """
     Extracts subject ID and datetime from DeepLabCut file names and returns a DataFrame
@@ -331,20 +346,17 @@ def _get_dlc_paths_df():
     for filepath in all_dlc_paths:
         filename = filepath.name
         subject_ID = filename.split("_")[0]
-        dt = datetime.strptime(filename.split('_')[1].split('DLC')[0], '%Y-%m-%d-%H%M%S')
+        dt = datetime.strptime(filename.split("_")[1].split("DLC")[0], "%Y-%m-%d-%H%M%S")
         if _ignore_session(subject_ID, dt, reason="reran session in afternoon"):
             # sessions where pycontrol was restarted video as not, therefore no need to ignore
             continue
         else:
-            dlc_info.append({
-                "subject_ID": subject_ID,
-                "datetime": dt,
-                "dlc_filepath": filepath
-            })
+            dlc_info.append({"subject_ID": subject_ID, "datetime": dt, "dlc_filepath": filepath})
     return pd.DataFrame(dlc_info)
 
 
-#%% updates spikesorting paths
+# %% updates spikesorting paths
+
 
 def add_spikesorting_paths(data_directory):
     """
@@ -400,8 +412,8 @@ def _get_spikesorting_paths_df():
     return pd.DataFrame(paths_info)
 
 
+# %% Handling ignored sessions & processing exceptions
 
-#%% Handling ignored sessions & processing exceptions
 
 def _ignore_session(subject_ID, date_time, reason="any", window=timedelta(minutes=1)):
     """
@@ -418,8 +430,13 @@ def _ignore_session(subject_ID, date_time, reason="any", window=timedelta(minute
     datetime_mask = IGNORE_SESSIONS.datetime.apply(lambda x: (abs(datetime.fromisoformat(x) - date_time)) < window)
     if not any(datetime_mask):
         return False
-    reason_mask = IGNORE_SESSIONS.reason == reason if reason in IGNORE_SESSIONS.reason.values else np.ones(len(IGNORE_SESSIONS), dtype=bool)
+    reason_mask = (
+        IGNORE_SESSIONS.reason == reason
+        if reason in IGNORE_SESSIONS.reason.values
+        else np.ones(len(IGNORE_SESSIONS), dtype=bool)
+    )
     return any(subject_mask & datetime_mask & reason_mask)
+
 
 def _get_session_type_order(filtered_paths_df):
     """
@@ -450,4 +467,3 @@ def _get_session_type_order(filtered_paths_df):
         return ["rest", "maze"]
     else:
         return ["maze", "rest"]
-
