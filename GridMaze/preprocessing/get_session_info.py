@@ -46,7 +46,7 @@ def get_rest_session_info(session_dir):
         "session_type": "rest",
         "session_date": session_dir.date.isoformat(),
         "experimental_day": (session_dir.date - EXPERIMENT_START_DATE).days + 1,
-        "maze": session_dir.maze_name,
+        "maze_name": session_dir.maze_name,
         "day_on_maze": _get_day_on_maze(session_dir.maze_name, session_dir.date),
         "probe_depth": probe_depth,
         "tissue_sample": tissue_sample,
