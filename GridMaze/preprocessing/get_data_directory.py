@@ -53,7 +53,7 @@ def get_sessions_data_directory(overwrite=False):
     data_directory["video_sync_path"] = sync_paths
     # add dlc data
     data_directory["dlc_path"] = add_dlc_paths(data_directory)
-    data_directory["video_duration"] = data_directory.video_path.apply(get_video_duration)
+    data_directory["video_duration"] = data_directory.dlc_path.apply(get_video_duration)
     # add ephys data
     ephys_data_paths, ephys_sync_paths, ephys_datetimes = add_ephys_paths(data_directory)
     data_directory["ephys_data_path"] = ephys_data_paths
@@ -289,6 +289,7 @@ def _get_ephys_paths_df():
 
 
 #%% DeepLabCut
+    
 def get_video_duration(dlc_path):
     """
     Returns video duration in mins by reading DLC file
@@ -297,7 +298,9 @@ def get_video_duration(dlc_path):
     if dlc_path is np.nan:
         return np.nan
     else:
-        return open_dlc_output_as_df(dlc_path).index[-1]/FRAME_RATE/60
+        with open(dlc_path, "rb") as f:
+            rows = sum(chunk.count(b"\n") for chunk in iter(lambda: f.read(1024 * 1024), b""))
+        return (rows-1)/FRAME_RATE/60 # mins
 
 
 def add_dlc_paths(init_data_directory):
