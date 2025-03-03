@@ -1,4 +1,5 @@
 """ Creates .json file with experiment info """
+
 # %% Imports
 import json
 import pandas as pd
@@ -10,7 +11,7 @@ EXPERIMENT_INFO_PATH = Path("../data/experiment_info")
 if not EXPERIMENT_INFO_PATH.exists():
     EXPERIMENT_INFO_PATH.mkdir()
 
-#%% Define experiment info
+# %% Define experiment info
 
 SUBJECT_IDS = ["m2", "m3", "m4", "m6", "m7", "m8"]
 
@@ -278,6 +279,7 @@ MAZE_DAY2GOALS = {
     },
 }
 
+
 def get_maze_day2date():
     exp_dates = {}
     for maze_name in MAZE_CONFIGS.keys():
@@ -293,16 +295,17 @@ def get_maze_day2date():
         exp_dates[maze_name] = day2date
     return exp_dates
 
+
 MAZE_CONFIGS = {
     "maze_1": {
-        "start": "2022-06-23", #isoformat
+        "start": "2022-06-23",  # isoformat
         "end": "2022-07-05",
         "structure": MAZE_1_STRUCTURE,
         "goal_sets": GOAL_SETS,
     },
     "maze_2": {
         "start": "2022-07-07",
-        "end": "2022-07-17", 
+        "end": "2022-07-17",
         "structure": MAZE_2_STRUCTURE,
         "goal_sets": GOAL_SETS,
     },
@@ -315,7 +318,7 @@ MAZE_CONFIGS = {
 }
 
 
-MAZE_MEASUREMENTS = { # physical detials of the maze apparatus
+MAZE_MEASUREMENTS = {  # physical detials of the maze apparatus
     "maze_node_dimensions": (7, 7),
     "lower_left_node_cartesian_center": (0.15, 0.15),  # meters
     "distance_between_node_centers": 0.18,  # meters
@@ -323,24 +326,87 @@ MAZE_MEASUREMENTS = { # physical detials of the maze apparatus
 }  # meters
 
 ROOM2GOALS = {
-        "top_left": ["A6", "B5", "B6", "C5", "C7", "D7"],
-        "top_right": ["E4", "E5", "E6", "F4", "F7", "G4", "G7"],
-        "bottom_right": ["D2", "E1", "E3", "F2", "G1"],
-        "bottom_left": ["A2", "A3", "B4", "C1", "C3", "D3"],
-    }
+    "top_left": ["A6", "B5", "B6", "C5", "C7", "D7"],
+    "top_right": ["E4", "E5", "E6", "F4", "F7", "G4", "G7"],
+    "bottom_right": ["D2", "E1", "E3", "F2", "G1"],
+    "bottom_left": ["A2", "A3", "B4", "C1", "C3", "D3"],
+}
 
-IGNORE_SESSIONS = pd.DataFrame([
-    {"subject": "m3","datetime": "2022-07-28T11:45:50", "session_type": "maze", "reason": "restarted pycontrol"},
-    {"subject": "m3","datetime": "2022-06-25T13:12:58", "session_type": "maze", "reason": "restarted pycontrol"},
-    {"subject": "m2","datetime": "2022-07-15T11:05:01", "session_type": "maze", "reason": "reran session in afternoon"},
-    {"subject": "m2","datetime": "2022-07-03T10:23:20", "session_type": "maze", "reason": "reran session in afternoon"},
-    {"subject": "m2","datetime": "2022-07-20T10:57:03", "session_type": "maze", "reason": "reran session in afternoon"},
-    {"subject": "m2","datetime": "2022-07-26T10:43:06", "session_type": "maze", "reason": "restarted pycontrol"},
-    {"subject": "m2","datetime": "2022-06-25T11:55:43", "session_type": "maze", "reason": "reran session in afternoon"},
-    {"subject": "m2","datetime": "2022-06-30T10:25:27", "session_type": "maze", "reason": "reran session in afternoon"},
-    {"subject": "m7","datetime": "2022-07-11T13:50:29", "session_type": "maze", "reason": "reran session in afternoon"},
-])
-
+IGNORE_SESSIONS = pd.DataFrame(
+    [
+        {"subject": "m3", "datetime": "2022-07-28T11:45:50", "session_type": "maze", "reason": "restarted pycontrol"},
+        {"subject": "m3", "datetime": "2022-06-25T13:12:58", "session_type": "maze", "reason": "restarted pycontrol"},
+        {
+            "subject": "m2",
+            "datetime": "2022-07-15T11:05:01",
+            "session_type": "maze",
+            "reason": "reran session in afternoon",
+        },
+        {
+            "subject": "m2",
+            "datetime": "2022-07-03T10:23:20",
+            "session_type": "maze",
+            "reason": "reran session in afternoon",
+        },
+        {
+            "subject": "m2",
+            "datetime": "2022-07-20T10:57:03",
+            "session_type": "maze",
+            "reason": "reran session in afternoon",
+        },
+        {"subject": "m2", "datetime": "2022-07-26T10:43:06", "session_type": "maze", "reason": "restarted pycontrol"},
+        {
+            "subject": "m2",
+            "datetime": "2022-06-25T11:55:43",
+            "session_type": "maze",
+            "reason": "reran session in afternoon",
+        },
+        {
+            "subject": "m2",
+            "datetime": "2022-06-30T10:25:27",
+            "session_type": "maze",
+            "reason": "reran session in afternoon",
+        },
+        {
+            "subject": "m7",
+            "datetime": "2022-07-11T13:50:29",
+            "session_type": "maze",
+            "reason": "reran session in afternoon",
+        },
+    ]
+)
+# Probe depth info (depth defined from surface of brain)
+# depths stable between date entries
+PROBE_DEPTH_DF = pd.DataFrame(
+    [
+        {"subject": "m2", "date": "2022-06-20", "probe_depth": 1150, "probe_sample": "A"},
+        {"subject": "m3", "date": "2022-06-20", "probe_depth": 1200, "probe_sample": "A"},
+        {"subject": "m4", "date": "2022-06-20", "probe_depth": 1150, "probe_sample": "A"},
+        {"subject": "m6", "date": "2022-06-20", "probe_depth": 1000, "probe_sample": "A"},
+        {"subject": "m7", "date": "2022-06-20", "probe_depth": 1150, "probe_sample": "A"},
+        {"subject": "m8", "date": "2022-06-20", "probe_depth": 1150, "probe_sample": "A"},
+        {"subject": "m2", "date": "2022-07-02", "probe_depth": 1300, "probe_sample": "B"},
+        {"subject": "m3", "date": "2022-07-02", "probe_depth": 1350, "probe_sample": "B"},
+        {"subject": "m4", "date": "2022-07-02", "probe_depth": 1300, "probe_sample": "B"},
+        {"subject": "m6", "date": "2022-07-02", "probe_depth": 1150, "probe_sample": "B"},
+        {"subject": "m7", "date": "2022-07-02", "probe_depth": 1300, "probe_sample": "B"},
+        {"subject": "m8", "date": "2022-07-02", "probe_depth": 1300, "probe_sample": "B"},
+        {"subject": "m2", "date": "2022-07-14", "probe_depth": 1450, "probe_sample": "C"},
+        {"subject": "m3", "date": "2022-07-14", "probe_depth": 1500, "probe_sample": "C"},
+        {"subject": "m4", "date": "2022-07-14", "probe_depth": 1450, "probe_sample": "C"},
+        {"subject": "m6", "date": "2022-07-14", "probe_depth": 1300, "probe_sample": "C"},
+        {"subject": "m7", "date": "2022-07-14", "probe_depth": 1450, "probe_sample": "C"},
+        {"subject": "m8", "date": "2022-07-14", "probe_depth": 1400, "probe_sample": "C"},
+        {"subject": "m4", "date": "2022-07-21", "probe_depth": 1000, "probe_sample": "D"},  # retracted
+        {"subject": "m2", "date": "2022-07-26", "probe_depth": 1600, "probe_sample": "D"},
+        {"subject": "m3", "date": "2022-07-26", "probe_depth": 1650, "probe_sample": "D"},
+        {"subject": "m4", "date": "2022-07-26", "probe_depth": 1150, "probe_sample": "E"},
+        {"subject": "m6", "date": "2022-07-26", "probe_depth": 1450, "probe_sample": "D"},
+        {"subject": "m7", "date": "2022-07-26", "probe_depth": 1600, "probe_sample": "D"},
+        {"subject": "m8", "date": "2022-07-26", "probe_depth": 1550, "probe_sample": "D"},
+        {"subject": "m8", "date": "2022-07-28", "probe_depth": 1350, "probe_sample": "E"},  # retracted
+    ]
+)
 # %% Main Function
 
 
@@ -363,6 +429,7 @@ def save_exp_info():
             outfile.write(json.dumps(data_structure, indent=4))
     # process .htsv data structures
     IGNORE_SESSIONS.to_csv(EXPERIMENT_INFO_PATH / "ignore_sessions.htsv", sep="\t", index=False)
+    PROBE_DEPTH_DF.to_csv(EXPERIMENT_INFO_PATH / "probe_depths.htsv", sep="\t", index=False)
     return
 
 
