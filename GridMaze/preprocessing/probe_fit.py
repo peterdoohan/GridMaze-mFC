@@ -32,7 +32,7 @@ import vedo
 vedo.settings.default_backend = "vtk"
 
 # %% Globs
-from GridMaze.paths import PREPROCESSED_DATA_PATH, EXPERIMENT_INFO_PATH
+from GridMaze.paths import PREPROCESSED_DATA_PATH, EXPERIMENT_INFO_PATH, PROCESSED_DATA_PATH
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
@@ -87,6 +87,54 @@ REGION2COLOR = {
     "ILA2/3": "red",
     "ILA5": "red",
 }
+# %% Save subject probe info in processed data
+
+
+def save_subject_probe_dfs(overwrite=False):
+    """ """
+    for subject in SUBJECT_IDS:
+        save_path = PROCESSED_DATA_PATH / subject / "probe.htsv"
+        if not save_path.exists() or overwrite:
+            probe_df = get_subject_probe_df(subject)
+            probe_df.to_csv(save_path, index=False, sep="\t")
+        else:
+            print(f"{subject}/probe.htsv already exists overwrite with overwrite=True")
+    return
+
+
+def get_subject_probe_df(subject_ID):
+    """ """
+    probe_df = PROBE.to_dataframe()
+    contact_ids = probe_df.contact_ids
+    probe_fit = ProbeFit(subject_ID)
+    probe_depths_df = PROBE_DEPTHS_DF[PROBE_DEPTHS_DF.subject == subject_ID]
+    exp_probe_info = []  # probe info aggregated over entire exp
+    for _, row in probe_depths_df.iterrows():
+        _date = date.fromisoformat(row.date)
+        probe_depth = row.probe_depth
+        tissue_sample = row.tissue_sample
+        for contact in contact_ids:
+            contact_info = probe_df[probe_df.contact_ids == contact]
+            contact_vox, structure_info = probe_fit.get_contact_anatomy_info(_date, int(contact))
+            exp_probe_info.append(
+                {
+                    ("tissue_sample", ""): tissue_sample,
+                    ("probe_depth", ""): probe_depth,
+                    ("contact", "id"): int(contact),
+                    ("contact", "shank"): int(contact_info.shank_ids.values[0]),
+                    ("contact", "x"): contact_info.x.values[0],
+                    ("contact", "y"): contact_info.y.values[0],
+                    ("voxel", "x"): contact_vox[0],
+                    ("voxel", "y"): contact_vox[1],
+                    ("voxel", "z"): contact_vox[2],
+                    ("region", "acronym"): structure_info["acronym"],
+                    ("region", "name"): structure_info["name"],
+                }
+            )
+    exp_probe_df = pd.DataFrame(exp_probe_info)
+    exp_probe_df.columns = pd.MultiIndex.from_tuples(exp_probe_df.columns)
+    return exp_probe_df
+
 
 # %% ProbeFit Class
 
