@@ -87,22 +87,6 @@ REGION2COLOR = {
     "ILA2/3": "red",
     "ILA5": "red",
 }
-# %% Save Subject Probe dfs
-
-
-def get_subject_probe_df(subject_ID):
-    """ """
-    probe_df = PROBE.to_dataframe()
-    contact_ids = probe_df.contact_ids
-    probe_fit = ProbeFit(subject_ID)
-    probe_depths_df = PROBE_DEPTHS_DF[PROBE_DEPTHS_DF.subject == subject_ID]
-    for _, row in probe_depths_df.itterows():
-        _date = date.fromisoformat(row.date)
-        probe_depth = row.probe_depth
-        tissue_sample = row.tissue_sample
-
-    return
-
 
 # %% ProbeFit Class
 
