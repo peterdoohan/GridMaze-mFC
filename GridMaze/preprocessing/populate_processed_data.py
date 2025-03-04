@@ -1,4 +1,5 @@
 """This module populates processes pycontrol, video and raw ephys data into processed data in the processed data folder"""
+
 # %% Imports
 import numpy as np
 import json
@@ -19,7 +20,8 @@ if not PROCESSED_DATA_PATH.exists():
     PROCESSED_DATA_PATH.mkdir()
 
 
-#%% Updated functions
+# %% Updated functions
+
 
 def populate_processed_data(data_streams=["session_info", "pycontrol", "video", "spikes", "lfp"], overwrite=False):
     """
@@ -33,43 +35,54 @@ def populate_processed_data(data_streams=["session_info", "pycontrol", "video", 
         "pycontrol": _populate_pycontrol_data,
         "video": _populate_video_data,
         "spikes": _populate_spike_data,
-        "lfp": _populate_lfp_data
+        "lfp": _populate_lfp_data,
     }
     sessions_data_directory = get_sessions_data_directory()
     for data_stream in data_streams:
-        print(f'Processing {data_stream} data')
+        print(f"Processing {data_stream} data")
         preprocessing_fn = data_stream2fn[data_stream]
         for session_dir in sessions_data_directory.itertuples():
-            processed_data_folder = PROCESSED_DATA_PATH / session_dir.subject_ID / (session_dir.date.isoformat() + '.' + session_dir.session_type)
+            processed_data_folder = (
+                PROCESSED_DATA_PATH
+                / session_dir.subject_ID
+                / (session_dir.date.isoformat() + "." + session_dir.session_type)
+            )
             if not processed_data_folder.exists():
                 processed_data_folder.mkdir(parents=True)
             preprocessing_fn(session_dir, processed_data_folder, overwrite)
     return
 
 
-def populate_processed_data_multiprocessed(data_streams=["session_info", "pycontrol", "video", "spikes", "lfp"], n_processes=6, overwrite=False):
+def populate_processed_data_multiprocessed(
+    data_streams=["session_info", "pycontrol", "video", "spikes", "lfp"], n_processes=6, overwrite=False
+):
     """
     Top level function for populating processed data for entire experiment using multiple processes.
-    Should be faster than populate_processed_data """
+    Should be faster than populate_processed_data"""
     data_stream2fn = {
         "session_info": _populate_session_info,
         "pycontrol": _populate_pycontrol_data,
         "video": _populate_video_data,
         "spikes": _populate_spike_data,
-        "lfp": _populate_lfp_data
+        "lfp": _populate_lfp_data,
     }
     session_data_directory = get_sessions_data_directory()
     n_sessions = len(session_data_directory)
     session_directories = list(session_data_directory.itertuples())
-    processed_data_folders = [PROCESSED_DATA_PATH / s.subject_ID / (s.date.isoformat() + '.' + s.session_type) for s in session_directories]
+    processed_data_folders = [
+        PROCESSED_DATA_PATH / s.subject_ID / (s.date.isoformat() + "." + s.session_type) for s in session_directories
+    ]
     save_functions = [data_stream2fn[data_stream] for data_stream in data_streams]
     with ProcessPoolExecutor(max_workers=n_processes) as executor:
-        executor.map(_save_processed_data, 
-                        [save_functions]*n_sessions,
-                        session_directories, 
-                        processed_data_folders, 
-                        [overwrite]*n_sessions)
-    return 
+        executor.map(
+            _save_processed_data,
+            [save_functions] * n_sessions,
+            session_directories,
+            processed_data_folders,
+            [overwrite] * n_sessions,
+        )
+    return
+
 
 def _save_processed_data(processing_functions, session_dir, processed_data_folder, overwrite):
     """Saves all processed data for a given session (or data specified by input processing functions)"""
@@ -80,19 +93,21 @@ def _save_processed_data(processing_functions, session_dir, processed_data_folde
         processing_fn(session_dir, processed_data_folder, overwrite)
     return
 
-#%% Data stream functions
+
+# %% Data stream functions
+
 
 def _populate_session_info(data_directory, processed_data_folder, overwrite):
     """
     Saves session_info.json for a given session to the corresponding processed_data_folder.
     If overwirte=True, the function will overwrite an existing session_info.json file.
     """
-    if not overwrite and (processed_data_folder / 'session_info.json').exists():
+    if not overwrite and (processed_data_folder / "session_info.json").exists():
         return
     else:
         session_info = get_session_info(data_directory)
         # save
-        with open((processed_data_folder/ "session_info.json"), "w") as outfile:
+        with open((processed_data_folder / "session_info.json"), "w") as outfile:
             outfile.write(json.dumps(session_info, indent=4))
         return
 
@@ -149,6 +164,7 @@ def _populate_video_data(data_directory, processed_data_folder, overwrite):
         trial_info_df.to_csv(processed_data_folder / "frames.trialInfo.htsv", index=False, sep="\t")
     return
 
+
 def _populate_spike_data(data_directory, processed_data_folder, overwrite):
     """
     Saves spikes.times.npy, spikes.clusters.npy and cluster.metrics.htsv for a given session to the corresponding processed_data_folder.
@@ -159,7 +175,7 @@ def _populate_spike_data(data_directory, processed_data_folder, overwrite):
     if data_directory.session_type == "rest":
         # spikes data for rest/sleep has not been processed yet
         return
-    if not isinstance(data_directory.kilosort_path, Path): # if not path (eg, np.nan)
+    if not isinstance(data_directory.kilosort_path, Path):  # if not path (eg, np.nan)
         print(f"No spike data for {data_directory.subject_ID} {data_directory.date.isoformat()}, missing kilosort data")
         # no spike data for this session
         return
@@ -183,6 +199,7 @@ def _populate_spike_data(data_directory, processed_data_folder, overwrite):
             cluster_metrics.to_csv(processed_data_folder / "clusters.metrics.htsv", sep="\t", index=False)
     return
 
+
 def _populate_lfp_data(data_directory, processed_data_folder, overwrite):
     """
     Saves lfp.signal.npy, lfp.time.npy and lfp.metrics.htsv for a given session to the corresponding processed_data_folder.
@@ -205,14 +222,18 @@ def _populate_lfp_data(data_directory, processed_data_folder, overwrite):
         lfp_metrics.to_csv(processed_data_folder / "lfp.metrics.htsv", sep="\t", index=False)
     return
 
-#%% Misc
+
+# %% Misc
+
 
 def _flatten_multiindex_columns(df):
     """Returns a list of flat column names (str) where columns that were previously multiindex become level0_name.level1_name
     and single index columns stay level0_name"""
     return [f"{x[0]}.{x[1]}" if x[1] != "" else x[0] for x in df.columns.to_flat_index()]
 
+
 # %%
+
 
 def rename_processed_data(original_name, new_name):
     """This function looks through all processed_data folder and replaces a given filename with a new specified name"""

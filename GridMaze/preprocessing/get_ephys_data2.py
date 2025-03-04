@@ -7,18 +7,19 @@ import re
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from .rsync import Rsync_aligner
-from . import get_pycontrol_dfs as pyd
-from .. import paths
+from datetime import date
+from GridMaze.preprocessing.rsync import Rsync_aligner
 from GridMaze.preprocessing import pycontrol_data_import as di
 
 # %% Global Variables
 AP_SAMPLING_RATE = 30_000
 
-PROCESSED_DATA_PATH = paths.PROCESSED_DATA_PATH
+from GridMaze.paths import PROCESSED_DATA_PATH, EXPERIMENT_INFO_PATH
+
+PROBE_DEPTHS_DF = pd.read_csv(EXPERIMENT_INFO_PATH / "probe_depths.htsv", sep="\t")
 
 
-# %% Functions
+# %% Main Functions
 def get_spike_pycontrol_times(session_dir):
     """Converts spike times from ephys reference to pycontrol reference"""
     internal_ks_path = Path(session_dir.spikesorting_path) / "kilosort4/sorter_output"
@@ -77,15 +78,39 @@ def get_cluster_metrics(
     quality_metrics_df[("multi_unit", "")] = multi_units
     quality_metrics_df[("noise_unit", "")] = noise_units
     # process anatomy
-    # probe_anatomy_df = pd.read_csv(PROCESSED_DATA_PATH / session_dir.subject_ID / "probe.htsv", sep="\t")
-    # primary_channels = _get_primary_channel(session_dir)
-    # cluster_anatomy_df = probe_anatomy_df.set_index("channel_no").loc[primary_channels]
-    # cluster_anatomy_df = cluster_anatomy_df.reset_index()
-    # cluster_anatomy_df.rename(columns={"channel_no": "primary_channel_no"}, inplace=True)
-    # cluster_anatomy_df.columns = pd.MultiIndex.from_product([["anatomy"], cluster_anatomy_df.columns])
+    probe_df = load_subject_probe(session_dir.subject_ID)
+    tissue_sample = _get_tissue_sample(session_dir.subject_ID, session_dir.date)
+    session_probe_df = probe_df[probe_df.tissue_sample == tissue_sample]
+    primary_channels = _get_primary_channel(session_dir)
+    cluster_anatomy_df = session_probe_df.set_index(("contact", "id")).loc[primary_channels].reset_index()
     # combine
     cluster_metrics_df = pd.concat([quality_metrics_df.reset_index(), cluster_anatomy_df], axis=1)
     return cluster_metrics_df
+
+
+# %% supporitng cluster metrics
+def load_subject_probe(subject_ID):
+    """
+    Loads subject probe information containing anatomical information about each contact
+    at different timepoints in the experiment
+    """
+    # load from subject folder
+    probe_df = pd.read_csv(PROCESSED_DATA_PATH / subject_ID / "probe.htsv", sep="\t")
+    # add multindex
+    probe_df.columns = pd.MultiIndex.from_tuples(
+        [tuple(c.split(".")) if "." in c else (c, "") for c in probe_df.columns]
+    )
+    return probe_df
+
+
+def _get_tissue_sample(subject_ID, _date):
+    _date = date.fromisoformat(_date)
+    df = PROBE_DEPTHS_DF.copy()
+    df["date"] = df.date.apply(date.fromisoformat)
+    subject_df = df[(df["subject"] == subject_ID) & (df["date"] <= _date)]
+    # Get the row with the latest date (i.e. the most recent measurement)
+    latest_row = subject_df.sort_values("date", ascending=False).iloc[0]
+    return latest_row.tissue_sample
 
 
 # %% supporting functions

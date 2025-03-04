@@ -96,6 +96,8 @@ def save_subject_probe_dfs(overwrite=False):
         save_path = PROCESSED_DATA_PATH / subject / "probe.htsv"
         if not save_path.exists() or overwrite:
             probe_df = get_subject_probe_df(subject)
+            # chance to single index columns before saving
+            probe_df.columns = [".".join(c) if c[1] != "" else c[0] for c in probe_df.columns]
             probe_df.to_csv(save_path, index=False, sep="\t")
         else:
             print(f"{subject}/probe.htsv already exists overwrite with overwrite=True")

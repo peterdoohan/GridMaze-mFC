@@ -77,11 +77,11 @@ def get_LFP_times(session_dir, downsample_frequency):
 
 def get_LFP_metrics(session_dir, downsample_frequency):
     """
-    Generates a dataframe of LFP metrics. 
+    Generates a dataframe of LFP metrics.
     """
     raw_rec = _load_recording(session_dir)
-    probe = pi.get_probe(manufacturer='cambridgeneurotech', probe_name="ASSY-156-F")
-    probe.wiring_to_device('cambridgeneurotech_mini-amp-64')
+    probe = pi.get_probe(manufacturer="cambridgeneurotech", probe_name="ASSY-156-F")
+    probe.wiring_to_device("cambridgeneurotech_mini-amp-64")
     probe_df = probe.to_dataframe()
     # select channels to keep (one from every column on each shank, two rows per shank)
     channels_to_keep = get_lfp_channels_to_keep(probe_df)
@@ -95,15 +95,18 @@ def get_LFP_metrics(session_dir, downsample_frequency):
     lfp_metrics_df["sampling_rate"] = downsample_frequency
     return lfp_metrics_df
 
+
 def _load_recording(session_dir):
-    probe = pi.get_probe(manufacturer='cambridgeneurotech', probe_name="ASSY-156-F")
-    probe.wiring_to_device('cambridgeneurotech_mini-amp-64')
+    probe = pi.get_probe(manufacturer="cambridgeneurotech", probe_name="ASSY-236-F")
+    probe.wiring_to_device("cambridgeneurotech_mini-amp-64")
     raw_rec = se.read_openephys(session_dir.ephys_data_path)
     raw_rec = raw_rec.set_probe(probe)
     return raw_rec
 
-#%% 
-    
+
+# %%
+
+
 def get_lfp_channels_to_keep(probe_df):
     """
     Takes one column of contacts for each shank of the cambridge neurotech probes, returning the channel IDs to keep
