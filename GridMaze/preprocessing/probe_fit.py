@@ -24,6 +24,8 @@ from brainrender import Scene
 from brainrender.actors import Points
 from datetime import date
 from matplotlib import pyplot as plt
+from matplotlib.colors import to_hex
+import matplotlib.colors as mcolors
 
 import vedo
 
@@ -46,7 +48,9 @@ HERBS_ATLAS_SHAPE = (456, 528, 320)  # for 25 um atlas
 # Load Allen anatomy objects from web
 # this will create a new folder coe/mouse_connectivity
 # remove this folder at the end of preprocessing with fn x
-MCC = MouseConnectivityCache(resolution=ALLEN_ATLAS_RESOLUTION)
+MCC = MouseConnectivityCache(
+    resolution=ALLEN_ATLAS_RESOLUTION, manifest_file=str(EXPERIMENT_INFO_PATH / "allensdk/manifest.json")
+)
 ANNOTATION_VOLUME, _ = MCC.get_annotation_volume()
 STRUCTURE_TREE = MCC.get_structure_tree()
 
@@ -83,7 +87,21 @@ REGION2COLOR = {
     "ILA2/3": "red",
     "ILA5": "red",
 }
-# %% Sanity check plot
+# %% Save Subject Probe dfs
+
+
+def get_subject_probe_df(subject_ID):
+    """ """
+    probe_df = PROBE.to_dataframe()
+    contact_ids = probe_df.contact_ids
+    probe_fit = ProbeFit(subject_ID)
+    probe_depths_df = PROBE_DEPTHS_DF[PROBE_DEPTHS_DF.subject == subject_ID]
+    for _, row in probe_depths_df.itterows():
+        _date = date.fromisoformat(row.date)
+        probe_depth = row.probe_depth
+        tissue_sample = row.tissue_sample
+
+    return
 
 
 # %% ProbeFit Class
@@ -441,9 +459,6 @@ def fit_tracts_evenly_spaced_with_missing(tracts, expected_count=6, num_points=2
 # %%
 
 
-# %%
-
-
 def load_subject_shanks(subject="m2", n_shanks=6, verbose=False):
     """ """
     subject_folder = HERBS_DATA_FOLDER / subject
@@ -482,8 +497,17 @@ def get_probe_tract(HERBS_probe_path):
     return probe_coords.astype(int)
 
 
-# %%
-from matplotlib.colors import to_hex
+def _get_probe_move_dates():
+    """Get dates when all subjects probes were moved.
+    Ignore speciall instances where a single subjects probe was moved"""
+    probe_move_dates = []
+    for _date in PROBE_DEPTHS_DF.date.unique():
+        if len(np.setdiff1d(SUBJECT_IDS, PROBE_DEPTHS_DF[PROBE_DEPTHS_DF.date == _date].subject.values)) == 0:
+            probe_move_dates.append(_date)
+    return [date.fromisoformat(str(_date)) for _date in probe_move_dates]
+
+
+# %% QC
 
 
 def plot_all_probes():
@@ -511,19 +535,6 @@ def plot_all_probes():
         }
     )
     return scene
-
-
-def _get_probe_move_dates():
-    """Get dates when all subjects probes were moved.
-    Ignore speciall instances where a single subjects probe was moved"""
-    probe_move_dates = []
-    for _date in PROBE_DEPTHS_DF.date.unique():
-        if len(np.setdiff1d(SUBJECT_IDS, PROBE_DEPTHS_DF[PROBE_DEPTHS_DF.date == _date].subject.values)) == 0:
-            probe_move_dates.append(_date)
-    return [date.fromisoformat(str(_date)) for _date in probe_move_dates]
-
-
-import matplotlib.colors as mcolors
 
 
 def plot_all_anatomical_regions():
