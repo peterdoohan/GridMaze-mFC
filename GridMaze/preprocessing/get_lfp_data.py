@@ -6,14 +6,17 @@ data structures: 1) lfp.signal.npy (float16, uV), 2) lfp.time (float64, s from s
 """
 
 # %% Imports
+import json
 import numpy as np
 import pandas as pd
+from pathlib import Path
 from spikeinterface import extractors as se
 from spikeinterface import preprocessing as sp
 from scipy.interpolate import interp1d
 from . import pycontrol_data_import as di
 from .rsync import Rsync_aligner
 import probeinterface as pi
+from . import get_ephys_data as ed
 
 # %% Global variables
 
@@ -40,7 +43,7 @@ def get_LFP_signal(
         downsample_frequency (int): Frequency to downsample LFP data to
     """
     # load data and configre probe with spike interface
-    raw_rec = _load_recording(session_dir)
+    raw_rec, _ = _load_recording(session_dir)
     bp_recording_LFP = sp.bandpass_filter(recording=raw_rec, freq_min=0.1, freq_max=bandpass_max)
     downsampled_LFP = sp.resample(recording=bp_recording_LFP, resample_rate=downsample_frequency)
     lfp_np32 = downsampled_LFP.get_traces(return_scaled=True)  # units = uV
@@ -48,7 +51,7 @@ def get_LFP_signal(
     return lfp_np16
 
 
-def get_LFP_times(session_dir, downsample_frequency):
+def get_LFP_times(session_dir, downsample_frequency=1500):
     """
     Returns LFP times (associated with LFP signals) in seconds from the start of the pycontrol session.
     Args:
@@ -75,25 +78,25 @@ def get_LFP_times(session_dir, downsample_frequency):
     return lfp_times
 
 
-def get_LFP_metrics(session_dir, downsample_frequency):
+def get_LFP_metrics(session_dir, downsample_frequency=1500):
     """
     Generates a dataframe of LFP metrics.
     """
-    raw_rec = _load_recording(session_dir)
-    probe = pi.get_probe(manufacturer="cambridgeneurotech", probe_name="ASSY-156-F")
-    probe.wiring_to_device("cambridgeneurotech_mini-amp-64")
+    _, probe = _load_recording(session_dir)
     probe_df = probe.to_dataframe()
-    # select channels to keep (one from every column on each shank, two rows per shank)
+    with open(Path(session_dir.spikesorting_path) / "channel_assignments.json", "r") as file:
+        channel_assigments = json.load(file)
+    probe_anatomy_df = ed.load_subject_probe(session_dir.subject_ID)
+    tissue_sample = ed._get_tissue_sample(session_dir.subject_ID, session_dir.date)
+    probe_anatomy_df = probe_anatomy_df[probe_anatomy_df.tissue_sample == tissue_sample]
     channels_to_keep = get_lfp_channels_to_keep(probe_df)
-    probe_df = probe_df[probe_df.contact_ids.isin(channels_to_keep)]
-    lfp_metrics_df = pd.DataFrame()
-    lfp_metrics_df["channel_ind"] = probe_df["contact_ids"]
-    lfp_metrics_df["channel_id"] = raw_rec.get_channel_ids()
-    lfp_metrics_df["x_pos"] = probe_df["x"]
-    lfp_metrics_df["y_pos"] = probe_df["y"]
-    lfp_metrics_df["shank_id"] = probe_df["shank_ids"]
-    lfp_metrics_df["sampling_rate"] = downsample_frequency
+    lfp_metrics_df = probe_anatomy_df[probe_anatomy_df.contact.id.isin(channels_to_keep)]
+    lfp_metrics_df[("contact" "qc")] = lfp_metrics_df.contact.id.apply(lambda x: f"CH{x}").map(channel_assigments)
+    lfp_metrics_df[("sampling_rate", "")] = downsample_frequency
     return lfp_metrics_df
+
+
+# %% supporting functions
 
 
 def _load_recording(session_dir):
@@ -101,10 +104,7 @@ def _load_recording(session_dir):
     probe.wiring_to_device("cambridgeneurotech_mini-amp-64")
     raw_rec = se.read_openephys(session_dir.ephys_data_path)
     raw_rec = raw_rec.set_probe(probe)
-    return raw_rec
-
-
-# %%
+    return raw_rec, probe
 
 
 def get_lfp_channels_to_keep(probe_df):
@@ -117,4 +117,4 @@ def get_lfp_channels_to_keep(probe_df):
         shank_df = probe_df[probe_df["shank_ids"] == str(shank)]
         x_pos_to_keep = shank_df.x.min()
         keep_channel_ids.extend(shank_df[shank_df.x == x_pos_to_keep].contact_ids)
-    return keep_channel_ids
+    return [int(c) for c in keep_channel_ids]
