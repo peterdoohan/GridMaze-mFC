@@ -10,6 +10,7 @@ from .get_pycontrol_dfs import get_events_df, get_trials_df
 from . import get_frames_dfs as fd
 from . import get_ephys_data as ed
 from . import get_lfp_data as ld
+from . import get_UnitMatch_data as gud
 
 from concurrent.futures import ProcessPoolExecutor
 
@@ -21,6 +22,24 @@ if not PROCESSED_DATA_PATH.exists():
 
 
 # %% Updated functions
+
+
+def populate_subject_probes(overwrite=False):
+    """
+    Populate probe.htsv files in subject processed data folders.
+    Note this needs to be run in an environemtn with allensdk installed,
+    separate to the main environment defined in requirements.txt
+    """
+    from GridMaze.preprocessing import probe_fit as pf
+
+    pf.save_subject_probe_dfs(overwrite)
+    return
+
+
+def populate_session_processed_data():
+    """ """
+
+    return
 
 
 def populate_processed_data(data_streams=["session_info", "pycontrol", "video", "spikes", "lfp"], overwrite=False):
@@ -36,6 +55,7 @@ def populate_processed_data(data_streams=["session_info", "pycontrol", "video", 
         "video": _populate_video_data,
         "spikes": _populate_spike_data,
         "lfp": _populate_lfp_data,
+        "unit_match": _populate_unit_match_data,
     }
     sessions_data_directory = get_sessions_data_directory()
     for data_stream in data_streams:
@@ -220,6 +240,29 @@ def _populate_lfp_data(data_directory, processed_data_folder, overwrite):
     if not overwrite and (processed_data_folder / "lfp.metrics.htsv").exists():
         lfp_metrics = ld.get_LFP_metrics(data_directory)
         lfp_metrics.to_csv(processed_data_folder / "lfp.metrics.htsv", sep="\t", index=False)
+    return
+
+
+def _populate_unit_match_data(session_dir, processed_data_path, overwrite, max_duration_delta=5):
+    """ """
+    session_ID = f"{session_dir.subject_ID}-{session_dir.date}-{session_dir.session_type}"
+    if (
+        not isinstance(session_dir.ephys_path, str)  # missing ephys completely
+        or session_dir.ephys_corrupt  # something wrong with ephys data - could not be preprocesed
+        or not session_dir.spikesorting_completed  # spikesorting failed (also usually something wrong with ephys)
+    ):
+        print(f"Missing ephys data for {session_ID} cannot populate spike data")
+        return
+    if session_dir.session_type != "rest":
+        # if ephys stop before end of session don't process spike data
+        if session_dir.ephys_duration - session_dir.pycontrol_duration < -max_duration_delta:
+            print(f"Ephys reocrding incomplete for {session_ID} cannot populate spike data")
+            return
+    if not overwrite and (processed_data_path / "UnitMatch").exists():
+        pass
+    else:
+        preprocessed_UM_path = gud.get_unit_match_folder(session_dir)
+        gud.copy_unit_match_folder(preprocessed_UM_path, processed_data_path)
     return
 
 

@@ -22,7 +22,7 @@ session = gs.get_maze_sessions(subject_IDs=["m2"], maze_names=["maze_1"], days_o
 # %%
 
 # srun --nodes=1 --ntasks-per-node=1 --cpus-per-task=8 -p gpu --gres=gpu:1 --time=12:00:00 --mem=32G --pty bash -i
-# srun --nodes=1 --ntasks-per-node=1 --cpus-per-task=16  --time=24:00:00 --mem=32G --pty bash -i
+# srun --nodes=1 --ntasks-per-node=1 --cpus-per-task=16  --time=24:00:00 --mem=64G --pty bash -i
 
 # might have to load modules first
 # source /etc/profile.d/modules.sh
@@ -30,7 +30,7 @@ session = gs.get_maze_sessions(subject_IDs=["m2"], maze_names=["maze_1"], days_o
 # conda activate maze_ephys
 # (## or source activate maze_ephys )
 
-# cd /ceph/behrens/peter_doohan/goalNav_mFC_refactor/code
+# cd /ceph/behrens/peter_doohan/goalNav_mFC/experiment/code
 
 # open an environment with jupyter installed
 

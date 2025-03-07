@@ -1,4 +1,5 @@
 """This module calculates the animal centroid position from DeepLabCut tracking data."""
+
 # %% Imports
 import numpy as np
 import pylab as plt
@@ -117,24 +118,3 @@ def plot_body_centroid_positions(body_centroids, show_interpolated=True):
     plt.xlabel("Frames")
     plt.ylabel("x/y position (m)")
     plt.legend()
-
-
-# %% QC
-if __name__ == "__main__":
-    from preprocessing.get_sessions_data_directory import get_data_directory_df
-    from preprocessing.get_trajectories_df import get_frames_df
-
-    SESSIONS_DATA_DIRECTORY_DF = get_data_directory_df()
-
-    def plot_maze_trajectories_qc(SESSION_DATA_DIRECTORY_DF):
-        """Plot the trajectory of the animal through the maze, if the trajectory is valid."""
-        first_session = SESSION_DATA_DIRECTORY_DF.iloc[np.argmin(SESSION_DATA_DIRECTORY_DF["datetime"])]
-        last_session = SESSION_DATA_DIRECTORY_DF.iloc[np.argmax(SESSION_DATA_DIRECTORY_DF["datetime"])]
-        f, ax = plt.subplots(1, 2, figsize=(10, 5), clear=True)
-        for i, session in enumerate([first_session, last_session]):
-            maze = maze_reps.simple_maze(session.maze_structure)
-            frames_df = get_frames_df(session)
-            centroid_positions = frames_df["centroid_position"][["x", "y"]].to_numpy()
-            ax[i].plot(centroid_positions.T[0], centroid_positions.T[1], color="red", alpha=0.5)
-            ax[i].set_title(f"Session Trajectory - Exp Day {session.experimental_day}")
-            nx.draw(maze, pos=maze.nodes(data="position"), node_size=15, node_color="black", ax=ax[i])
