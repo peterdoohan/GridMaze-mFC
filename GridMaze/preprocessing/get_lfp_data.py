@@ -44,7 +44,7 @@ def get_LFP_signal(
     """
     # load data and configre probe with spike interface
     raw_rec, _ = _load_recording(session_dir)
-    bp_recording_LFP = sp.bandpass_filter(recording=raw_rec, freq_min=0.1, freq_max=bandpass_max)
+    bp_recording_LFP = sp.bandpass_filter(recording=raw_rec, freq_min=1, freq_max=bandpass_max)
     downsampled_LFP = sp.resample(recording=bp_recording_LFP, resample_rate=downsample_frequency)
     lfp_np32 = downsampled_LFP.get_traces(return_scaled=True)  # units = uV
     lfp_np16 = lfp_np32.astype(np.float16)  # minimal loss of precision while decreasing file size
