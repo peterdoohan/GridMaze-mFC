@@ -66,7 +66,7 @@ def get_trajectories_df(session_directory):
     """
     dlc_df = get_cleaned_dlc_df(session_directory.dlc_path)
     bodypart_positions = get_dlc_positions_array(dlc_df)
-    head_direction = hd.get_head_direction(bodypart_positions)
+    head_direction = hd.get_head_direction(dlc_df)
     centroid_positions = cpos.get_centroid_positions(bodypart_positions)
     x_pos = centroid_positions[0][:, 0]
     y_pos = centroid_positions[0][:, 1]
@@ -254,6 +254,7 @@ def get_bodypart_outlier_thresholds():
 def get_representative_dlc_filepaths():
     """Returns a list of filepaths to DLC output files from the first and last video of each subject."""
     from .get_data_directory import get_sessions_data_directory
+
     sessions_data_directory = get_sessions_data_directory()
     dlc_paths = []
     for subject in sessions_data_directory.subject_ID.unique():

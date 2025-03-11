@@ -12,6 +12,7 @@ from datetime import datetime, date, timedelta
 from pathlib import Path
 from GridMaze.preprocessing.pycontrol_data_import import session_dataframe
 from GridMaze.preprocessing.get_frames_dfs import open_dlc_output_as_df
+from spikeinterface import extractors as se
 
 # %% Global Variables
 
@@ -32,9 +33,48 @@ IGNORE_SESSIONS = pd.read_csv(EXPERIMENT_INFO_PATH / "ignore_sessions.htsv", sep
 
 FRAME_RATE = 60
 
+# %%
+
+
+def run_sessions_data_QC(expected_pycontrol_duration=40, duration_thres=5):
+    """ """
+    data_directory = get_sessions_data_directory()
+    for _, session_dir in data_directory.iterrows():
+        # check all necessary files exit
+        session_ID = f"{session_dir.subject_ID}_{session_dir.date}_{session_dir.session_type}"
+        if session_dir.session_type == "maze":
+            if not isinstance(session_dir.pycontrol_path, str):
+                print(f"Missing pycontrol for {session_ID}")
+            if not isinstance(session_dir.video_path, str):
+                print(f"Missing video data for {session_ID}")
+            if not isinstance(session_dir.dlc_path, str):
+                print(f"Missing dlc data for {session_ID}")
+        # ephys common to maze and sleep sessions
+        if not isinstance(session_dir.ephys_data_path, str):
+            print(f"Missing ephys data for {session_ID}")
+        if not session_dir.spikesorting_complete:
+            print(f"Missing spikesorting data for {session_ID}")
+        # check duration
+        if session_dir.session_type == "maze":
+            if abs(session_dir.pycontrol_duration - expected_pycontrol_duration) > duration_thres:
+                print(f"Incomplete session (short pycontrol) {session_ID}")
+                continue
+            vid_diff = abs(session_dir.pycontrol_duration - session_dir.video_duration)
+            if vid_diff > duration_thres:
+                print(f"Video duration from {session_ID} is not consistant with pycontrol")
+                print(session_dir.pycontrol_duration)
+                print(session_dir.video_duration)
+            ephys_diff = abs(session_dir.pycontrol_duration - session_dir.ephys_duration)
+            if ephys_diff > duration_thres:
+                print(f"Ephys duration from {session_ID} is not consistant with pycontrol")
+                print(session_dir.pycontrol_duration)
+                print(session_dir.ephys_duration)
+
+    return
+
 
 # %%
-def get_sessions_data_directory(overwrite=False):
+def get_sessions_data_directory(overwrite=False, expected_pycontrol_duration=40, duration_thres=5):
     """
     Returns a dataframe with rows corresponding to each session recorded in the experiment,
     each row includes the subject, session date, session type (used to distinguish multiple sessions
@@ -53,18 +93,23 @@ def get_sessions_data_directory(overwrite=False):
         data_directory["pycontrol_path"] = pycontrol_paths
         data_directory["pycontrol_datetime"] = pycontrol_datetimes
         data_directory["pycontrol_duration"] = data_directory.pycontrol_path.apply(get_pycontrol_duration)
+        data_directory["short_session"] = ~data_directory.pycontrol_duration.between(
+            expected_pycontrol_duration - duration_thres, expected_pycontrol_duration + duration_thres
+        ) & (data_directory.session_type == "maze")
         # add video data
-        video_paths, sync_paths = add_video_paths(data_directory)
+        video_paths, sync_paths, video_datetimes = add_video_paths(data_directory)
         data_directory["video_path"] = video_paths
         data_directory["video_sync_path"] = sync_paths
+        data_directory["video_datetime"] = video_datetimes
         # add dlc data
         data_directory["dlc_path"] = add_dlc_paths(data_directory)
         data_directory["video_duration"] = data_directory.dlc_path.apply(get_video_duration)
         # add ephys data
-        ephys_data_paths, ephys_sync_paths, ephys_datetimes = add_ephys_paths(data_directory)
+        ephys_data_paths, ephys_sync_paths, ephys_datetimes, ephys_durations = add_ephys_paths(data_directory)
         data_directory["ephys_data_path"] = ephys_data_paths
         data_directory["ephys_sync_path"] = ephys_sync_paths
         data_directory["ephys_datetime"] = ephys_datetimes
+        data_directory["ephys_duration"] = ephys_durations
         # add spikesorting data
         spikesorting_paths, spikesorting_completed = add_spikesorting_paths(data_directory)
         data_directory["spikesorting_path"] = spikesorting_paths
@@ -73,6 +118,7 @@ def get_sessions_data_directory(overwrite=False):
         data_directory.to_csv(data_directory_path, index=False, sep="\t")
     else:  # load from disk
         data_directory = pd.read_csv(data_directory_path, sep="\t")
+        data_directory["date"] = data_directory.date.apply(lambda x: date.fromisoformat(x))
     return data_directory
 
 
@@ -131,7 +177,7 @@ def add_pycontrol_paths(init_data_directory):
             if not len(filted_pycontrol_path) == 1:
                 raise FileNotFoundError(f"No unique pycontrol file found for {row}")
             sorted_pycontrol_paths.append(filted_pycontrol_path.pycontrol_filepath.values[0])
-            sorted_pycontrol_datetimes.append(filted_pycontrol_path.datetime)
+            sorted_pycontrol_datetimes.append(filted_pycontrol_path.datetime.values[0])
     return sorted_pycontrol_paths, sorted_pycontrol_datetimes
 
 
@@ -177,7 +223,7 @@ def add_video_paths(init_data_directory):
         sorted_video_paths.append(filtered_video_path.video_filepath.values[0])
         sorted_sync_paths.append(filtered_video_path.video_sync_filepath.values[0])
         sorted_datetimes.append(filtered_video_path.datetime.values[0])
-    return sorted_video_paths, sorted_sync_paths
+    return sorted_video_paths, sorted_sync_paths, sorted_datetimes
 
 
 def _get_video_paths_df():
@@ -231,6 +277,7 @@ def add_ephys_paths(init_data_directory):
     sorted_ephys_data_paths = []
     sorted_ephys_sync_paths = []
     sorted_ephys_datetimes = []
+    sorted_ephys_durations = []
     for row in init_data_directory.itertuples():
         subject_mask = ephys_paths_df.subject_ID == row.subject_ID
         date_mask = ephys_paths_df.datetime.apply(lambda x: x.date()) == row.date
@@ -241,7 +288,8 @@ def add_ephys_paths(init_data_directory):
         sorted_ephys_data_paths.append(filtered_ephys_path.ephys_data_folder.values[0])
         sorted_ephys_sync_paths.append(filtered_ephys_path.ephys_sync_filepath.values[0])
         sorted_ephys_datetimes.append(filtered_ephys_path.datetime.values[0])
-    return sorted_ephys_data_paths, sorted_ephys_sync_paths, sorted_ephys_datetimes
+        sorted_ephys_durations.append(filtered_ephys_path.ephys_duration.values[0])
+    return sorted_ephys_data_paths, sorted_ephys_sync_paths, sorted_ephys_datetimes, sorted_ephys_durations
 
 
 def _get_ephys_paths_df():
@@ -271,6 +319,8 @@ def _get_ephys_paths_df():
             # sessions where pycontrol was restarted will have just one assoicated ephys file
             continue
         else:
+            raw_rec = se.read_openephys(filepath, block_index=0)
+            duration = raw_rec.get_duration() / 60  # mins
             ephys_info.append(
                 {
                     "subject_ID": subject_ID,
@@ -278,6 +328,7 @@ def _get_ephys_paths_df():
                     "ephys_data_folder": filepath,
                     "ephys_sync_filepath": list(filepath.iterdir())[0]
                     / internal_sync_filepath,  # first interate through to the folder rocord node then add internal filepath
+                    "ephys_duration": duration,
                 }
             )
     ephys_paths_df = pd.DataFrame(ephys_info)

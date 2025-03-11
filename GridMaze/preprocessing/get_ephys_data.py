@@ -20,7 +20,7 @@ PROBE_DEPTHS_DF = pd.read_csv(EXPERIMENT_INFO_PATH / "probe_depths.htsv", sep="\
 
 
 # %% Main Functions
-def get_spike_pycontrol_times(session_dir):
+def get_spike_times(session_dir):
     """Converts spike times from ephys reference to pycontrol reference"""
     internal_ks_path = Path(session_dir.spikesorting_path) / "kilosort4/sorter_output"
     spike_times = np.load(internal_ks_path / "spike_times.npy")  # in 30_000 Hz samples
@@ -104,7 +104,6 @@ def load_subject_probe(subject_ID):
 
 
 def _get_tissue_sample(subject_ID, _date):
-    _date = date.fromisoformat(_date)
     df = PROBE_DEPTHS_DF.copy()
     df["date"] = df.date.apply(date.fromisoformat)
     subject_df = df[(df["subject"] == subject_ID) & (df["date"] <= _date)]

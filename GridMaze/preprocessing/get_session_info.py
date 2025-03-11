@@ -48,7 +48,7 @@ def get_rest_session_info(session_dir):
         "experimental_day": (session_dir.date - EXPERIMENT_START_DATE).days + 1,
         "maze_name": session_dir.maze_name,
         "day_on_maze": _get_day_on_maze(session_dir.maze_name, session_dir.date),
-        "probe_depth": probe_depth,
+        "probe_depth": float(probe_depth),
         "tissue_sample": tissue_sample,
     }
     return session_info
@@ -78,7 +78,7 @@ def get_maze_session_info(session_dir):
         "goal_subset": goal_subset,
         "goals": goals,
         "reward_size": _get_reward_size(session),
-        "probe_depth": probe_depth,
+        "probe_depth": float(probe_depth),
         "tissue_sample": tissue_sample,
     }
     return session_info

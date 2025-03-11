@@ -4,6 +4,7 @@
 import numpy as np
 import json
 from pathlib import Path
+from datetime import date
 from .get_data_directory import get_sessions_data_directory
 from .get_session_info import get_session_info
 from .get_pycontrol_dfs import get_events_df, get_trials_df
@@ -33,12 +34,6 @@ def populate_subject_probes(overwrite=False):
     from GridMaze.preprocessing import probe_fit as pf
 
     pf.save_subject_probe_dfs(overwrite)
-    return
-
-
-def populate_session_processed_data():
-    """ """
-
     return
 
 
@@ -73,8 +68,51 @@ def populate_processed_data(data_streams=["session_info", "pycontrol", "video", 
     return
 
 
+# %% HPC parallel processing
+def populate_session_processed_data(
+    subject_ID,
+    _date,
+    session_type,
+    data_streams=["session_info", "pycontrol", "video", "spikes", "lfp"],
+    overwrite=False,
+):
+    """
+    Populate processed data for a single session.
+    Slighly hacky but designed to be called by a slurm script and run in parellel on an HPC.
+    """
+    data_stream2fn = {
+        "session_info": _populate_session_info,
+        "pycontrol": _populate_pycontrol_data,
+        "video": _populate_video_data,
+        "spikes": _populate_spike_data,
+        "lfp": _populate_lfp_data,
+        "unit_match": _populate_unit_match_data,
+    }
+    # load all data directories
+    sessions_data_directory = get_sessions_data_directory()
+    # isolate session from data directory
+    filtered_session = sessions_data_directory[
+        (sessions_data_directory.subject_ID == subject_ID)
+        & (sessions_data_directory.date == date.fromisoformat(_date))
+        & (sessions_data_directory.session_type == session_type)
+    ].iloc[0]
+    # define processed data folder (standardised naming)
+    processed_data_folder = PROCESSED_DATA_PATH / subject_ID / (_date + "." + session_type)
+    if not processed_data_folder.exists():
+        processed_data_folder.mkdir(parents=True)
+    # run processing for each data stream
+    for data_stream in data_streams:
+        print(f"Populating {data_stream} data")
+        fn = data_stream2fn[data_stream]
+        fn(filtered_session, processed_data_folder, overwrite)
+    return print(f"Finished processing {subject_ID} {_date} {session_type}")
+
+
+# %% Local parallel processing
+
+
 def populate_processed_data_multiprocessed(
-    data_streams=["session_info", "pycontrol", "video", "spikes", "lfp"], n_processes=6, overwrite=False
+    data_streams=["session_info", "pycontrol", "video", "spikes", "lfp", "unit_match"], n_processes=6, overwrite=False
 ):
     """
     Top level function for populating processed data for entire experiment using multiple processes.
@@ -85,6 +123,7 @@ def populate_processed_data_multiprocessed(
         "video": _populate_video_data,
         "spikes": _populate_spike_data,
         "lfp": _populate_lfp_data,
+        "unit_match": _populate_unit_match_data,
     }
     session_data_directory = get_sessions_data_directory()
     n_sessions = len(session_data_directory)
@@ -117,7 +156,7 @@ def _save_processed_data(processing_functions, session_dir, processed_data_folde
 # %% Data stream functions
 
 
-def _populate_session_info(data_directory, processed_data_folder, overwrite):
+def _populate_session_info(session_dir, processed_data_folder, overwrite):
     """
     Saves session_info.json for a given session to the corresponding processed_data_folder.
     If overwirte=True, the function will overwrite an existing session_info.json file.
@@ -125,94 +164,114 @@ def _populate_session_info(data_directory, processed_data_folder, overwrite):
     if not overwrite and (processed_data_folder / "session_info.json").exists():
         return
     else:
-        session_info = get_session_info(data_directory)
+        session_info = get_session_info(session_dir)
         # save
         with open((processed_data_folder / "session_info.json"), "w") as outfile:
             outfile.write(json.dumps(session_info, indent=4))
         return
 
 
-def _populate_pycontrol_data(data_directory, processed_data_folder, overwrite):
+def _populate_pycontrol_data(session_dir, processed_data_folder, overwrite):
     """
     Saves trials.htsv and events.htsv for a given session to the corresponding processed_data_folder.
     If overwirte=True, the function will overwrite an existing trials.htsv and events.htsv files.
     """
-    if data_directory.session_type == "rest":
+    if session_dir.session_type == "rest":
         # no pycontrol data for rest/sleep sessions
+        return
+    if session_dir.short_session:
+        print("Incomplete session data (short session), skip pycontrol processing")
         return
     if not overwrite and (processed_data_folder / "trials.htsv").exists():
         pass
     else:
-        trials_df = get_trials_df(data_directory)
+        trials_df = get_trials_df(session_dir)
         trials_df.columns = _flatten_multiindex_columns(trials_df)
         trials_df.to_csv(processed_data_folder / "trials.htsv", index=False, sep="\t")
     if not overwrite and (processed_data_folder / "events.htsv").exists():
         return
     else:
-        events_df = get_events_df(data_directory)
+        events_df = get_events_df(session_dir)
         events_df.to_csv(processed_data_folder / "events.htsv", index=False, sep="\t")
         return
 
 
-def _populate_video_data(data_directory, processed_data_folder, overwrite):
+def _populate_video_data(session_dir, processed_data_folder, overwrite, duration_thres=5):
     """
     Saves tracking.htsv, trajectories.htsv and trialInfo.htsv for a given session to the corresponding processed_data_folder.
     If overwirte=True, the function will overwrite an existing files.
     """
-    if data_directory.session_type == "rest":
+    if session_dir.session_type == "rest":
         # no video data for rest/sleep sessions
+        return
+    if session_dir.short_session:
+        print("Incomplete session data (short session), skip video processing")
+        return
+    # check if video cuts of early
+    vid_diff = session_dir.video_duration - session_dir.pycontrol_duration
+    if vid_diff > duration_thres:
+        print(f"Video duration too short, missing data, skipping video processing")
         return
     # save tracking data
     if not overwrite and (processed_data_folder / "frames.tracking.htsv").exists():
         pass
     else:
-        tracking_df = fd.get_tracking_df(data_directory)
+        tracking_df = fd.get_tracking_df(session_dir)
         tracking_df.columns = _flatten_multiindex_columns(tracking_df)
         tracking_df.to_csv(processed_data_folder / "frames.tracking.htsv", index=False, sep="\t")
     # save trajectories data
     if not overwrite and (processed_data_folder / "frames.trajectories.htsv").exists():
         pass
     else:
-        trajectories_df = fd.get_trajectories_df(data_directory)
+        trajectories_df = fd.get_trajectories_df(session_dir)
         trajectories_df.columns = _flatten_multiindex_columns(trajectories_df)
         trajectories_df.to_csv(processed_data_folder / "frames.trajectories.htsv", index=False, sep="\t")
     # save trial info data
     if not overwrite and (processed_data_folder / "frames.trialInfo.htsv").exists():
         return
     else:
-        trial_info_df = fd.get_trial_info_df(data_directory)
+        trial_info_df = fd.get_trial_info_df(session_dir)
         trial_info_df.to_csv(processed_data_folder / "frames.trialInfo.htsv", index=False, sep="\t")
     return
 
 
-def _populate_spike_data(data_directory, processed_data_folder, overwrite):
+def _populate_spike_data(session_dir, processed_data_folder, overwrite, duration_thres=5):
     """
     Saves spikes.times.npy, spikes.clusters.npy and cluster.metrics.htsv for a given session to the corresponding processed_data_folder.
     If overwrite is True, the function will overwrite existing files.
 
     Note rest sessions are not processed here because they have not yet been preprocessed with Kilosort (as of 2024-09-24)
     """
-    if data_directory.session_type == "rest":
-        # spikes data for rest/sleep has not been processed yet
+    if session_dir.short_session:
+        print("Incomplete session data (short session), skip ephys processing")
         return
-    if not isinstance(data_directory.kilosort_path, Path):  # if not path (eg, np.nan)
-        print(f"No spike data for {data_directory.subject_ID} {data_directory.date.isoformat()}, missing kilosort data")
+    # check if ephys cuts of early
+    if session_dir.session_type == "maze":
+        ephys_diff = session_dir.ephys_duration - session_dir.pycontrol_duration
+        if ephys_diff > duration_thres:
+            print(f"Ephys duration too short, missing data, skipping ephys processing")
+            return
+    # check if spikesorting failed
+    if not session_dir.spikesorting_complete:  # if not path (eg, np.nan)
+        print(
+            f"Spikesorting failed for {session_dir.subject_ID} {session_dir.date.isoformat()}, missing preprocessed data"
+        )
         # no spike data for this session
         return
     if not overwrite and (processed_data_folder / "spikes.times.npy").exists():
         pass
     else:
-        spike_pytimes = ed.get_spike_pycontrol_times(data_directory)
+        spike_pytimes = ed.get_spike_times(session_dir)
         np.save(processed_data_folder / "spikes.times.npy", spike_pytimes)
     if not overwrite and (processed_data_folder / "spikes.clusters.npy").exists():
         pass
     else:
-        spike_clusters = ed.get_spike_clusters(data_directory)
+        spike_clusters = ed.get_spike_clusters(session_dir)
         np.save(processed_data_folder / "spikes.clusters.npy", spike_clusters)
     if not overwrite and (processed_data_folder / "clusters.metrics.htsv").exists():
         pass
     else:
-        cluster_metrics = ed.get_cluster_metrics(data_directory)
+        cluster_metrics = ed.get_cluster_metrics(session_dir)
         if cluster_metrics is None:
             return
         else:
@@ -220,44 +279,62 @@ def _populate_spike_data(data_directory, processed_data_folder, overwrite):
     return
 
 
-def _populate_lfp_data(data_directory, processed_data_folder, overwrite):
+def _populate_lfp_data(session_dir, processed_data_folder, overwrite, duration_thres=5):
     """
     Saves lfp.signal.npy, lfp.time.npy and lfp.metrics.htsv for a given session to the corresponding processed_data_folder.
     If overwrite is True, the function will overwrite existing files.
 
     Note rest sessions are not processed here because they have not yet been preprocessed with Kilosort (as of 2024-09-24)
     """
+    if session_dir.short_session:
+        print("Incomplete session data (short session), skip lfp processing")
+        return
+    # check if ephys cuts of early
+    if session_dir.session_type == "maze":
+        ephys_diff = session_dir.ephys_duration - session_dir.pycontrol_duration
+        if ephys_diff > duration_thres:
+            print(f"Ephys duration too short, missing data, skipping lfp processing")
+            return
+    # check if spikesorting failed
+    if not session_dir.spikesorting_complete:  # if not path (eg, np.nan)
+        print(
+            f"Spikesorting failed for {session_dir.subject_ID} {session_dir.date.isoformat()}, skip lfp likely raw data issue"
+        )
     if not overwrite and (processed_data_folder / "lfp.signal.npy").exists():
         pass
     else:
-        lfp_signal = ld.get_LFP_signal(data_directory)
+        lfp_signal = ld.get_LFP_signal(session_dir)
         np.save(processed_data_folder / "lfp.signal.npy", lfp_signal)
     if not overwrite and (processed_data_folder / "lfp.time.npy").exists():
         pass
     else:
-        lfp_times = ld.get_LFP_times(data_directory)
+        lfp_times = ld.get_LFP_times(session_dir)
         np.save(processed_data_folder / "lfp.time.npy", lfp_times)
     if not overwrite and (processed_data_folder / "lfp.metrics.htsv").exists():
-        lfp_metrics = ld.get_LFP_metrics(data_directory)
+        pass
+    else:
+        lfp_metrics = ld.get_LFP_metrics(session_dir)
         lfp_metrics.to_csv(processed_data_folder / "lfp.metrics.htsv", sep="\t", index=False)
     return
 
 
-def _populate_unit_match_data(session_dir, processed_data_path, overwrite, max_duration_delta=5):
+def _populate_unit_match_data(session_dir, processed_data_path, overwrite, duration_thres=5):
     """ """
-    session_ID = f"{session_dir.subject_ID}-{session_dir.date}-{session_dir.session_type}"
-    if (
-        not isinstance(session_dir.ephys_path, str)  # missing ephys completely
-        or session_dir.ephys_corrupt  # something wrong with ephys data - could not be preprocesed
-        or not session_dir.spikesorting_completed  # spikesorting failed (also usually something wrong with ephys)
-    ):
-        print(f"Missing ephys data for {session_ID} cannot populate spike data")
+    # session_ID = f"{session_dir.subject_ID}-{session_dir.date}-{session_dir.session_type}"
+    if session_dir.short_session:
+        print("Incomplete session data (short session), skip UnitMatch processing")
         return
-    if session_dir.session_type != "rest":
-        # if ephys stop before end of session don't process spike data
-        if session_dir.ephys_duration - session_dir.pycontrol_duration < -max_duration_delta:
-            print(f"Ephys reocrding incomplete for {session_ID} cannot populate spike data")
+    # check if ephys cuts of early
+    if session_dir.session_type == "maze":
+        ephys_diff = session_dir.ephys_duration - session_dir.pycontrol_duration
+        if ephys_diff > duration_thres:
+            print(f"Ephys duration too short, missing data, skipping UnitMatch processing")
             return
+    # check if spikesorting failed
+    if not session_dir.spikesorting_complete:  # if not path (eg, np.nan)
+        print(
+            f"Spikesorting failed for {session_dir.subject_ID} {session_dir.date.isoformat()}, missing preprocessed data"
+        )
     if not overwrite and (processed_data_path / "UnitMatch").exists():
         pass
     else:

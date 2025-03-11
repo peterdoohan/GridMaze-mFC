@@ -19,6 +19,9 @@ import probeinterface as pi
 from . import get_ephys_data as ed
 
 # %% Global variables
+from spikeinterface import core as si
+
+si.set_global_job_kwargs(n_jobs=80, chunk_duration="1s", progress_bar=True)
 
 # %% Functions
 
@@ -63,14 +66,19 @@ def get_LFP_times(session_dir, downsample_frequency=1500):
     Returns:
         lfp_times (np.array): Array of LFP times in seconds from start of session
     """
-    raw_rec = _load_recording(session_dir)
+    raw_rec, _ = _load_recording(session_dir)
     original_sample_rate = int(raw_rec.get_sampling_frequency())  # Hz
-    ephys_sync_pulse_times = np.load(session_dir.ephys_sync_path)[::2]  # timestamps in 2_500 Hz sample ids
-    pycontrol_sync_pulse_times = di.Session(session_dir.pycontrol_path).times["rsync"]  # seconds
-    rsync_aligner = Rsync_aligner(
-        ephys_sync_pulse_times, pycontrol_sync_pulse_times, units_A=1 / original_sample_rate, units_B=1
-    )
-    lfp_times = rsync_aligner.A_to_B(np.arange(raw_rec.get_num_frames()), extrapolate=True)  # sample rate still 2500 Hz
+    if session_dir.session_type == "rest":
+        lfp_times = raw_rec.get_times()  # seconds
+    else:  # "maze"
+        ephys_sync_pulse_times = np.load(session_dir.ephys_sync_path)[::2]  # timestamps in 2_500 Hz sample ids
+        pycontrol_sync_pulse_times = di.Session(session_dir.pycontrol_path).times["rsync"]  # seconds
+        rsync_aligner = Rsync_aligner(
+            ephys_sync_pulse_times, pycontrol_sync_pulse_times, units_A=1 / original_sample_rate, units_B=1
+        )
+        lfp_times = rsync_aligner.A_to_B(
+            np.arange(raw_rec.get_num_frames()), extrapolate=True
+        )  # sample rate still 2500 Hz
     n_downsampled = int(len(lfp_times) * downsample_frequency / original_sample_rate)
     # downsample with linear interpolation
     interp_func = interp1d(np.arange(len(lfp_times)), lfp_times, kind="linear")
@@ -90,9 +98,11 @@ def get_LFP_metrics(session_dir, downsample_frequency=1500):
     tissue_sample = ed._get_tissue_sample(session_dir.subject_ID, session_dir.date)
     probe_anatomy_df = probe_anatomy_df[probe_anatomy_df.tissue_sample == tissue_sample]
     channels_to_keep = get_lfp_channels_to_keep(probe_df)
-    lfp_metrics_df = probe_anatomy_df[probe_anatomy_df.contact.id.isin(channels_to_keep)]
-    lfp_metrics_df[("contact" "qc")] = lfp_metrics_df.contact.id.apply(lambda x: f"CH{x}").map(channel_assigments)
-    lfp_metrics_df[("sampling_rate", "")] = downsample_frequency
+    lfp_metrics_df = probe_anatomy_df[probe_anatomy_df.contact.id.isin(channels_to_keep)].copy()
+    lfp_metrics_df.loc[:, ("contact", "qc")] = lfp_metrics_df.contact.id.apply(lambda x: f"CH{x}").map(
+        channel_assigments
+    )
+    lfp_metrics_df.loc[:, ("sampling_rate", "")] = downsample_frequency
     return lfp_metrics_df
 
 
