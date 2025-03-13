@@ -75,6 +75,13 @@ def _processed_data(filepath):
         data = np.load(filepath)
     elif processed_data_structure == "clusters.metrics.htsv":
         data = pd.read_csv(filepath, sep="\t")
+    elif processed_data_structure == "lfp.times.npy":
+        data = np.load(filepath)
+    elif processed_data_structure == "lfp.signal.npy":
+        data = np.load(filepath)
+        data = data.astype(np.float32)
+    elif processed_data_structure == "lfp.metrics.htsv":
+        data = pd.read_csv(filepath, sep="\t")
     else:
         raise ValueError(f"Processed data structure {processed_data_structure} not recognised")
     if data is None:
@@ -111,26 +118,11 @@ def _analysis_data(filepath):
         data = _load_multiindex_parquet(filepath)
     elif analysis_data_structure == "distance_to_goal_aligned_rates.parquet":
         data = _load_multiindex_parquet(filepath)
-    elif analysis_data_structure == "clusters.placeDirectionTuning.parquet":
-        data = pd.read_parquet(filepath)
-    elif analysis_data_structure == "clusters.spatialPeriodicity.parquet":
-        data = _load_multiindex_parquet(filepath)
     elif analysis_data_structure == "head_direction_tuning.parquet":
         data = _load_multiindex_parquet(filepath)
     elif analysis_data_structure == "allocentric_angle_to_goal_tuning.parquet":
         data = _load_multiindex_parquet(filepath)
     elif analysis_data_structure == "egocentric_angle_to_goal_tuning.parquet":
-        data = _load_multiindex_parquet(filepath)
-    elif analysis_data_structure == "routes.parquet":
-        data = _load_multiindex_parquet(filepath)
-    elif analysis_data_structure == "frames.routes.parquet":
-        data = _load_multiindex_parquet(filepath)
-    elif analysis_data_structure == "routes_prior.json":
-        with open(filepath, "r") as infile:
-            data = json.load(infile)
-    elif analysis_data_structure == "route_change_aligned_rates.parquet":
-        data = _load_multiindex_parquet(filepath)
-    elif analysis_data_structure == "route_aligned_rates.parquet":
         data = _load_multiindex_parquet(filepath)
     else:
         raise ValueError(f"Analysis data structure {analysis_data_structure} not recognised")
