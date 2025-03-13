@@ -182,11 +182,9 @@ def _populate_pycontrol_data(session_dir, processed_data_folder, overwrite):
     Saves trials.htsv and events.htsv for a given session to the corresponding processed_data_folder.
     If overwirte=True, the function will overwrite an existing trials.htsv and events.htsv files.
     """
-    if session_dir.session_type == "rest":
-        # no pycontrol data for rest/sleep sessions
+    if session_dir.session_type == "rest":  # no pycontrol data for rest/sleep sessions
         return
-    if session_dir.short_session:
-        print("Incomplete session data (short session), skip pycontrol processing")
+    if not pass_data_QC(session_dir, "pycontrol"):  # issues with raw data
         return
     if not overwrite and (processed_data_folder / "trials.htsv").exists():
         pass
@@ -207,16 +205,9 @@ def _populate_video_data(session_dir, processed_data_folder, overwrite, duration
     Saves tracking.htsv, trajectories.htsv and trialInfo.htsv for a given session to the corresponding processed_data_folder.
     If overwirte=True, the function will overwrite an existing files.
     """
-    if session_dir.session_type == "rest":
-        # no video data for rest/sleep sessions
+    if session_dir.session_type == "rest":  # no video data for rest/sleep sessions
         return
-    if session_dir.short_session:
-        print("Incomplete session data (short session), skip video processing")
-        return
-    # check if video cuts of early
-    vid_diff = session_dir.video_duration - session_dir.pycontrol_duration
-    if vid_diff > duration_thres:
-        print(f"Video duration too short, missing data, skipping video processing")
+    if not pass_data_QC(session_dir, "video"):  # issues with raw data
         return
     # save tracking data
     if not overwrite and (processed_data_folder / "frames.tracking.htsv").exists():
@@ -248,40 +239,27 @@ def _populate_spike_data(session_dir, processed_data_folder, overwrite, duration
 
     Note rest sessions are not processed here because they have not yet been preprocessed with Kilosort (as of 2024-09-24)
     """
-    if session_dir.short_session:
-        print("Incomplete session data (short session), skip ephys processing")
+    if not pass_data_QC(session_dir, "spikes"):  # issues with raw data
         return
-    # check if ephys cuts of early
-    if session_dir.session_type == "maze":
-        ephys_diff = session_dir.ephys_duration - session_dir.pycontrol_duration
-        if ephys_diff > duration_thres:
-            print(f"Ephys duration too short, missing data, skipping ephys processing")
-            return
-    # check if spikesorting failed
-    if not session_dir.spikesorting_complete:  # if not path (eg, np.nan)
-        print(
-            f"Spikesorting failed for {session_dir.subject_ID} {session_dir.date.isoformat()}, missing preprocessed data"
-        )
-        # no spike data for this session
-        return
+    # save spike times
     if not overwrite and (processed_data_folder / "spikes.times.npy").exists():
         pass
     else:
         spike_pytimes = ed.get_spike_times(session_dir)
         np.save(processed_data_folder / "spikes.times.npy", spike_pytimes)
+    # save spike clusters
     if not overwrite and (processed_data_folder / "spikes.clusters.npy").exists():
         pass
     else:
         spike_clusters = ed.get_spike_clusters(session_dir)
         np.save(processed_data_folder / "spikes.clusters.npy", spike_clusters)
+    # save cluster metrics
     if not overwrite and (processed_data_folder / "clusters.metrics.htsv").exists():
         pass
     else:
         cluster_metrics = ed.get_cluster_metrics(session_dir)
-        if cluster_metrics is None:
-            return
-        else:
-            cluster_metrics.to_csv(processed_data_folder / "clusters.metrics.htsv", sep="\t", index=False)
+        cluster_metrics.columns = _flatten_multiindex_columns(cluster_metrics)
+        cluster_metrics.to_csv(processed_data_folder / "clusters.metrics.htsv", sep="\t", index=False)
     return
 
 
@@ -292,56 +270,36 @@ def _populate_lfp_data(session_dir, processed_data_folder, overwrite, duration_t
 
     Note rest sessions are not processed here because they have not yet been preprocessed with Kilosort (as of 2024-09-24)
     """
-    if session_dir.short_session:
-        print("Incomplete session data (short session), skip lfp processing")
+    if not pass_data_QC(session_dir, "lfp"):  # issues with raw data
         return
-    # check if ephys cuts of early
-    if session_dir.session_type == "maze":
-        ephys_diff = session_dir.ephys_duration - session_dir.pycontrol_duration
-        if ephys_diff > duration_thres:
-            print(f"Ephys duration too short, missing data, skipping lfp processing")
-            return
-    # check if spikesorting failed
-    if not session_dir.spikesorting_complete:  # if not path (eg, np.nan)
-        print(
-            f"Spikesorting failed for {session_dir.subject_ID} {session_dir.date.isoformat()}, skip lfp likely raw data issue"
-        )
+    # save lfp signal
     if not overwrite and (processed_data_folder / "lfp.signal.npy").exists():
         pass
     else:
         lfp_signal = ld.get_LFP_signal(session_dir)
         np.save(processed_data_folder / "lfp.signal.npy", lfp_signal)
+    # save lfp times
     if not overwrite and (processed_data_folder / "lfp.time.npy").exists():
         pass
     else:
         lfp_times = ld.get_LFP_times(session_dir)
         np.save(processed_data_folder / "lfp.time.npy", lfp_times)
+    # save lfp metrics
     if not overwrite and (processed_data_folder / "lfp.metrics.htsv").exists():
         pass
     else:
         lfp_metrics = ld.get_LFP_metrics(session_dir)
+        lfp_metrics.columns = _flatten_multiindex_columns(lfp_metrics)
         lfp_metrics.to_csv(processed_data_folder / "lfp.metrics.htsv", sep="\t", index=False)
     return
 
 
 def _populate_unit_match_data(session_dir, processed_data_path, overwrite, duration_thres=5):
     """ """
-    # session_ID = f"{session_dir.subject_ID}-{session_dir.date}-{session_dir.session_type}"
-    if session_dir.short_session:
-        print("Incomplete session data (short session), skip UnitMatch processing")
+
+    if not pass_data_QC(session_dir, "unit_match"):  # issues with raw data
         return
-    # check if ephys cuts of early
-    if session_dir.session_type == "maze":
-        ephys_diff = session_dir.ephys_duration - session_dir.pycontrol_duration
-        if ephys_diff > duration_thres:
-            print(f"Ephys duration too short, missing data, skipping UnitMatch processing")
-            return
-    # check if spikesorting failed
-    if not session_dir.spikesorting_complete:  # if not path (eg, np.nan)
-        print(
-            f"Spikesorting failed for {session_dir.subject_ID} {session_dir.date.isoformat()}, missing preprocessed data"
-        )
-        return
+    # save unit match data
     if not overwrite and (processed_data_path / "UnitMatch").exists():
         pass
     else:
@@ -353,13 +311,41 @@ def _populate_unit_match_data(session_dir, processed_data_path, overwrite, durat
 # %% Misc
 
 
+def pass_data_QC(session_dir, data_stream, duration_thres=5):
+    """
+    Checks if the there are any issues with the raw data that prevent processing.
+    Eg, missing ephys, missing video, incomplete total session etc.
+    Data could be salvaged from all the sessions excluded through this method, but
+    easier to avoid for now.
+    """
+    session_ID = f"{session_dir.subject_ID}-{session_dir.date.isoformat()}-{session_dir.session_type}"
+    # if session is short (incomplete) skip processing for everything except session_info
+    if data_stream != "session_info":
+        if session_dir.short_session:
+            print(f"Sesssion: {session_ID}: Incomplete session, skip processing")
+            return False
+    # check ephys and video if durations line up with pycontrol (indiciative of missing data)
+    if session_dir.session_type == "maze":
+        if data_stream in ["spikes", "lfp", "unit_match"]:
+            ephys_diff = session_dir.ephys_duration - session_dir.pycontrol_duration
+            if ephys_diff > duration_thres:
+                print(f"Session: {session_ID}: Ephys duration too short, missing data, skipping processing")
+                return False
+            if not session_dir.spikesorting_completed:
+                print(f"Session: {session_ID}: Spikesorting not completed, skipping processing")
+                return False
+        elif data_stream == "video":
+            video_diff = session_dir.video_duration - session_dir.pycontrol_duration
+            if video_diff > duration_thres:
+                print(f"Session: {session_ID}: Video duration too short, missing data, skipping processing")
+                return False
+    return True
+
+
 def _flatten_multiindex_columns(df):
     """Returns a list of flat column names (str) where columns that were previously multiindex become level0_name.level1_name
     and single index columns stay level0_name"""
     return [f"{x[0]}.{x[1]}" if x[1] != "" else x[0] for x in df.columns.to_flat_index()]
-
-
-# %%
 
 
 def rename_processed_data(original_name, new_name):

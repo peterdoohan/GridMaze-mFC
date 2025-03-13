@@ -83,6 +83,7 @@ def _processed_data(filepath):
         data = data.astype(np.float32)
     elif processed_data_structure == "lfp.metrics.htsv":
         data = pd.read_csv(filepath, sep="\t")
+        data = _unflatten_df_columns(data)
     else:
         raise ValueError(f"Processed data structure {processed_data_structure} not recognised")
     if data is None:
