@@ -200,7 +200,7 @@ def _populate_pycontrol_data(session_dir, processed_data_folder, overwrite):
         return
 
 
-def _populate_video_data(session_dir, processed_data_folder, overwrite, duration_thres=5):
+def _populate_video_data(session_dir, processed_data_folder, overwrite):
     """
     Saves tracking.htsv, trajectories.htsv and trialInfo.htsv for a given session to the corresponding processed_data_folder.
     If overwirte=True, the function will overwrite an existing files.
@@ -232,7 +232,7 @@ def _populate_video_data(session_dir, processed_data_folder, overwrite, duration
     return
 
 
-def _populate_spike_data(session_dir, processed_data_folder, overwrite, duration_thres=5):
+def _populate_spike_data(session_dir, processed_data_folder, overwrite):
     """
     Saves spikes.times.npy, spikes.clusters.npy and cluster.metrics.htsv for a given session to the corresponding processed_data_folder.
     If overwrite is True, the function will overwrite existing files.
@@ -263,7 +263,7 @@ def _populate_spike_data(session_dir, processed_data_folder, overwrite, duration
     return
 
 
-def _populate_lfp_data(session_dir, processed_data_folder, overwrite, duration_thres=5):
+def _populate_lfp_data(session_dir, processed_data_folder, overwrite):
     """
     Saves lfp.signal.npy, lfp.time.npy and lfp.metrics.htsv for a given session to the corresponding processed_data_folder.
     If overwrite is True, the function will overwrite existing files.
@@ -294,9 +294,8 @@ def _populate_lfp_data(session_dir, processed_data_folder, overwrite, duration_t
     return
 
 
-def _populate_unit_match_data(session_dir, processed_data_path, overwrite, duration_thres=5):
+def _populate_unit_match_data(session_dir, processed_data_path, overwrite):
     """ """
-
     if not pass_data_QC(session_dir, "unit_match"):  # issues with raw data
         return
     # save unit match data
