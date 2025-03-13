@@ -12,7 +12,7 @@ from . import load_data
 from . import filter as filt
 from . import get_sessions as gs
 
-from ..cluster_tuning import actions, angle_to_goal, distance_to_goal, events, spatial, routes
+from ..cluster_tuning import actions, angle_to_goal, distance_to_goal, events, spatial
 from ..processing import get_cluster_heatmap_dfs as chm
 from ...maze import representations as mr
 

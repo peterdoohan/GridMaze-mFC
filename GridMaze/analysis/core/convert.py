@@ -7,7 +7,7 @@ import regex as re
 import numpy as np
 import itertools
 
-from GridMaze.analysis.core import get_sessions as gs
+from GridMaze.analysis.core.get_sessions import get_session_name
 from GridMaze.maze import representations as mr
 from GridMaze.analysis.distance_to_goal import distributions as dd
 from sklearn.preprocessing import OneHotEncoder
@@ -38,7 +38,7 @@ def _reverse_cluster_unique(c):
 
 
 def cluster_IDs2scluster_unique_IDs(session_info, cluster_IDs):
-    session_name = gs.get_session_name(session_info)
+    session_name = get_session_name(session_info)
     if not isinstance(cluster_IDs, Iterable):
         return f"{session_name}_cluster{int(cluster_IDs)}"
     else:
@@ -46,7 +46,7 @@ def cluster_IDs2scluster_unique_IDs(session_info, cluster_IDs):
 
 
 def trial2trial_unique_ID(session_info, trials):
-    session_name = gs.get_session_name(session_info)
+    session_name = get_session_name(session_info)
     if not isinstance(trials, Iterable):
         if np.isnan(trials):
             return trials
@@ -145,7 +145,7 @@ def goal2onehot(g, goals=ALL_GOALS):
 def egocentric_action2onehot(ea, include_egocentric_choice_degree):
     ego_actions = ["go_forward", "go_back", "turn_left", "turn_right"]
     if include_egocentric_choice_degree:  # unique string for each action eg. 'go_forward_2.0'
-        categories = [("go_back" + "_" + str(1.0))] + [
+        categories = ["go_back" + "_" + str(1.0)] + [
             x[0] + "_" + str(x[1]) for x in itertools.product(ego_actions, [2.0, 3.0, 4.0])
         ]
     else:

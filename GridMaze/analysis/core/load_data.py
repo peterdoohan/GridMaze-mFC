@@ -75,6 +75,7 @@ def _processed_data(filepath):
         data = np.load(filepath)
     elif processed_data_structure == "clusters.metrics.htsv":
         data = pd.read_csv(filepath, sep="\t")
+        data = _unflatten_df_columns(data)
     elif processed_data_structure == "lfp.times.npy":
         data = np.load(filepath)
     elif processed_data_structure == "lfp.signal.npy":
