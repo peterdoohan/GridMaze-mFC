@@ -7,11 +7,29 @@ Library for loading processed and analysis data from disk so it is appropriately
 import json
 import numpy as np
 import pandas as pd
+from datetime import date
 
 # %% Global Variables
-from ...paths import PROCESSED_DATA_PATH, ANALYSIS_DATA_PATH
+from ...paths import PROCESSED_DATA_PATH, ANALYSIS_DATA_PATH, EXPERIMENT_INFO_PATH
+
+PROBE_DEPTHS_DF = pd.read_csv(EXPERIMENT_INFO_PATH / "probe_depths.htsv", sep="\t")
 
 # %% Functions
+
+
+def load_probe(subject_ID, tissue_sample=None, _date=None):
+    """
+    Loads probe data from disk into memory. Filtering for a particular tissue sample or date
+    if provided.
+    """
+    probe_path = PROCESSED_DATA_PATH / subject_ID / "probe.htsv"
+    probe_df = pd.read_csv(probe_path, sep="\t")
+    probe_df = _unflatten_df_columns(probe_df)
+    if _date is not None:
+        tissue_sample = _get_tissue_sample(subject_ID, _date)
+    if tissue_sample is not None:
+        probe_df = probe_df[probe_df["tissue_sample"] == tissue_sample]
+    return probe_df
 
 
 def load(filepath):
@@ -150,3 +168,12 @@ def _load_multiindex_parquet(filepath):
             pass
     df[df.isna()] = np.nan  # convert None values to np.nan
     return df
+
+
+def _get_tissue_sample(subject_ID, _date):
+    df = PROBE_DEPTHS_DF.copy()
+    df["date"] = df.date.apply(date.fromisoformat)
+    subject_df = df[(df["subject"] == subject_ID) & (df["date"] <= _date)]
+    # Get the row with the latest date (i.e. the most recent measurement)
+    latest_row = subject_df.sort_values("date", ascending=False).iloc[0]
+    return latest_row.tissue_sample

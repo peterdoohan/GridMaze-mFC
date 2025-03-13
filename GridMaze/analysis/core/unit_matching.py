@@ -34,28 +34,20 @@ The following document long with many different functions so here's an overview
 
 import os
 import json
-
-import torch  # for fast cross correlations
 import numpy as np
 import pandas as pd
-import math
-
 from pathlib import Path
 from datetime import date
 from datetime import datetime
-from itertools import combinations
 from collections import defaultdict
-
 from IPython.display import Image, display
 
-# import local scripts
-from . import get_sessions as gs
-from . import convert
-from . import load_data
-
-# from ..cluster_tuning import spatial
-from ...preprocessing import get_data_directory as gdd
-from . import get_clusters as gc
+# For getting data
+from GridMaze.analysis.core import get_sessions as gs
+from GridMaze.analysis.core import convert
+from GridMaze.analysis.core import get_clusters as gc
+from GridMaze.preprocessing import get_data_directory as gdd
+from GridMaze.analysis.core import load_data
 
 # import UnitMatchPy
 import UnitMatchPy.bayes_functions as bf
@@ -75,17 +67,12 @@ from SpikeSorting import spikesort_session as sps  # some useful utils for handl
 
 # For custom probability matrix
 from sklearn.model_selection import train_test_split
-from sklearn.naive_bayes import GaussianNB
 from sklearn.svm import SVC
 
 # For custom uid assignment
 import igraph as ig
 import leidenalg as la
 from sklearn.cluster import AgglomerativeClustering
-
-
-# for quality control:
-from scipy.stats import pearsonr
 
 
 # %% GLOBAL VARIABLES
@@ -241,6 +228,7 @@ def get_paths_to_UM_sessions(
     goal_subsets = ["all", "subset_1", "subset_2"] if goal_subsets == "all" else goal_subsets
 
     requested_paths = []  # initialise
+    tissue_samples = []
     for maze in maze_names:
         for day_on_maze in days_on_maze:
             # check day_on_maze is valid
@@ -248,8 +236,8 @@ def get_paths_to_UM_sessions(
                 continue
             for session_type in session_types:
                 # check session type valid for date
-                date = MAZE_DAY2DATE[maze][str(day_on_maze)]
                 session_date = MAZE_DAY2DATE[maze][str(day_on_maze)]
+                tissue_samples.append(load_data._get_tissue_sample(subject_ID, date.fromisoformat(session_date)))
                 session_name = f"{session_date}.{session_type}"
                 processed_data_path = PROCESSED_DATA_PATH / subject_ID / session_name
                 # check goal subset is
@@ -261,6 +249,13 @@ def get_paths_to_UM_sessions(
                         )
                         continue
                 requested_paths.append(processed_data_path)
+
+    # check probe not moved between requested sessions
+    if len(set(tissue_samples)) != 1:
+        print(f"Multiple tissue samples found: {set(tissue_samples)}")
+        raise ValueError(
+            f"Consider experiment_info/probe_depths.htsv to ensure requested sessions \n for unit match were recording in the same tissue sample."
+        )
 
     if len(requested_paths) == 0:  # i.e. if list is still empty
         raise FileNotFoundError(f"No files were found. Please change request from: \n {dict}")
