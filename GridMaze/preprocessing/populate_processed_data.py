@@ -37,7 +37,11 @@ def populate_subject_probes(overwrite=False):
     return
 
 
-def populate_processed_data(data_streams=["session_info", "pycontrol", "video", "spikes", "lfp"], overwrite=False):
+def populate_processed_data(
+    data_streams=["session_info", "pycontrol", "video", "spikes", "lfp", "unit_match"],
+    overwrite=False,
+    verbose=False,
+):
     """
     Top level function for populating processed data for entire experiment.
     Args:
@@ -57,6 +61,8 @@ def populate_processed_data(data_streams=["session_info", "pycontrol", "video", 
         print(f"Processing {data_stream} data")
         preprocessing_fn = data_stream2fn[data_stream]
         for session_dir in sessions_data_directory.itertuples():
+            if verbose:
+                print(f"Processing {session_dir.subject_ID} {session_dir.date.isoformat()} {session_dir.session_type}")
             processed_data_folder = (
                 PROCESSED_DATA_PATH
                 / session_dir.subject_ID
@@ -335,6 +341,7 @@ def _populate_unit_match_data(session_dir, processed_data_path, overwrite, durat
         print(
             f"Spikesorting failed for {session_dir.subject_ID} {session_dir.date.isoformat()}, missing preprocessed data"
         )
+        return
     if not overwrite and (processed_data_path / "UnitMatch").exists():
         pass
     else:

@@ -68,13 +68,17 @@ def get_LFP_times(session_dir, downsample_frequency=1500):
     """
     raw_rec, _ = _load_recording(session_dir)
     original_sample_rate = int(raw_rec.get_sampling_frequency())  # Hz
+    print(original_sample_rate)
     if session_dir.session_type == "rest":
         lfp_times = raw_rec.get_times()  # seconds
     else:  # "maze"
         ephys_sync_pulse_times = np.load(session_dir.ephys_sync_path)[::2]  # timestamps in 2_500 Hz sample ids
-        pycontrol_sync_pulse_times = di.Session(session_dir.pycontrol_path).times["rsync"]  # seconds
+        pycontrol_sync_pulse_times = di.Session(session_dir.pycontrol_path).times["rsync"] / 1000  # seconds
         rsync_aligner = Rsync_aligner(
-            ephys_sync_pulse_times, pycontrol_sync_pulse_times, units_A=1 / original_sample_rate, units_B=1
+            ephys_sync_pulse_times,
+            pycontrol_sync_pulse_times,
+            units_A=(1 / original_sample_rate),
+            units_B=1,
         )
         lfp_times = rsync_aligner.A_to_B(
             np.arange(raw_rec.get_num_frames()), extrapolate=True
