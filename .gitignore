@@ -1,3 +1,5 @@
-/jobs
 /SpikeSorting/jobs/**
 **/__pycache__/
+**/err/
+**/out/
+**/slurm/
