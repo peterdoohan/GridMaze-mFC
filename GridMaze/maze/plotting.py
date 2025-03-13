@@ -21,8 +21,6 @@ from ..paths import EXPERIMENT_INFO_PATH
 # %% Set gobal variables
 mpl.rcParams["font.family"] = "Arial"
 mpl.rcParams["font.size"] = 12
-with open("../data/experiment_info.json") as input_file:
-    EXP_INFO = json.load(input_file)
 
 with open(EXPERIMENT_INFO_PATH / "maze_configs.json", "r") as input_file:
     MAZE_CONFIGS = json.load(input_file)
