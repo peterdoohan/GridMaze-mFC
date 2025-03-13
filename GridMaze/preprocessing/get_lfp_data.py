@@ -116,7 +116,7 @@ def get_LFP_metrics(session_dir, downsample_frequency=1500):
 def _load_recording(session_dir):
     probe = pi.get_probe(manufacturer="cambridgeneurotech", probe_name="ASSY-236-F")
     probe.wiring_to_device("cambridgeneurotech_mini-amp-64")
-    raw_rec = se.read_openephys(session_dir.ephys_data_path)
+    raw_rec = se.read_openephys(session_dir.ephys_data_path, block_index=0)
     raw_rec = raw_rec.set_probe(probe)
     return raw_rec, probe
 

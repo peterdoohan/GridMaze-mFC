@@ -330,14 +330,15 @@ def pass_data_QC(session_dir, data_stream, duration_thres=5):
             if ephys_diff > duration_thres:
                 print(f"Session: {session_ID}: Ephys duration too short, missing data, skipping processing")
                 return False
-            if not session_dir.spikesorting_completed:
-                print(f"Session: {session_ID}: Spikesorting not completed, skipping processing")
-                return False
         elif data_stream == "video":
             video_diff = session_dir.video_duration - session_dir.pycontrol_duration
             if video_diff > duration_thres:
                 print(f"Session: {session_ID}: Video duration too short, missing data, skipping processing")
                 return False
+    # check if spikesorting failed
+    if not session_dir.spikesorting_complete and data_stream in ["spikes", "lfp", "unit_match"]:
+        print(f"Session: {session_ID}: Spikesorting not completed, skipping processing")
+        return False
     return True
 
 
