@@ -179,11 +179,12 @@ def get_angles_to_goal(navigation_df, skeleton_maze):
         trial_allo_angles = []
         for _, row in trial_nav_df.iterrows():
             current_position = (row.centroid_position.x, row.centroid_position.y)
-            dy = current_position[1] - sk_goal_pos[1]  # change in y relative to goal location
-            dx = current_position[0] - sk_goal_pos[0]  # change in x relative to goal location
-            allocentric_angle_to_goal = np.arctan2(dy, dx)  # coordinates in  flipped order for arctan2
-            allocentric_angle_to_goal = np.rad2deg(allocentric_angle_to_goal)
-            allocentric_angle_to_goal = (allocentric_angle_to_goal) % 360
+            dy = sk_goal_pos[1] - current_position[1]  # change in y relative to goal location
+            dx = sk_goal_pos[0] - current_position[0]  # change in x relative to goal location
+            allocentric_angle_to_goal = np.arctan2(
+                dy, dx
+            )  # coordinates in  flipped order for arctan2 between -pi/2, pi/2
+            allocentric_angle_to_goal = np.rad2deg(allocentric_angle_to_goal) % 360  # convert to degrees between 0, 360
             head_direction = row.head_direction.values[0]
             if allocentric_angle_to_goal > head_direction:
                 egocentric_angles_to_goal = allocentric_angle_to_goal - head_direction

@@ -24,6 +24,9 @@ MAZE_PROCESSED_DATA_STRUCTURE2FILENAME = {
     "tracking_df": "frames.tracking.htsv",
     "trajectories_df": "frames.trajectories.htsv",
     "trial_info_df": "frames.trialInfo.htsv",
+    "lfp_times": "lfp.times.npy",
+    "lfp_signal": "lfp.signal.npy",
+    "lfp_metrics": "lfp.metrics.htsv",
 }
 
 MAZE_ANALYSIS_DATA_STRUCTURE2FILENAME = {
@@ -38,15 +41,9 @@ MAZE_ANALYSIS_DATA_STRUCTURE2FILENAME = {
     "distance_to_goal_aligned_rates_df": "distance_to_goal_aligned_rates.parquet",
     "place_tuning_df": "clusters.placeTuning.parquet",
     "place_direction_tuning_df": "clusters.placeDirectionTuning.parquet",
-    "spatial_periodicity_df": "clusters.spatialPeriodicity.parquet",
     "head_direction_tuning_df": "head_direction_tuning.parquet",
     "allocentric_angle_to_goal_tuning_df": "allocentric_angle_to_goal_tuning.parquet",
     "egocentric_angle_to_goal_tuning_df": "egocentric_angle_to_goal_tuning.parquet",
-    "routes_df": "routes.parquet",
-    "navigation_routes_df": "frames.routes.parquet",
-    "routes_prior": "routes_prior.json",
-    "route_change_aligned_rates_df": "route_change_aligned_rates.parquet",
-    "route_aligned_rates_df": "route_aligned_rates.parquet",
 }
 
 ALL_MAZE_DATA_STRUCTURES2FILENAME = {**MAZE_PROCESSED_DATA_STRUCTURE2FILENAME, **MAZE_ANALYSIS_DATA_STRUCTURE2FILENAME}
