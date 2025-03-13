@@ -7,17 +7,17 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from ..core import get_clusters as gc
 
-from...maze import plotting as mp
+from ...maze import plotting as mp
 from scipy.ndimage import gaussian_filter1d
 
 # %% Global Variables (TODO: Update to store in analysis info folder)
 ANALYSIS_DATA_PATH = "../data/analysis_data"
 
 
-with open(os.path.join(ANALYSIS_DATA_PATH, "analysis_info.json"), "r") as infile:
-    ANALYSIS_INFO = json.load(infile)
+# with open(os.path.join(ANALYSIS_DATA_PATH, "analysis_info.json"), "r") as infile:
+#     ANALYSIS_INFO = json.load(infile)
 
-MAX_DISTANCES = ANALYSIS_INFO["trial_max_distance_85th_quantiles"]
+# MAX_DISTANCES = ANALYSIS_INFO["trial_max_distance_85th_quantiles"]
 
 # %% Functions
 
@@ -37,8 +37,7 @@ def plot_session_distance_to_goal_tuning(session, metrics=("distance_to_goal", "
 def get_distance_to_goal_tuning_df(
     distance_rates_df, metrics=("distance_to_goal", "geodesic"), bin_spacing=0.04, n_bins=40, moving_only=False
 ):
-    """
-    """
+    """ """
     distance_rates_df = distance_rates_df.copy()
     trial2goal = distance_rates_df.set_index("trial").goal.dropna().to_dict()
     # deal with moving only
@@ -50,7 +49,9 @@ def get_distance_to_goal_tuning_df(
         n_bins = int(max_distance / bin_spacing)
         distance_rates_df = distance_rates_df[distance_rates_df[metrics[0]] < max_distance]
     # bin distances
-    distance_rates_df["distance_bin"] = pd.cut(distance_rates_df[metrics[0]], bins=n_bins, include_lowest=True).to_numpy()
+    distance_rates_df["distance_bin"] = pd.cut(
+        distance_rates_df[metrics[0]], bins=n_bins, include_lowest=True
+    ).to_numpy()
     # average over frames in each bin over trials
     trial_av_rates = distance_rates_df.groupby(["trial", "distance_bin"], observed=True).firing_rate.mean().unstack()
     # organise tuning df
@@ -74,7 +75,7 @@ def plot_distance_tuning(distance_tuning_df, metrics, goal_stratified=False, smo
     ax.set_xlabel(f"{metrics[0]}: {metrics[1]}")
     if metrics[0] == "distance_to_goal":
         ax.set_xlim(0, MAX_DISTANCES[metrics[1]])
-    else: #progress_to_goal
+    else:  # progress_to_goal
         ax.set_xlim(0, 1)
     # process data for plotting
     if not goal_stratified:
@@ -101,7 +102,8 @@ def plot_distance_tuning(distance_tuning_df, metrics, goal_stratified=False, smo
             _plot_distance_tuning(mean, sem, distances, ax, goal2color[goal])
     return
 
+
 def _plot_distance_tuning(mean, sem, distances, ax, color):
     ax.plot(distances, mean, color=color)
-    ax.fill_between(distances, mean-sem, mean+sem, color=color, alpha=0.2)
+    ax.fill_between(distances, mean - sem, mean + sem, color=color, alpha=0.2)
     return
