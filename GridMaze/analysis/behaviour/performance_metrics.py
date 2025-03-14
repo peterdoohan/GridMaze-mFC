@@ -202,6 +202,3 @@ def _get_n_excess_steps(session):
         else:  # NaN value is trials start right next to goal
             trial_excess_steps.append(np.nan)
     return trial_excess_steps
-
-
-# %% Quick test for entropy
