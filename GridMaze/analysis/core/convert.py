@@ -7,7 +7,6 @@ import regex as re
 import numpy as np
 import itertools
 
-from GridMaze.analysis.core.get_sessions import get_session_name
 from GridMaze.maze import representations as mr
 from GridMaze.analysis.distance_to_goal import distributions as dd
 from sklearn.preprocessing import OneHotEncoder
@@ -54,6 +53,10 @@ def trial2trial_unique_ID(session_info, trials):
             return f"{session_name}_trial{int(trials)}"
     else:
         return [f"{session_name}_trial{int(t)}" if not np.isnan(t) else t for t in trials]
+
+
+def get_session_name(session_info):
+    return f"{session_info['subject_ID']}.{session_info['session_date']}.{session_info['session_type']}"
 
 
 # %% Convert to OneHots
