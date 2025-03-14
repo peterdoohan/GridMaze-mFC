@@ -40,13 +40,13 @@ ANALYSIS_DATA_STRUCTURES_DF = pd.DataFrame(
         {"filename": "trial_aligned_rates.parquet", "function": get_trial_aligned_rates_df, "session_types": ["maze"]},
         {"filename": "event_aligned_rates.parquet", "function": get_event_aligned_rates_df, "session_types": ["maze"]},
         {
-            "filename": "action_aligned_rates.parquet",
-            "function": get_basic_action_aligned_rates_df,
+            "filename": "navigation_strategies.parquet",
+            "function": get_navigation_strategies_df,
             "session_types": ["maze"],
         },
         {
-            "filename": "navigation_strategies.parquet",
-            "function": get_navigation_strategies_df,
+            "filename": "action_aligned_rates.parquet",
+            "function": get_basic_action_aligned_rates_df,
             "session_types": ["maze"],
         },
         {

@@ -1,5 +1,5 @@
 """
-Library of fns to calculate basic performance metrics for maze navigation & 
+Library of fns to calculate basic performance metrics for maze navigation &
 plot the results
 @peterdoohan
 """
@@ -63,53 +63,107 @@ def get_basic_behaviour_df():
         return combined_results
 
 
-def plot_performance_metrics(basic_behaviour_df, axes=None):
-    if axes is None:
-        f, axes = plt.subplots(2, 2, figsize=(6, 6), clear=True)
+def plot_performance_metrics(basic_behaviour_df, cmap="plasma"):
+    """ """
+    f, axes = plt.subplots(1, 3, figsize=(6, 3), clear=True)
+    _plot_trials(basic_behaviour_df, ax=axes[0], cmap=cmap)
+    _plot_durations(basic_behaviour_df, ax=axes[1], cmap=cmap)
+    _plot_n_excess_steps(basic_behaviour_df, ax=axes[2], cmap=cmap)
+    f.tight_layout()
+
+
+# %% subplots
+
+
+def _plot_n_excess_steps(basic_behaviour_df, ax=None, legend=False, cmap="plasma"):
+    """ """
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(1, 2), clear=True)
+    ax.spines[["top", "right"]].set_visible(False)
+    grouped_df = basic_behaviour_df.groupby(["maze_name", "subject_ID", "day_on_maze"])
+    n_excess_steps_df = grouped_df["n_excess_steps"].median().reset_index()
+    sns.lineplot(
+        x="day_on_maze",
+        y="n_excess_steps",
+        hue="maze_name",
+        data=n_excess_steps_df,
+        errorbar="se",
+        err_style="band",
+        palette=cmap,
+        ax=ax,
+        legend=legend,
+    )
+    ax.set_xlabel("Day on Maze")
+    ax.set_ylabel("n Excess Steps")
+
+
+def _plot_errors(basic_behaviour_df, ax=None, legend=False, cmap="plasma"):
+    """ """
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(1, 2), clear=True)
+    ax.spines[["top", "right"]].set_visible(False)
+    grouped_df = basic_behaviour_df.groupby(["maze_name", "subject_ID", "day_on_maze"])
+    errors_df = grouped_df["errors"].mean().reset_index()
+    sns.lineplot(
+        x="day_on_maze",
+        y="errors",
+        hue="maze_name",
+        data=errors_df,
+        errorbar="se",
+        err_style="band",
+        palette=cmap,
+        ax=ax,
+        legend=legend,
+    )
+    ax.set_xlabel("Day on Maze")
+    ax.set_ylabel("Errors")
+
+
+def _plot_durations(basic_behaviour_df, ax=None, legend=False, cmap="plasma"):
+    """ """
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(1, 2), clear=True)
+    ax.spines[["top", "right"]].set_visible(False)
+    grouped_df = basic_behaviour_df.groupby(["maze_name", "subject_ID", "day_on_maze"])
+    duration_df = grouped_df["duration"].median().reset_index()
+    sns.lineplot(
+        x="day_on_maze",
+        y="duration",
+        hue="maze_name",
+        data=duration_df,
+        errorbar="se",
+        err_style="band",
+        palette=cmap,
+        ax=ax,
+        legend=legend,
+    )
+    ax.set_xlabel("Day on Maze")
+    ax.set_ylabel("Duration (s)")
+
+
+def _plot_trials(basic_behaviour_df, ax=None, legend=False, cmap="plasma"):
+    """ """
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(1, 2), clear=True)
+    ax.spines[["top", "right"]].set_visible(False)
     grouped_df = basic_behaviour_df.groupby(["maze_name", "subject_ID", "day_on_maze"])
     trial_counts_df = grouped_df["trial"].max().reset_index()
-    duration_df = grouped_df["duration"].median().reset_index()
-    errors_df = grouped_df["errors"].mean().reset_index()
-    n_excess_steps_df = grouped_df["n_excess_steps"].median().reset_index()
-    grouped_dfs = [
-        trial_counts_df,
-        duration_df,
-        errors_df,
-        n_excess_steps_df,
-    ]
-    ylabels = [
-        "Trials",
-        "Duration (s)",
-        "Errors",
-        "n Excess Steps",
-    ]
-    y_var = [
-        "trial",
-        "duration",
-        "errors",
-        "n_excess_steps",
-    ]
-    for grouped_df, ylabel, y, ax in zip(grouped_dfs, ylabels, y_var, axes.flatten()):
-        legend = True if ylabel == "Duration (s)" else False
-        sns.lineplot(
-            x="day_on_maze",
-            y=y,
-            hue="maze_name",
-            data=grouped_df,
-            errorbar="se",
-            err_style="band",
-            palette="plasma",
-            ax=ax,
-            legend=legend,
-        )
-        ax.set_xlim(1, 14)
-        ax.set_xticks(np.arange(1, 14, 2))
-        ax.set_xlabel("Day on Maze")
-        ax.set_ylabel(ylabel)
-        ax.spines["right"].set_visible(False)
-        ax.spines["top"].set_visible(False)
-    f.tight_layout()
-    return
+    sns.lineplot(
+        x="day_on_maze",
+        y="trial",
+        hue="maze_name",
+        data=trial_counts_df,
+        errorbar="se",
+        err_style="band",
+        palette=cmap,
+        ax=ax,
+        legend=legend,
+    )
+    ax.set_xlabel("Day on Maze")
+    ax.set_ylabel("Trials")
+
+
+# %%
 
 
 def _get_n_excess_steps(session):
@@ -148,3 +202,6 @@ def _get_n_excess_steps(session):
         else:  # NaN value is trials start right next to goal
             trial_excess_steps.append(np.nan)
     return trial_excess_steps
+
+
+# %% Quick test for entropy
