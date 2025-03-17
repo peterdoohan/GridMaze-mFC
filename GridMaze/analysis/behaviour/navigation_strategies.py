@@ -22,12 +22,6 @@ from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
 
 INVALID_TRANSITION = -100
 LOG_MAX_FLOAT = np.log(sys.float_info.max / 2.1)
-DATA_PATH = "../data"
-with open(os.path.join(DATA_PATH, "experiment_info.json")) as f:
-    EXP_INFO = json.load(f)
-
-# with open(EXPERIMENT_INFO_PATH / "maze_configs.json", "r") as input_file:
-#     MAZE_CONFIGS = json.load(input_file)
 
 with open(EXPERIMENT_INFO_PATH / "maze_day2date.json", "r") as input_file:
     MAZE_DAY2DATE = json.load(input_file)
@@ -109,7 +103,7 @@ def softmax(V, choice_mask):
 # %% Plotting functions
 
 
-def get_strategy_weights_across_subjects():
+def get_strategy_weights_across_subjects(plot=False):
     """ """
     navigation_strategy_weights = []
     for subject in SUBJECT_IDS:
@@ -117,7 +111,7 @@ def get_strategy_weights_across_subjects():
             late_sessions = gs.get_maze_sessions(
                 subject_IDs=[subject],
                 maze_names=[maze_name],
-                days_on_maze="late",  # define late sessions as day 5+
+                days_on_maze="late",  # define late sessions as last 7 days on each maze
                 with_data=["navigation_strategies_df"],
             )
             strategy_weights = get_navigation_strategy_weights(late_sessions)
@@ -131,6 +125,8 @@ def get_strategy_weights_across_subjects():
                 }
             )
     navigation_strategy_weights_df = pd.DataFrame(navigation_strategy_weights)
+    if plot:
+        plot_strategy_weights_cross_subject(navigation_strategy_weights_df)
     return navigation_strategy_weights_df
 
 
@@ -197,14 +193,14 @@ def plot_strategy_weights_cross_subject(
 # %% weights over sessions functions
 
 
-def get_strategy_weights_across_sessions(n_itter=1000):
+def get_strategy_weights_across_sessions(n_itter=1000, plot=False):
     """
     X
     """
     save_path = (
         RESULTS_PATH
         / "behaviour"
-        / "navigation_strategies_modelling/"
+        / "navigation_strategies_modelling"
         / "navigation_strategy_weights_over_sessions.htsv"
     )
     if save_path.exists():
@@ -232,6 +228,8 @@ def get_strategy_weights_across_sessions(n_itter=1000):
         navigation_strategy_weights_df = pd.DataFrame(navigation_strategy_weights)
         # save the results
         navigation_strategy_weights_df.to_csv(save_path, sep="\t", index=False)
+    if plot:
+        plot_nav_strategy_weights_over_sessions(navigation_strategy_weights_df)
     return navigation_strategy_weights_df
 
 
