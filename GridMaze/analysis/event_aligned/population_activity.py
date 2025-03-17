@@ -4,27 +4,44 @@ Library of calculating and ploting mFC population activity aligned to cue, rewar
 """
 
 # %% Imports
+import json
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy.stats import zscore
+from GridMaze.analysis.core import get_sessions as gs
 
 # %% Global Variables
+from GridMaze.paths import EXPERIMENT_INFO_PATH, ANALYSIS_INFO_PATH
+
+with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
+    SUBJECT_IDS = json.load(input_file)
+
+with open(ANALYSIS_INFO_PATH / "intra_trial_interval_times.json", "r") as input_file:
+    INTRA_TRIAL_INTERVAL_TIMES = json.load(input_file)
+
+# %% New functions
 
 
-# %% Functions
+# %% Old Functions
 
 
-def get_population_average_aligned_activity(
+def get_event_aligned_population_acitivity(
     plot=True, aligned_to="event", normalise_clusters="max", normalise_sessions="max"
 ):
     """"""
     av_rates = []
     data_structure = aligned_to + "_aligned_rates_df"
-    for subject in EXP_INFO["subject_IDs"]:
-        sessions = gs.get_sessions(
-            subject_IDs=[subject], maze_number="all", day_on_maze="late", with_data=[data_structure]
+    for subject in SUBJECT_IDS:
+        sessions = gs.get_maze_sessions(
+            subject_IDs=[subject], maze_names="all", day_on_maze="late", with_data=[data_structure, "cluster_metrics"]
         )
         session_av_rates = []
         for session in sessions:
             aligned_rates_df = getattr(session, data_structure)
-            aligned_rates_df = aligned_rates_df[aligned_rates_df.cluster_type == "good"]
+            # only include single units
+            cluster_metrics = session.cluster_metrics
+            single_units = cluster_metrics[cluster_metrics.single_unit].cluster_ID.values
+            aligned_rates_df = aligned_rates_df[aligned_rates_df.cluster_ID.isin(single_units)]
             # average neurons over trials
             trial_average_rates = (
                 aligned_rates_df.set_index("cluster_unique_ID").groupby("cluster_unique_ID").mean().firing_rate
@@ -45,7 +62,7 @@ def get_population_average_aligned_activity(
         subject_av_rates = subject_av_rates.mean()
         av_rates.append(subject_av_rates)
     population_average_rates = pd.concat(av_rates, axis=1).T
-    population_average_rates.index = EXP_INFO["subject_IDs"]
+    population_average_rates.index = SUBJECT_IDS
     if plot:
         if aligned_to == "event":
             _plot_population_event_aligned_activity(population_average_rates)
