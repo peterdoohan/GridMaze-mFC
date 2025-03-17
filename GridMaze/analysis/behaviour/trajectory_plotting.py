@@ -35,39 +35,57 @@ def plot_session_trajectory(session, smoothed=True):
 # %%
 
 
-def plot_trial_trajectory(
+def plot_trial_trajectories(
     session,
-    trial,
+    trials=[42, 43, 44],
     smooth_SD=5,
-    traj_color="red",
-    start_color="black",
-    goal_color="blue",
+    traj_colors=["purple", "royalblue", "limegreen"],
+    start_color="grey",
+    goal_color="deepskyblue",
     ax=None,
 ):
-    simple_maze = session.simple_maze()
-    navigation_df = session.navigation_df
-    trajectory_df = navigation_df[(navigation_df.trial == trial) & (navigation_df.trial_phase == "navigation")]
-    if trajectory_df.empty:
-        return print(f"No navigation data for trial {trial}")
-    goal = trajectory_df.goal.values[0]
-    start = trajectory_df.maze_position.simple.values[0]
-    x_traj = trajectory_df.centroid_position.x
-    y_traj = trajectory_df.centroid_position.y
-    if smooth_SD:
-        x_traj = gaussian_filter1d(x_traj, sigma=smooth_SD)
-        y_traj = gaussian_filter1d(y_traj, sigma=smooth_SD)
     if ax is None:
         f, ax = plt.subplots(figsize=(3, 3), clear=True)
+
+    simple_maze = session.simple_maze()
+    navigation_df = session.navigation_df
+
+    trajectories = []
+    starts = []
+    goals = []
+    if isinstance(trials, int):
+        trajectory_df = navigation_df[(navigation_df.trial == trials) & (navigation_df.trial_phase == "navigation")]
+        if trajectory_df.empty:
+            return print(f"No navigation data for trial {trials}")
+        goals.append(trajectory_df.goal.values[0])
+        starts.append(trajectory_df.maze_position.simple.values[0])
+        trajectories.append((trajectory_df.centroid_position.x, trajectory_df.centroid_position.y))
+
+    elif isinstance(trials, list):
+        n_trials = len(trials)
+        for i, t in enumerate(trials):
+            trajectory_df = navigation_df[(navigation_df.trial == t) & (navigation_df.trial_phase == "navigation")]
+            if trajectory_df.empty:
+                return print(f"No navigation data for trial {t}")
+            trajectories.append((trajectory_df.centroid_position.x, trajectory_df.centroid_position.y))
+            starts.append(trajectory_df.maze_position.simple.values[0])
+            goals.append(trajectory_df.goal.values[0])
+    if smooth_SD:
+        for i, traj in enumerate(trajectories):
+            x_traj = gaussian_filter1d(traj[0], sigma=smooth_SD)
+            y_traj = gaussian_filter1d(traj[1], sigma=smooth_SD)
+            trajectories[i] = (x_traj, y_traj)
     mp.plot_simple_maze_silhouette(
         simple_maze,
         ax,
         color="lightgrey",
-        special_location2color={start: start_color, goal: goal_color},
+        special_location2color={**{s: start_color for s in starts}, **{g: goal_color for g in goals}},
         node_size=150,
         edge_size=6,
     )
-    ax.plot(x_traj, y_traj, color=traj_color, linewidth=5, alpha=0.7, zorder=3)
-    return
+    for i, traj in enumerate(trajectories):
+        x_traj, y_traj = traj
+        ax.plot(x_traj, y_traj, color=traj_colors[i], linewidth=4, alpha=0.7, zorder=3)
 
 
 # %%
