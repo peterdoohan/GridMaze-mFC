@@ -356,16 +356,3 @@ def rename_processed_data(original_name, new_name):
             if (session_folder / original_name).exists():
                 (session_folder / original_name).rename(session_folder / new_name)
     return
-
-
-def fix_lfp():
-    keep_channels_mask = ld.keep_channels_mask()
-    for subject_folder in [d for d in PROCESSED_DATA_PATH.iterdir() if d.is_dir()]:
-        for session_folder in [d for d in subject_folder.iterdir() if d.is_dir()]:
-            lfp_file = session_folder / "lfp.signal.npy"
-            if lfp_file.exists():
-                print(session_folder)
-                lfp_sig = np.load(lfp_file)
-                if lfp_sig.shape[1] == 64:
-                    lfp_sig = lfp_sig[:, keep_channels_mask]
-                    np.save(lfp_file, lfp_sig)

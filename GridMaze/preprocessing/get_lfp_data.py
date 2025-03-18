@@ -48,7 +48,6 @@ def get_LFP_signal(
     # load data and configre probe with spike interface
     raw_rec, probe = _load_recording(session_dir)
     probe_df = probe.to_dataframe()
-
     bp_recording_LFP = sp.bandpass_filter(recording=raw_rec, freq_min=1, freq_max=bandpass_max)
     downsampled_LFP = sp.resample(recording=bp_recording_LFP, resample_rate=downsample_frequency)
     channels_to_keep = get_lfp_channels_to_keep(probe_df)
@@ -121,6 +120,10 @@ def _load_recording(session_dir):
     probe = pi.get_probe(manufacturer="cambridgeneurotech", probe_name="ASSY-236-F")
     probe.wiring_to_device("cambridgeneurotech_mini-amp-64")
     raw_rec = se.read_openephys(session_dir.ephys_data_path, block_index=0)
+    channel_IDs = raw_rec.channel_ids
+    if channel_IDs[0].split("CH")[1] != 1:  # sometimes channel IDs start from 65? fix this to set probe correclty
+        new_channel_IDs = [f"CH{i}" for i in np.arange(1, raw_rec.get_num_channels() + 1)]
+        raw_rec = raw_rec.channel_slice(channel_IDs, new_channel_IDs)
     raw_rec = raw_rec.set_probe(probe)
     return raw_rec, probe
 
@@ -136,13 +139,3 @@ def get_lfp_channels_to_keep(probe_df):
         x_pos_to_keep = shank_df.x.min()
         keep_channel_ids.extend(shank_df[shank_df.x == x_pos_to_keep].contact_ids)
     return [int(c) for c in keep_channel_ids]
-
-
-def keep_channels_mask():
-    probe = pi.get_probe(manufacturer="cambridgeneurotech", probe_name="ASSY-236-F")
-    probe.wiring_to_device("cambridgeneurotech_mini-amp-64")
-    probe_df = probe.to_dataframe()
-    channels_to_keep = get_lfp_channels_to_keep(probe_df)
-    channels = np.arange(1, probe_df.contact_ids.astype(int).max() + 1)
-    mask = np.isin(channels, channels_to_keep)
-    return mask
