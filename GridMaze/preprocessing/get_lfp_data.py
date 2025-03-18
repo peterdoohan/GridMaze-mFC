@@ -46,10 +46,14 @@ def get_LFP_signal(
         downsample_frequency (int): Frequency to downsample LFP data to
     """
     # load data and configre probe with spike interface
-    raw_rec, _ = _load_recording(session_dir)
+    raw_rec, probe = _load_recording(session_dir)
+    probe_df = probe.to_dataframe()
+
     bp_recording_LFP = sp.bandpass_filter(recording=raw_rec, freq_min=1, freq_max=bandpass_max)
     downsampled_LFP = sp.resample(recording=bp_recording_LFP, resample_rate=downsample_frequency)
-    lfp_np32 = downsampled_LFP.get_traces(return_scaled=True)  # units = uV
+    channels_to_keep = get_lfp_channels_to_keep(probe_df)
+    downchanneled_LFP = downsampled_LFP.channel_slice([f"CH{i}" for i in channels_to_keep])
+    lfp_np32 = downchanneled_LFP.get_traces(return_scaled=True)  # units = uV
     lfp_np16 = lfp_np32.astype(np.float16)  # minimal loss of precision while decreasing file size
     return lfp_np16
 
@@ -132,3 +136,13 @@ def get_lfp_channels_to_keep(probe_df):
         x_pos_to_keep = shank_df.x.min()
         keep_channel_ids.extend(shank_df[shank_df.x == x_pos_to_keep].contact_ids)
     return [int(c) for c in keep_channel_ids]
+
+
+def keep_channels_mask():
+    probe = pi.get_probe(manufacturer="cambridgeneurotech", probe_name="ASSY-236-F")
+    probe.wiring_to_device("cambridgeneurotech_mini-amp-64")
+    probe_df = probe.to_dataframe()
+    channels_to_keep = get_lfp_channels_to_keep(probe_df)
+    channels = np.arange(1, probe_df.contact_ids.astype(int).max() + 1)
+    mask = np.isin(channels, channels_to_keep)
+    return mask

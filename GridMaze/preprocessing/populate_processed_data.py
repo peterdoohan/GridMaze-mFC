@@ -279,11 +279,11 @@ def _populate_lfp_data(session_dir, processed_data_folder, overwrite):
         lfp_signal = ld.get_LFP_signal(session_dir)
         np.save(processed_data_folder / "lfp.signal.npy", lfp_signal)
     # save lfp times
-    if not overwrite and (processed_data_folder / "lfp.time.npy").exists():
+    if not overwrite and (processed_data_folder / "lfp.times.npy").exists():
         pass
     else:
         lfp_times = ld.get_LFP_times(session_dir)
-        np.save(processed_data_folder / "lfp.time.npy", lfp_times)
+        np.save(processed_data_folder / "lfp.times.npy", lfp_times)
     # save lfp metrics
     if not overwrite and (processed_data_folder / "lfp.metrics.htsv").exists():
         pass
@@ -348,10 +348,24 @@ def _flatten_multiindex_columns(df):
     return [f"{x[0]}.{x[1]}" if x[1] != "" else x[0] for x in df.columns.to_flat_index()]
 
 
+# %% Fixes
 def rename_processed_data(original_name, new_name):
     """This function looks through all processed_data folder and replaces a given filename with a new specified name"""
-    for subject_folder in PROCESSED_DATA_PATH.iterdir():
-        for session_folder in subject_folder.iterdir():
+    for subject_folder in [d for d in PROCESSED_DATA_PATH.iterdir() if d.is_dir()]:
+        for session_folder in [d for d in subject_folder.iterdir() if d.is_dir()]:
             if (session_folder / original_name).exists():
                 (session_folder / original_name).rename(session_folder / new_name)
     return
+
+
+def fix_lfp():
+    keep_channels_mask = ld.keep_channels_mask()
+    for subject_folder in [d for d in PROCESSED_DATA_PATH.iterdir() if d.is_dir()]:
+        for session_folder in [d for d in subject_folder.iterdir() if d.is_dir()]:
+            lfp_file = session_folder / "lfp.signal.npy"
+            if lfp_file.exists():
+                print(session_folder)
+                lfp_sig = np.load(lfp_file)
+                if lfp_sig.shape[1] == 64:
+                    lfp_sig = lfp_sig[:, keep_channels_mask]
+                    np.save(lfp_file, lfp_sig)
