@@ -109,31 +109,15 @@ def filter_clusters(
     single_units=True,
     multi_units=False,
     noise_units=False,
-    min_average_firing_rate=0.5,
 ):
-    """
-    Filters clusters from a session based on their metrics. Currently in this mFC dataset we have limited metrics.
-    Further experiments will use spikeinterface to compute more detailed quality metrics. But for now:
-        single_units: defined as clusters with firing rate > min_firing_rate (default 0.5 Hz) AND Kilosort label == "good"
-        multi_units: defined as clusters with firing rate > min_firing_rate (default 0.5 Hz) AND Kilosort label == "mua"
-        noise_units: defined as clusters with firing rate < min_firing_rate (default 0.5 Hz) OR Kilosort label == "noise"
-    """
+    """ """
     filtered_clusters = []
     if single_units:
-        single_units = cluster_metrics[
-            (cluster_metrics.KSLabel == "good") & (cluster_metrics.average_firing_rate > min_average_firing_rate)
-        ]
-        filtered_clusters.extend(single_units.cluster_ID.to_numpy())
+        filtered_clusters.extend(cluster_metrics[cluster_metrics.single_unit].cluster_ID.to_numpy())
     if multi_units:
-        multi_units = cluster_metrics[
-            (cluster_metrics.KSLabel == "mua") & (cluster_metrics.average_firing_rate > min_average_firing_rate)
-        ]
-        filtered_clusters.extend(multi_units.cluster_ID.to_numpy())
+        filtered_clusters.extend(cluster_metrics[cluster_metrics.multi_unit].cluster_ID.to_numpy())
     if noise_units:
-        noise_units = cluster_metrics[
-            (cluster_metrics.KSLabel == "noise") | (cluster_metrics.average_firing_rate < min_average_firing_rate)
-        ]
-        filtered_clusters.extend(noise_units.cluster_ID.to_numpy())
+        filtered_clusters.extend(cluster_metrics[cluster_metrics.noise_unit].cluster_ID.to_numpy())
     if return_unique_IDs:
         if session_info is None:
             raise ValueError("session_info must not be None to convert cluster_IDs to cluster_unique_IDs")
