@@ -10,7 +10,6 @@ import numpy as np
 import pandas as pd
 from scipy.ndimage import gaussian_filter1d
 from sklearn.cluster import KMeans
-from sklearn.cluster import SpectralClustering
 from sklearn.cluster import AgglomerativeClustering
 from scipy.spatial.distance import cdist
 

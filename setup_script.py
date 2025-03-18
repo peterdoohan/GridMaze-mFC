@@ -13,11 +13,23 @@ from pathlib import Path
 
 processed_data_path = Path("../data/processed_data/m2/2022-07-04.maze")
 analysis_data_path = Path("../data/analysis_data/m2/2022-07-04.maze")
-# %%
 from GridMaze.analysis.core import get_sessions as gs
 
-session = gs.get_maze_sessions(subject_IDs=["m2"], maze_names=["maze_1"], days_on_maze=[12], must_have_data=False)
-
+session = gs.get_maze_sessions(
+    subject_IDs=["m2"],
+    maze_names=["maze_2"],
+    days_on_maze=[11],
+    with_data=[
+        "navigation_df",
+        "cluster_metrics",
+        "event_aligned_rates_df",
+        "trial_aligned_rates_df",
+        "navigation_df",
+        "navigation_spike_rates_df",
+        "navigation_spike_counts_df",
+        "trials_df",
+    ],
+)
 
 # %%
 
