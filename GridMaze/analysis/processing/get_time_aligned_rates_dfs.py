@@ -1,5 +1,5 @@
 """This file contains functions that build dataframes which organise processed data
-   by subject, maze, session, trial, goal and neuron """
+by subject, maze, session, trial, goal and neuron"""
 
 # %% Imports
 import json
@@ -166,7 +166,7 @@ def get_event_aligned_rates_df(processed_data_path, analysis_data_path, window_s
                     "trial",
                     "goal",
                     "cluster_unique_ID",
-                    "cluster_id",
+                    "cluster_ID",
                 ],
                 [""],
                 [""],

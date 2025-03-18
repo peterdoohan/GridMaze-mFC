@@ -158,4 +158,23 @@ def save_analysis_data(filename, function, session_types, processed_data_path, a
     return
 
 
-# %%
+# %% Hacking
+
+
+def fix():
+    """ """
+    from GridMaze.analysis.core import load_data
+
+    for subject in SUBJECT_IDS:
+        sub_path = ANALYSIS_DATA_PATH / subject
+        session_paths = [f for f in sub_path.iterdir() if f.is_dir()]
+        for path in session_paths:
+            print(path)
+            file = path / "event_aligned_rates.parquet"
+            if file.exists():
+                df = load_data.load(file)
+                df = df.rename(columns={"cluster_id": "cluster_ID"})
+                # resave
+                df.columns = df.columns.map(lambda x: str(x))
+                df.to_parquet(file, compression="gzip")
+    return

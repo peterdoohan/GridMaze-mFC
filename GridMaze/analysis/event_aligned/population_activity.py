@@ -5,9 +5,11 @@ Library of calculating and ploting mFC population activity aligned to cue, rewar
 
 # %% Imports
 import json
+import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.stats import zscore
+from scipy.ndimage import gaussian_filter1d
 from GridMaze.analysis.core import get_sessions as gs
 
 # %% Global Variables
@@ -19,21 +21,23 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 with open(ANALYSIS_INFO_PATH / "intra_trial_interval_times.json", "r") as input_file:
     INTRA_TRIAL_INTERVAL_TIMES = json.load(input_file)
 
+FRAME_RATE = 60
+
 # %% New functions
 
 
-# %% Old Functions
+# %% Population activity timeseries
 
 
 def get_event_aligned_population_acitivity(
-    plot=True, aligned_to="event", normalise_clusters="max", normalise_sessions="max"
+    plot=True, aligned_to="trial", normalise_clusters="max", normalise_sessions="zscore"
 ):
     """"""
     av_rates = []
     data_structure = aligned_to + "_aligned_rates_df"
     for subject in SUBJECT_IDS:
         sessions = gs.get_maze_sessions(
-            subject_IDs=[subject], maze_names="all", day_on_maze="late", with_data=[data_structure, "cluster_metrics"]
+            subject_IDs=[subject], maze_names="all", days_on_maze="late", with_data=[data_structure, "cluster_metrics"]
         )
         session_av_rates = []
         for session in sessions:
@@ -44,7 +48,10 @@ def get_event_aligned_population_acitivity(
             aligned_rates_df = aligned_rates_df[aligned_rates_df.cluster_ID.isin(single_units)]
             # average neurons over trials
             trial_average_rates = (
-                aligned_rates_df.set_index("cluster_unique_ID").groupby("cluster_unique_ID").mean().firing_rate
+                aligned_rates_df.set_index("cluster_unique_ID")
+                .groupby("cluster_unique_ID")
+                .firing_rate.mean()
+                .firing_rate
             )
             if normalise_clusters == "max":
                 if aligned_to == "event":
@@ -71,7 +78,6 @@ def get_event_aligned_population_acitivity(
     return population_average_rates
 
 
-# %% Plotting
 def _plot_population_event_aligned_activity(population_average_rates):
     f, axes = plt.subplots(1, 2, figsize=(6, 3), clear=True, sharey=True)
     for i, event in enumerate(["cue_aligned", "reward_aligned"]):
@@ -90,19 +96,94 @@ def _plot_population_event_aligned_activity(population_average_rates):
     return
 
 
-def _plot_population_trial_aligned_activity(population_average_rates):
-    f, ax = plt.subplots(1, 1, figsize=(6, 3), clear=True)
+def _plot_population_trial_aligned_activity(population_average_rates, color="black", ax=None, t_min=-2):
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(6, 2), clear=True)
+    ax.spines[["right", "top"]].set_visible(False)
     time = population_average_rates.columns.to_numpy(dtype=float)
+    mask = time > t_min
+    time = time[mask]
     y = population_average_rates.mean(axis=0).to_numpy()
+    y = y[mask]
     sem = population_average_rates.sem(axis=0).to_numpy()
-    ax.plot(time, y, color="orange")
-    ax.fill_between(time, y - sem, y + sem, color="orange", alpha=0.5)
-    for x in EXP_INFO["intra_trial_interval_times"]:
+    sem = sem[mask]
+    ax.plot(time, y, color=color)
+    ax.fill_between(time, y - sem, y + sem, color=color, alpha=0.5)
+    for x in INTRA_TRIAL_INTERVAL_TIMES.values():
         ax.axvline(x, color="k", linewidth=1, ls="--", alpha=0.5, zorder=0)
     ax.set_xlabel("Time (s)")
-    ax.set_xticks([float(x) for x in EXP_INFO["intra_trial_interval_times"]])
-    ax.set_xticklabels(["Cue", "Reward", "ITI", "end"])
-    ax.set_ylabel("Population average firing rate")
-    ax.spines["right"].set_visible(False)
-    ax.spines["top"].set_visible(False)
+    ax.set_xticks([float(x) for x in INTRA_TRIAL_INTERVAL_TIMES.values()])
+    ax.set_xticklabels(["Cue", "Reward", "ERC", "ITI"])
+    ax.set_ylabel("Pop. Rate (z-score)")
     return
+
+
+# %% Cue-aliged activity
+
+
+def test():
+    """ """
+    sessions = gs.get_maze_sessions(
+        subject_IDs=["m2"],
+        maze_names="all",
+        days_on_maze="late",
+        with_data=["navigation_df", "navigation_spike_rates_df", "cluster_metrics", "trials_df"],
+    )
+    delta_p, distances, angles = [], [], []
+    for session in sessions:
+        delta_p.append(_get_delta(session))
+        d, a = _get_vector(session)
+        distances.append(d)
+        angles.append(a)
+    return delta_p, distances, angles
+
+
+def _get_delta(session, pre_cue=(-0.5, 0), post_cue=(0.1, 0.2), smooth_SD=10):
+    """
+    Easier to calculate z-scored rates from navigation_df
+    """
+    navigation_activity_df = session.get_navigation_activity_df(
+        type="rates", cluster_kwargs={"single_units": True, "multi_units": False}
+    )
+    times = navigation_activity_df.time.values
+    # get population_activity
+    neurons = navigation_activity_df.firing_rate.values  # shape [n_timepoints, n_neurons]
+    if smooth_SD:
+        neurons = gaussian_filter1d(neurons, smooth_SD, axis=0)
+    norm_neurons = zscore(navigation_activity_df.firing_rate.values, axis=0)
+    population_activity = norm_neurons.mean(axis=1)
+    # get cue times
+    cue_times = session.trials_df.time.cue.values
+    activities = []
+    for window in [pre_cue, post_cue]:
+        frames_before = int(window[0] * FRAME_RATE)
+        frames_after = int(window[1] * FRAME_RATE)
+        activity = []
+        for t in cue_times:
+            # get value in times closest to t
+            t_frame = np.argmin(np.abs(times - t))
+            activity.append(population_activity[t_frame + frames_before : t_frame + frames_after])
+        activities.append(np.vstack(activity))
+    pre, post = activities  # [n_trials, n_timepoints]
+    delta = post.mean(1) - pre.mean(1)  # [n_trials]
+    return delta
+
+
+def _get_vector(session, window=(0, 0.1), distance_metric=("distance_to_goal", "euclidean")):
+    """ """
+    navigation_df = session.navigation_df
+    distances = navigation_df[distance_metric].values
+    ego_angles = navigation_df.angle_to_goal.egocentric.values
+    times = navigation_df.time.values
+    cue_times = session.trials_df.time.cue.values
+    _distances = []
+    _angles = []
+    frames_before = int(window[0] * FRAME_RATE) + 1
+    frames_after = int(window[1] * FRAME_RATE)
+    for t in cue_times:
+        # get value in times closest to t
+        t_frame = np.argmin(np.abs(times - t))
+        mask = np.arange(t_frame + frames_before, t_frame + frames_after)
+        _distances.append(distances[mask])
+        _angles.append(ego_angles[mask])
+    return np.vstack(_distances).mean(1), np.vstack(_angles).mean(1)
