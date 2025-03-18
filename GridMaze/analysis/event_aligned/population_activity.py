@@ -78,21 +78,23 @@ def get_event_aligned_population_acitivity(
     return population_average_rates
 
 
-def _plot_population_event_aligned_activity(population_average_rates):
-    f, axes = plt.subplots(1, 2, figsize=(6, 3), clear=True, sharey=True)
+def _plot_population_event_aligned_activity(population_average_rates, ax=None, color="black"):
+    if ax is None:
+        f, axes = plt.subplots(1, 2, figsize=(6, 3), clear=True, sharey=True)
+    ax.spines[["right", "top"]].set_visible(False)
     for i, event in enumerate(["cue_aligned", "reward_aligned"]):
         event_aligned_activity = population_average_rates[event]
         time = event_aligned_activity.columns.to_numpy(dtype=float)
         y = event_aligned_activity.mean(axis=0).to_numpy()
         sem = event_aligned_activity.sem(axis=0).to_numpy()
-        axes[i].plot(time, y, color="orange")
-        axes[i].fill_between(time, y - sem, y + sem, color="orange", alpha=0.5)
+        axes[i].plot(time, y, color=color)
+        axes[i].fill_between(time, y - sem, y + sem, color=color, alpha=0.5)
         axes[i].axvline(0, color="k", linewidth=1, alpha=0.5, zorder=0)
         axes[i].set_xlabel(f"{event} time (s)")
         axes[i].spines["right"].set_visible(False)
         axes[i].spines["top"].set_visible(False)
         if i == 0:
-            axes[i].set_ylabel("Population average firing rate")
+            axes[i].set_ylabel("Pop. Rate (z-score)")
     return
 
 
