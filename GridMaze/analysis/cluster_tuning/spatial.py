@@ -2,11 +2,13 @@
 
 # %% Imports
 import numpy as np
-import networkx as nx
+import pandas as pd
 from ...maze import plotting as mp
 from ...maze import representations as mr
 from ..core import get_clusters as gc
 from ..core import filter
+from ..processing import get_cluster_heatmap_dfs as chm
+
 
 from scipy.ndimage import gaussian_filter
 import matplotlib.pyplot as plt
@@ -19,26 +21,34 @@ FRAME_RATE = 60  # Hz
 
 def plot_session_place_direction_tuning(session):
     """ """
-    # load processed place direction tuning (see analysis.processing.get_cluster_heatmap_dfs)
-    place_direction_tuning_df = session.place_direction_tuning_df
+    # load data
     simple_maze = session.simple_maze()
-    # only plot single units
-    cluster_metrics = session.cluster_metrics
-    session_info = session.session_info
-    filtered_clusters = gc.filter_clusters(cluster_metrics, session_info, return_unique_IDs=True, single_units=True)
-    for cluster_unique_ID in filtered_clusters:
+    navigation_rates_df = session.get_navigation_activity_df(type="rates", cluster_kwargs={"single_units": True})
+    # filter and average across place-direction
+    place_direction_tuning_df = _get_place_direction_df(
+        simple_maze,
+        navigation_rates_df,
+        navigation_only=True,
+        moving_only=True,
+        exclude_time_at_goal=True,
+        minimum_occupancy=0.5,
+        max_steps_from_goal=30,
+    )
+    simple_maze = session.simple_maze()
+    cluster_unique_IDs = navigation_rates_df.firing_rate.columns.values
+    for cluster_unique_ID in cluster_unique_IDs:
         place_direction_tuning = place_direction_tuning_df.loc[cluster_unique_ID]
-        plot_place_direction_tuning(place_direction_tuning, simple_maze)
+        plot_place_direction_tuning(simple_maze, place_direction_tuning)
     return
 
 
 def plot_place_direction_tuning(simple_maze, place_direction_tuning_df, ax=None):
     if ax is None:
-        f, ax = plt.subplots(1, 1, figsize=(6, 6), clear=True)
+        f, ax = plt.subplots(1, 1, figsize=(5, 5), clear=True)
     mp.plot_directed_heatmap(
         simple_maze,
         place_direction_tuning_df,
-        colormap="heat",
+        colormap="plasma",
         # title=place_direction_tuning_df.name,
         value_label="Firing Rate (Hz)",
         ax=ax,
@@ -46,20 +56,58 @@ def plot_place_direction_tuning(simple_maze, place_direction_tuning_df, ax=None)
     return
 
 
+def _get_place_direction_df(
+    simple_maze,
+    navigation_rates_df,
+    navigation_only,
+    moving_only,
+    exclude_time_at_goal,
+    minimum_occupancy,
+    max_steps_from_goal=30,
+):
+    navigation_rates_df = filter.filter_navigation_rates_df(
+        navigation_rates_df,
+        navigation_only,
+        moving_only,
+        exclude_time_at_goal,
+        max_steps_from_goal,
+    )
+    cluster_unique_IDs = navigation_rates_df.firing_rate.columns.to_numpy()
+    place_direction_cols = [("maze_position", "simple"), ("cardinal_movement_direction", "")]
+    place_direction_grouped_df = navigation_rates_df.set_index(place_direction_cols).groupby(place_direction_cols)
+    place_direction_av_rates_df = place_direction_grouped_df.firing_rate.mean().firing_rate
+    # set low occupancy cdirs to nan for all clusters
+    place_direction_av_rates_df[place_direction_grouped_df.count().time < minimum_occupancy * FRAME_RATE] = np.nan
+    ###
+    visited_place_directions = place_direction_av_rates_df.index.to_numpy()
+    all_place_directions = mr.get_maze_place_direction_pairs(simple_maze)
+    unvistied_place_directions = list(set(all_place_directions) - set(visited_place_directions))
+    if len(unvistied_place_directions) > 0:
+        unvisited_place_direction_nan_rates = pd.DataFrame(
+            index=pd.MultiIndex.from_tuples(unvistied_place_directions), columns=cluster_unique_IDs, data=np.nan
+        )
+        place_direction_av_rates_df = pd.concat(
+            [place_direction_av_rates_df, unvisited_place_direction_nan_rates], axis=0
+        )
+    place_direction_av_rates_df = place_direction_av_rates_df.reindex(sorted(place_direction_av_rates_df.index), axis=0)
+    place_direction_df = place_direction_av_rates_df.T  # [cluster_unique_IDs, location_cdirs]
+    place_direction_df.columns.names = ["maze_position", "direction"]
+    place_direction_df.sort_index(axis=1, inplace=True)
+    return place_direction_df
+
+
 # %% Place Tuning
 
 
 def plot_session_place_tuning(session):
     """ """
-    # load processed place tuning (see analysis.processing.get_cluster_heatmap_dfs)
-    place_tuning_df = session.place_tuning_df
+    # load data
+    navigation_rates_df = session.get_navigation_activity_df(type="rates", cluster_kwargs={"single_units": True})
     simple_maze = session.simple_maze()
+    place_tuning_df = _get_place_df(simple_maze, navigation_rates_df)
     goals = session.goals
-    # only plot single units
-    cluster_metrics = session.cluster_metrics
-    session_info = session.session_info
-    filtered_clusters = gc.filter_clusters(cluster_metrics, session_info, return_unique_IDs=True, single_units=True)
-    for cluster_unique_ID in filtered_clusters[:10]:
+    cluster_unique_IDs = navigation_rates_df.firing_rate.columns.values
+    for cluster_unique_ID in cluster_unique_IDs:
         place_tuning = place_tuning_df.loc[cluster_unique_ID]
         plot_place_tuning(simple_maze, place_tuning, goals=goals)
     return
@@ -77,6 +125,31 @@ def plot_place_tuning(simple_maze, place_tuning_df, goals=None, ax=None):
         highlight_nodes=goals,
     )
     return
+
+
+def _get_place_df(
+    simple_maze,
+    navigation_rates_df,
+    navigation_only=True,
+    moving_only=True,
+    exclude_time_at_goal=True,
+    minimum_occupancy=1,
+):
+    """ """
+    navigation_rates_df = filter.filter_navigation_rates_df(
+        navigation_rates_df, navigation_only, moving_only, exclude_time_at_goal
+    )
+    place_direction_grouped_df = navigation_rates_df.groupby([("maze_position", "simple")])
+    cluster_unique_IDs = navigation_rates_df.firing_rate.columns.to_numpy()
+    place_averaged_rates_df = place_direction_grouped_df.firing_rate.mean().firing_rate
+    place_averaged_rates_df[place_direction_grouped_df.count().time < minimum_occupancy * FRAME_RATE] = np.nan
+    all_places = mr.get_maze_locations(simple_maze)
+    unvisited_places = list(set(all_places) - set(place_averaged_rates_df.index))
+    place_averaged_rates_df = pd.concat(
+        [place_averaged_rates_df, pd.DataFrame(index=unvisited_places, columns=cluster_unique_IDs, data=np.nan)]
+    )
+    place_averaged_rates_df = place_averaged_rates_df.reindex(sorted(place_averaged_rates_df.index))
+    return place_averaged_rates_df.T
 
 
 # %% 2D Space
@@ -131,6 +204,9 @@ def get_2D_ratemap(
     x_size: float = 0.02,  # Bin size in meters
     y_size: float = 0.02,  # Bin size in meters
     smooth_SD: float = 0.04,  # Smoothing window (standard deviation) in meters
+    x_range=None,  #
+    y_range=None,  #
+    nan_unvisited=True,
 ):
     """
     Parameters
@@ -159,8 +235,14 @@ def get_2D_ratemap(
     x, y = pos[:, 0], pos[:, 1]  # Extract x and y coordinates
 
     # Determine the number of bins based on the range of x, y data and desired bin size
-    x_min, x_max = np.min(x), np.max(x)
-    y_min, y_max = np.min(y), np.max(y)
+    if x_range is None:
+        x_min, x_max = np.min(x), np.max(x)
+    else:
+        x_min, x_max = x_range
+    if y_range is None:
+        y_min, y_max = np.min(y), np.max(y)
+    else:
+        y_min, y_max = y_range
 
     # Calculate the number of bins based on the data range and the desired bin size
     nxbins = int((x_max - x_min) / x_size)
@@ -186,13 +268,19 @@ def get_2D_ratemap(
 
     # Apply Gaussian smoothing if smooth_SD > 0
     if smooth_SD > 0:
+        # smoothing needs to be corrected for smoothing over unvisited bins:
+        weights = h.copy()
+        weights[occupancy != 0] = 1  ## make constant in unvisited bins
         # Convert smoothing window (SD) from meters to bin units
         sigma_x = smooth_SD / x_size
         sigma_y = smooth_SD / y_size
         h = gaussian_filter(h, sigma=[sigma_x, sigma_y])
+        weights = gaussian_filter(weights, sigma=[sigma_x, sigma_y])
+        h = h / weights
 
-    # Set bins to np.nan if they were not visited
-    h[occupancy == 0] = np.nan
+    if nan_unvisited:
+        # Set bins to np.nan if they were not visited
+        h[occupancy == 0] = np.nan
 
     # Transpose to change row-column coordinates to positions
     return h.T, binx, biny
