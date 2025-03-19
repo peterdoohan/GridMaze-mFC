@@ -374,30 +374,6 @@ class Cluster:
             tuning_df = head_direction_tuning_df[head_direction_tuning_df.cluster_unique_ID == self.cluster_unique_ID]
             return tuning_df
 
-        elif feature == "routes":
-            try:  # load data
-                navigation_df = load_data.load(self.analysis_data_path / "frames.navigation.parquet")
-                navigation_spike_rates_df = load_data.load(self.analysis_data_path / "frames.spikeRates.parquet")
-                navigation_routes_df = load_data.load(self.analysis_data_path / "frames.routes.parquet")
-            except FileNotFoundError:
-                print(f"Missing analysis data to load route tuning for cluster {self.cluster_unique_ID}")
-            # filter data
-            navigation_rates_df = pd.concat([navigation_df, navigation_routes_df.reset_index(drop=True)], axis=1)
-            cluster_rates = navigation_spike_rates_df.xs(self.cluster_unique_ID, level=1, axis=1).firing_rate.to_numpy()
-            navigation_rates_df.loc[:, ("firing_rate", "")] = cluster_rates
-            route_tuning_df = routes.get_route_sequence_tuning_df(
-                navigation_rates_df,
-                sequence=feature_kwargs["sequence"],
-                route_max=feature_kwargs["route_max"],
-                route_min=feature_kwargs["route_min"],
-                optimal=feature_kwargs["optimal"],
-                moving=feature_kwargs["moving"],
-                distance_to_goal_decreasing=feature_kwargs["distance_to_goal_decreasing"],
-                min_time_per_estimate=feature_kwargs["min_time_per_estimate"],
-                min_trials_per_route_shift=feature_kwargs["min_trials_per_route_shift"],
-            )
-            return route_tuning_df
-
         elif feature == "route_aligned_rates":
             try:  # load data
                 route_aligned_rates_df = load_data.load(self.analysis_data_path / "route_aligned_rates.parquet")
@@ -468,20 +444,6 @@ class Cluster:
                 "head_direction",
                 goal_stratified=feature_kwargs["goal_stratified"],
                 smooth_SD=feature_kwargs["smooth_SD"],
-                ax=ax,
-            )
-        elif feature == "routes":
-            routes.plot_routes_tuning(tuning_data, title=feature_kwargs["sequence"], axes=ax)
-        elif feature == "route_aligned_rates":
-            routes.plot_route_aligned_tuning(
-                tuning_data,
-                remove_cue_events=feature_kwargs["remove_cue_events"],
-                optimal_only=feature_kwargs["optimal_only"],
-                max_routes=feature_kwargs["max_routes"],
-                min_routes=feature_kwargs["min_routes"],
-                smooth_SD=feature_kwargs["smooth_SD"],
-                stretch_max=feature_kwargs["stretch_max"],
-                stretch_min=feature_kwargs["stretch_min"],
                 ax=ax,
             )
         else:
