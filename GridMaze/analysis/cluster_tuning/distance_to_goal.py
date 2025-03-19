@@ -1,13 +1,9 @@
 """New library for plotting distance to goal aligned rates"""
 
 # %% Imports
-import os
-import json
 import pandas as pd
 import matplotlib.pyplot as plt
-from GridMaze.analysis.core import get_clusters as gc
 from GridMaze.analysis.distance_to_goal.distributions import get_distance_percentile
-
 from GridMaze.maze import plotting as mp
 from scipy.ndimage import gaussian_filter1d
 
