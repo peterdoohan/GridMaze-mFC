@@ -41,8 +41,8 @@ def plot_angle_tuning(cluster_tuning, metric_key, goal_stratified=False, smooth_
         tuning_mean = cluster_tuning[metric_tuning].mean(axis=0).to_numpy()
         tuning_sem = cluster_tuning[metric_tuning].sem(axis=0).to_numpy()
         if smooth_SD:
-            tuning_mean = smooth_angles(tuning_mean, smooth_SD)
-            tuning_sem = smooth_angles(tuning_sem, smooth_SD)
+            tuning_mean = smooth_polar(tuning_mean, smooth_SD)
+            tuning_sem = smooth_polar(tuning_sem, smooth_SD)
         # wrap
         tuning_mean = np.concatenate([tuning_mean, [tuning_mean[0]]])
         tuning_sem = np.concatenate([tuning_sem, [tuning_sem[0]]])
@@ -54,8 +54,8 @@ def plot_angle_tuning(cluster_tuning, metric_key, goal_stratified=False, smooth_
             tuning_mean = cluster_tuning[cluster_tuning.goal == goal][metric_tuning].mean(axis=0).to_numpy()
             tuning_sem = cluster_tuning[cluster_tuning.goal == goal][metric_tuning].sem(axis=0).to_numpy()
             if smooth_SD:
-                tuning_mean = smooth_angles(tuning_mean, smooth_SD)
-                tuning_sem = smooth_angles(tuning_sem, smooth_SD)
+                tuning_mean = smooth_polar(tuning_mean, smooth_SD)
+                tuning_sem = smooth_polar(tuning_sem, smooth_SD)
             # wrap
             tuning_mean = np.concatenate([tuning_mean, [tuning_mean[0]]])
             tuning_sem = np.concatenate([tuning_sem, [tuning_sem[0]]])
@@ -70,7 +70,7 @@ def _plot_angle_aligned_rates(bins_rad, tuning_mean, tuning_sem, ax, color="gree
     return
 
 
-def smooth_angles(angles, smooth_SD, wrap_pad=10):
+def smooth_polar(angles, smooth_SD, wrap_pad=10):
     """
     Smooths bin averaged angles [n_bins, n_clusters] in polar coordinates before translating back to deg.
     Wraps the data to avoid bin edge discontinuities at 0/360deg.
@@ -108,7 +108,7 @@ def _get_angle_tuning_df(navigation_rates_df, metric="egocentric", n_bins=120):
     maze_name = navigation_rates_df.maze_name.unique()[0]
     day_on_maze = navigation_rates_df.day_on_maze.unique()[0]
     trial2goal = navigation_rates_df[["trial", "goal"]].dropna().drop_duplicates().set_index("trial").goal.to_dict()
-    navigation_rates_df = filt.filter_navigation_rates_df(navigation_rates_df, moving_only=True)
+    navigation_rates_df = filt.filter_navigation_rates_df(navigation_rates_df, moving_only=False)
     # get angle to goal tuning trial by trial
     angle_bins = ("angle_to_goal", metric + "_bined")
     bins = pd.IntervalIndex.from_breaks(np.linspace(0, 360, num=n_bins + 1, endpoint=True))

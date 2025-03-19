@@ -7,14 +7,13 @@ import numpy as np
 import pandas as pd
 from datetime import date
 
-from . import convert
-from . import load_data
-from . import filter as filt
-from . import get_sessions as gs
+from GridMaze.analysis.core import convert
+from GridMaze.analysis.core import load_data
+from GridMaze.analysis.core import filter as filt
+from GridMaze.analysis.core import get_sessions as gs
 
-from ..cluster_tuning import actions, angle_to_goal, distance_to_goal, events, spatial
-from ..processing import get_cluster_heatmap_dfs as chm
-from ...maze import representations as mr
+from GridMaze.analysis.cluster_tuning import actions, angle_to_goal, distance_to_goal, events, spatial, head_direction
+from GridMaze.maze import representations as mr
 
 # %% Global Variables
 
@@ -153,11 +152,12 @@ class Cluster:
         """
         # Step 1
         if feature == "actions":
-            default_kwargs = {"smooth_SD": 5}
+            default_kwargs = {"window": (-3, 3), "smooth_SD": 5, "concise": False}
 
         elif feature == "angle_to_goal":
             default_kwargs = {
-                "angle_metric": "allocentric_angle_to_goal",
+                "angle_metric": "egocentric",
+                "n_bins": 120,
                 "goal_stratified": False,
                 "smooth_SD": 2,
             }
@@ -181,8 +181,8 @@ class Cluster:
                 "navigation_only": False,
                 "moving_only": True,
                 "exclude_time_at_goal": False,
-                "bin_size": 0.025,
-                "smooth_SD": 0.025,
+                "bin_size": 0.03,
+                "smooth_SD": 0.04,
             }
 
         elif feature == "place":
@@ -203,30 +203,8 @@ class Cluster:
 
         elif feature == "head_direction":
             default_kwargs = {
-                "goal_stratified": False,
+                "n_bins": 180,
                 "smooth_SD": 2,
-            }
-        elif feature == "routes":
-            default_kwargs = {
-                "sequence": "future",
-                "smooth_SD": 1,
-                "route_max": 3,
-                "route_min": 2,
-                "optimal": True,
-                "moving": True,
-                "distance_to_goal_decreasing": True,
-                "min_time_per_estimate": 0.5,
-                "min_trials_per_route_shift": 2,
-            }
-        elif feature == "route_aligned_rates":
-            default_kwargs = {
-                "remove_cue_events": False,
-                "optimal_only": True,
-                "max_routes": 2,
-                "min_routes": 2,
-                "smooth_SD": 1,
-                "stretch_max": 5,
-                "stretch_min": 0,
             }
         else:
             raise ValueError(f"Tuning feature: {feature} not recognised")
@@ -255,26 +233,35 @@ class Cluster:
         feature_kwargs = self._get_tuning_feature_kwargs(feature, feature_kwargs)
         if feature == "actions":
             try:  # load data
-                action_aligned_rates_df = load_data.load(self.analysis_data_path / "action_aligned_rates.parquet")
+                navigation_df = load_data.load(self.analysis_data_path / "frames.navigation.parquet")
+                navigation_rates_df = load_data.load(self.analysis_data_path / "frames.spikeRates.parquet")
+                navigation_spike_rates_df = navigation_rates_df.xs(
+                    self.cluster_unique_ID, level=1, axis=1, drop_level=False
+                ).reset_index(drop=True)
+
             except FileNotFoundError:
                 self._print_missing_data_error(self, feature)
                 return None
-            # filter for specified cluster
-            tuning_data = action_aligned_rates_df[
-                action_aligned_rates_df.cluster_unique_ID == self.cluster_unique_ID
-            ].reset_index(drop=True)
+            # process data
+            navigation_rates_df = pd.concat([navigation_df, navigation_spike_rates_df], axis=1)
+            tuning_data = actions._get_basic_action_tuning(navigation_rates_df, window=feature_kwargs["window"])
             return tuning_data
 
         elif feature == "angle_to_goal":
-            angle_metric = feature_kwargs["angle_metric"]
             try:  # load data
-                tuning_df = load_data.load(self.analysis_data_path / (angle_metric + "_tuning.parquet"))
+                navigation_df = load_data.load(self.analysis_data_path / "frames.navigation.parquet")
+                navigation_spike_rates_df = load_data.load(self.analysis_data_path / "frames.spikeRates.parquet")
+                navigation_spike_rates_df = navigation_rates_df.xs(
+                    self.cluster_unique_ID, level=1, axis=1, drop_level=False
+                ).reset_index(drop=True)
             except FileNotFoundError:
                 self._print_missing_data_error(self, feature)
                 return None
-            # filter for specified cluster
-            tuning_df = tuning_df[tuning_df.cluster_unique_ID == self.cluster_unique_ID]
-            return (tuning_df, angle_metric)
+            navigation_rates_df = pd.concat([navigation_df, navigation_spike_rates_df], axis=1)
+            tuning_df = angle_to_goal._get_angle_tuning_df(
+                navigation_rates_df, feature_kwargs["angle_metric"], feature_kwargs["n_bins"]
+            )
+            return (tuning_df, feature_kwargs["angle_metric"])
 
         elif feature == "distance_to_goal":
             # load_data
@@ -345,7 +332,7 @@ class Cluster:
                 return None
             # process data
             navigation_rates_df = pd.concat((navigation_df, navigation_spike_rates_df.reset_index(drop=True)), axis=1)
-            place_tuning_df = chm._get_place_df(simple_maze, navigation_rates_df, **feature_kwargs)
+            place_tuning_df = spatial._get_place_df(simple_maze, navigation_rates_df, **feature_kwargs)
             return (simple_maze, place_tuning_df.loc[self.cluster_unique_ID])
 
         elif feature == "place_direction":
@@ -362,30 +349,25 @@ class Cluster:
                 return None
             # process data
             navigation_rates_df = pd.concat((navigation_df, navigation_spike_rates_df.reset_index(drop=True)), axis=1)
-            place_direction_df = chm._get_place_direction_df(simple_maze, navigation_rates_df, **feature_kwargs)
+            place_direction_df = spatial._get_place_direction_df(simple_maze, navigation_rates_df, **feature_kwargs)
             return (simple_maze, place_direction_df.loc[self.cluster_unique_ID])
 
         elif feature == "head_direction":
             try:  # load data
-                head_direction_tuning_df = load_data.load(self.analysis_data_path / "head_direction_tuning.parquet")
+                navigation_df = load_data.load(self.analysis_data_path / "frames.navigation.parquet")
+                navigation_spike_rates_df = load_data.load(self.analysis_data_path / "frames.spikeRates.parquet")
+                navigation_spike_rates_df = navigation_spike_rates_df.xs(
+                    self.cluster_unique_ID, level=1, axis=1, drop_level=False
+                ).reset_index(drop=True)
             except FileNotFoundError:
                 self._print_missing_data_error(self, feature)
                 # process data
-            tuning_df = head_direction_tuning_df[head_direction_tuning_df.cluster_unique_ID == self.cluster_unique_ID]
-            return tuning_df
-
-        elif feature == "route_aligned_rates":
-            try:  # load data
-                route_aligned_rates_df = load_data.load(self.analysis_data_path / "route_aligned_rates.parquet")
-            except FileNotFoundError:
-                print(f"Missing analysis data to load route aligned rates for cluster {self.cluster_unique_ID}")
-                return None
-            return route_aligned_rates_df[
-                route_aligned_rates_df.cluster_unique_ID == self.cluster_unique_ID
-            ].reset_index(drop=True)
-
-        else:
-            raise ValueError(f"Tuning feature: {feature} not recognised")
+            navigation_rates_df = pd.concat((navigation_df, navigation_spike_rates_df.reset_index(drop=True)), axis=1)
+            mean_tuning, sem_tuning = head_direction._process_head_direction_tuning(
+                navigation_rates_df, feature_kwargs["n_bins"]
+            )
+            mean_tuning, sem_tuning = mean_tuning[self.cluster_unique_ID], sem_tuning[self.cluster_unique_ID]
+            return mean_tuning, sem_tuning
 
     def plot_tuning(self, feature, feature_kwargs={}, ax=None):
         """ """
@@ -398,11 +380,14 @@ class Cluster:
             )
         # plot tuning feature
         if feature == "actions":
-            actions.plot_action_tuning(
-                tuning_data,
-                axes=ax,
-                smooth_SD=feature_kwargs["smooth_SD"],
-            )
+            if feature_kwargs["concise"]:
+                actions.plot_action_tunning_concise(tuning_data, ax=ax, smooth_SD=feature_kwargs["smooth_SD"])
+            else:
+                actions.plot_action_tuning(
+                    tuning_data,
+                    axes=ax,
+                    smooth_SD=feature_kwargs["smooth_SD"],
+                )
         elif feature == "angle_to_goal":
             angle_to_goal.plot_angle_tuning(
                 *tuning_data,
@@ -439,10 +424,8 @@ class Cluster:
         elif feature == "place_direction":
             spatial.plot_place_direction_tuning(*tuning_data, ax=ax)
         elif feature == "head_direction":
-            angle_to_goal.plot_angle_tuning(
-                tuning_data,
-                "head_direction",
-                goal_stratified=feature_kwargs["goal_stratified"],
+            head_direction.plot_head_direction_tuning(
+                *tuning_data,
                 smooth_SD=feature_kwargs["smooth_SD"],
                 ax=ax,
             )
