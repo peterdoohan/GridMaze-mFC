@@ -3,11 +3,10 @@
 # %% Imports
 import numpy as np
 import pandas as pd
-from ...maze import plotting as mp
-from ...maze import representations as mr
-from ..core import get_clusters as gc
-from ..core import filter
-from ..processing import get_cluster_heatmap_dfs as chm
+from GridMaze.maze import plotting as mp
+from GridMaze.maze import representations as mr
+from GridMaze.analysis.core import get_clusters as gc
+from GridMaze.analysis.core import filter as filt
 
 
 from scipy.ndimage import gaussian_filter
@@ -65,7 +64,7 @@ def _get_place_direction_df(
     minimum_occupancy,
     max_steps_from_goal=30,
 ):
-    navigation_rates_df = filter.filter_navigation_rates_df(
+    navigation_rates_df = filt.filter_navigation_rates_df(
         navigation_rates_df,
         navigation_only,
         moving_only,
@@ -136,7 +135,7 @@ def _get_place_df(
     minimum_occupancy=1,
 ):
     """ """
-    navigation_rates_df = filter.filter_navigation_rates_df(
+    navigation_rates_df = filt.filter_navigation_rates_df(
         navigation_rates_df, navigation_only, moving_only, exclude_time_at_goal
     )
     place_direction_grouped_df = navigation_rates_df.groupby([("maze_position", "simple")])
@@ -161,7 +160,7 @@ def plot_session_spatial_tuning(session, navigation_only=False, moving_only=Fals
     simple_maze = session.simple_maze()
     goals = session.goals
     navigation_activity_df = session.get_navigation_activity_df(type="spikes", cluster_kwargs={"single_units": True})
-    navigation_activity_df = filter.filter_navigation_rates_df(
+    navigation_activity_df = filt.filter_navigation_rates_df(
         navigation_activity_df, navigation_only, moving_only, exclude_time_at_goal
     )
     pos = navigation_activity_df.centroid_position.to_numpy()
