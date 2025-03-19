@@ -13,7 +13,6 @@ from . import spatial
 from . import angle_to_goal as atg
 from . import events
 from . import distance_to_goal as dtg
-from . import routes
 from . import actions
 from ..core import get_clusters as gc
 
@@ -98,3 +97,30 @@ def get_tuning_summary(cluster, return_fig=False):
     atg.plot_angle_tuning(*allo_data, ax=ax_allo)
     if return_fig:
         return fig
+
+
+# %% Short summaries
+
+
+def plot_tuning_summary_full(Cluster):
+    return
+
+
+def plot_tuning_summary_concise(Cluster):
+    fig = plt.figure(figsize=(18, 6))
+    fig.tight_layout()
+    fig.subplots_adjust(hspace=0.1, wspace=0.1)
+    gsc = GridSpec(2, 5, figure=fig)
+    # asign axes
+    ax1 = fig.add_subplot(gsc[0:2, 0:2])  # place direction heatmap
+    ax2 = fig.add_subplot(gsc[0:1, 2:4])  # distance to goal tuning
+    ax3 = fig.add_subplot(gsc[1:2, 2:4])  # event tuning
+    ax4 = fig.add_subplot(gsc[0:1, 4:5], projection="polar")  # angle to goal tuning
+    ax5 = fig.add_subplot(gsc[1:2, 4:5])  # action tuning
+    # use Cluser Obj to plot tuning to asigned axes
+    Cluster.plot_tuning("place_direction", ax=ax1)
+    Cluster.plot_tuning("distance_to_goal", ax=ax2)
+    Cluster.plot_tuning("trial_events", ax=ax3)
+    # Cluster.plot_tuning("angle_to_goal", feature_kwargs={}, ax=ax4)
+    Cluster.plot_tuning("action", ax=ax5, feature_kwargs={"concise": True})
+    return
