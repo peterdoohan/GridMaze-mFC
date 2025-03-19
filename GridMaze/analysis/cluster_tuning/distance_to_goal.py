@@ -5,19 +5,14 @@ import os
 import json
 import pandas as pd
 import matplotlib.pyplot as plt
-from ..core import get_clusters as gc
+from GridMaze.analysis.core import get_clusters as gc
+from GridMaze.analysis.distance_to_goal.distributions import get_distance_percentile
 
-from ...maze import plotting as mp
+from GridMaze.maze import plotting as mp
 from scipy.ndimage import gaussian_filter1d
 
-# %% Global Variables (TODO: Update to store in analysis info folder)
-ANALYSIS_DATA_PATH = "../data/analysis_data"
+# %% Global Variables
 
-
-# with open(os.path.join(ANALYSIS_DATA_PATH, "analysis_info.json"), "r") as infile:
-#     ANALYSIS_INFO = json.load(infile)
-
-# MAX_DISTANCES = ANALYSIS_INFO["trial_max_distance_85th_quantiles"]
 
 # %% Functions
 
@@ -27,7 +22,7 @@ def plot_session_distance_to_goal_tuning(session, metrics=("distance_to_goal", "
     distance_info = navigation_rates_df[[("goal", ""), ("trial", ""), ("moving", ""), metrics]]
     distance_info = distance_info.droplevel(1, axis=1)
     cluster_unique_IDs = navigation_rates_df.firing_rate.columns.to_numpy()
-    for cluster in cluster_unique_IDs[:1]:
+    for cluster in cluster_unique_IDs:
         cluster_rates = navigation_rates_df.xs(cluster, level=1, axis=1)
         distance_rates_df = pd.concat([distance_info, cluster_rates], axis=1)
         distance_tuning_df = get_distance_to_goal_tuning_df(distance_rates_df, metrics=metrics)
@@ -45,7 +40,7 @@ def get_distance_to_goal_tuning_df(
         distance_rates_df = distance_rates_df[distance_rates_df.moving]
     # remove frames where distance is above max (treat as outliers)
     if metrics[0] == "distance_to_goal":
-        max_distance = MAX_DISTANCES[metrics[1]]
+        max_distance = get_distance_percentile(metrics, 0.85)
         n_bins = int(max_distance / bin_spacing)
         distance_rates_df = distance_rates_df[distance_rates_df[metrics[0]] < max_distance]
     # bin distances
@@ -74,7 +69,7 @@ def plot_distance_tuning(distance_tuning_df, metrics, goal_stratified=False, smo
     ax.set_ylabel("Firing Rate (Hz)")
     ax.set_xlabel(f"{metrics[0]}: {metrics[1]}")
     if metrics[0] == "distance_to_goal":
-        ax.set_xlim(0, MAX_DISTANCES[metrics[1]])
+        ax.set_xlim(0, get_distance_percentile(metrics, 0.85))
     else:  # progress_to_goal
         ax.set_xlim(0, 1)
     # process data for plotting
