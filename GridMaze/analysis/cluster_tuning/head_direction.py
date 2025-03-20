@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from .angle_to_goal import smooth_polar, _plot_angle_aligned_rates
+from scipy.ndimage import gaussian_filter1d
 
 # %% Global Variables
 
@@ -60,4 +60,30 @@ def plot_head_direction_tuning(mean_rates, sem_rates, smooth_SD, ax=None):
     tuning_mean = np.concatenate([tuning_mean, [tuning_mean[0]]])
     tuning_sem = np.concatenate([tuning_sem, [tuning_sem[0]]])
     _plot_angle_aligned_rates(bins_rad, tuning_mean, tuning_sem, ax=ax, color="black")
+    return
+
+
+def smooth_polar(angles, smooth_SD, wrap_pad=10):
+    """
+    Smooths bin averaged angles [n_bins, n_clusters] in polar coordinates before translating back to deg.
+    Wraps the data to avoid bin edge discontinuities at 0/360deg.
+    """
+    angles_rad = np.deg2rad(angles)
+    x = np.cos(angles_rad)
+    y = np.sin(angles_rad)
+    # Wrap the data
+    x = np.concatenate((x[-wrap_pad:], x, x[:wrap_pad]), axis=0)
+    y = np.concatenate((y[-wrap_pad:], y, y[:wrap_pad]), axis=0)
+    x_smooth = gaussian_filter1d(x, sigma=smooth_SD, axis=0)
+    y_smooth = gaussian_filter1d(y, sigma=smooth_SD, axis=0)
+    # Unwrap the data
+    x_smooth = x_smooth[wrap_pad:-wrap_pad]
+    y_smooth = y_smooth[wrap_pad:-wrap_pad]
+    angles_smooth = np.rad2deg(np.arctan2(y_smooth, x_smooth)) % 360
+    return angles_smooth
+
+
+def _plot_angle_aligned_rates(bins_rad, tuning_mean, tuning_sem, ax, color="green", label=None):
+    ax.plot(bins_rad, tuning_mean, color=color, label=label)
+    ax.fill_between(bins_rad, tuning_mean - tuning_sem, tuning_mean + tuning_sem, color=color, alpha=0.1)
     return

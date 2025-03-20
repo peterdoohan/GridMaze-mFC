@@ -42,53 +42,27 @@ def plot_angle_tuning(cluster_tuning, metric_key, goal_stratified=False, smooth_
         tuning_mean = cluster_tuning[metric_tuning].mean(axis=0).to_numpy()
         tuning_sem = cluster_tuning[metric_tuning].sem(axis=0).to_numpy()
         if smooth_SD:
-            tuning_mean = smooth_polar(tuning_mean, smooth_SD)
-            tuning_sem = smooth_polar(tuning_sem, smooth_SD)
+            tuning_mean = hd.smooth_polar(tuning_mean, smooth_SD)
+            tuning_sem = hd.smooth_polar(tuning_sem, smooth_SD)
         # wrap
         tuning_mean = np.concatenate([tuning_mean, [tuning_mean[0]]])
         tuning_sem = np.concatenate([tuning_sem, [tuning_sem[0]]])
         # plot
-        _plot_angle_aligned_rates(bins_rad, tuning_mean, tuning_sem, ax, color="black", label=metric_key)
+        hd._plot_angle_aligned_rates(bins_rad, tuning_mean, tuning_sem, ax, color="black", label=metric_key)
     else:
         goal2color = mp.get_goal2standard_color()
         for goal in cluster_tuning.goal.unique():
             tuning_mean = cluster_tuning[cluster_tuning.goal == goal][metric_tuning].mean(axis=0).to_numpy()
             tuning_sem = cluster_tuning[cluster_tuning.goal == goal][metric_tuning].sem(axis=0).to_numpy()
             if smooth_SD:
-                tuning_mean = smooth_polar(tuning_mean, smooth_SD)
-                tuning_sem = smooth_polar(tuning_sem, smooth_SD)
+                tuning_mean = hd.smooth_polar(tuning_mean, smooth_SD)
+                tuning_sem = hd.smooth_polar(tuning_sem, smooth_SD)
             # wrap
             tuning_mean = np.concatenate([tuning_mean, [tuning_mean[0]]])
             tuning_sem = np.concatenate([tuning_sem, [tuning_sem[0]]])
             # plot
-            _plot_angle_aligned_rates(bins_rad, tuning_mean, tuning_sem, ax, color=goal2color[goal], label=goal)
+            hd._plot_angle_aligned_rates(bins_rad, tuning_mean, tuning_sem, ax, color=goal2color[goal], label=goal)
     return
-
-
-def _plot_angle_aligned_rates(bins_rad, tuning_mean, tuning_sem, ax, color="green", label=None):
-    ax.plot(bins_rad, tuning_mean, color=color, label=label)
-    ax.fill_between(bins_rad, tuning_mean - tuning_sem, tuning_mean + tuning_sem, color=color, alpha=0.1)
-    return
-
-
-def smooth_polar(angles, smooth_SD, wrap_pad=10):
-    """
-    Smooths bin averaged angles [n_bins, n_clusters] in polar coordinates before translating back to deg.
-    Wraps the data to avoid bin edge discontinuities at 0/360deg.
-    """
-    angles_rad = np.deg2rad(angles)
-    x = np.cos(angles_rad)
-    y = np.sin(angles_rad)
-    # Wrap the data
-    x = np.concatenate((x[-wrap_pad:], x, x[:wrap_pad]), axis=0)
-    y = np.concatenate((y[-wrap_pad:], y, y[:wrap_pad]), axis=0)
-    x_smooth = gaussian_filter1d(x, sigma=smooth_SD, axis=0)
-    y_smooth = gaussian_filter1d(y, sigma=smooth_SD, axis=0)
-    # Unwrap the data
-    x_smooth = x_smooth[wrap_pad:-wrap_pad]
-    y_smooth = y_smooth[wrap_pad:-wrap_pad]
-    angles_smooth = np.rad2deg(np.arctan2(y_smooth, x_smooth)) % 360
-    return angles_smooth
 
 
 # %%
@@ -198,7 +172,7 @@ def _plot_angles_summary(ego_tuning, allo_tuning, hd_tuning, smooth_SD=2, ax=Non
     # smooth
     if smooth_SD:
         ego_mean, ego_sem, allo_mean, allo_sem, hd_mean, hd_sem = [
-            smooth_polar(x, smooth_SD) for x in (ego_mean, ego_sem, allo_mean, allo_sem, hd_mean, hd_sem)
+            hd.smooth_polar(x, smooth_SD) for x in (ego_mean, ego_sem, allo_mean, allo_sem, hd_mean, hd_sem)
         ]
     # wrap for plotting
     wrap = lambda x: np.concatenate([x, [x[0]]])
@@ -211,7 +185,7 @@ def _plot_angles_summary(ego_tuning, allo_tuning, hd_tuning, smooth_SD=2, ax=Non
         ["Ego", "Allo", "HD"],
         ["darkred", "royalblue", "black"],
     ):
-        _plot_angle_aligned_rates(bins_rad, mean, sem, ax, label=label, color=color)
+        hd._plot_angle_aligned_rates(bins_rad, mean, sem, ax, label=label, color=color)
     # adjust axis
     rmax = ax.get_rmax()
     ax.plot([0, 0], [0, rmax], color="black", lw=1)  # positive x–axis (0°)
