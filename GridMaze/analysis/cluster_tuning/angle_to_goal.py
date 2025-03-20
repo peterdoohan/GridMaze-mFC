@@ -6,6 +6,7 @@ import pandas as pd
 from GridMaze.analysis.core import filter as filt
 from scipy.ndimage import gaussian_filter1d
 import matplotlib.pyplot as plt
+from GridMaze.analysis.cluster_tuning import head_direction as hd
 
 from GridMaze.maze import plotting as mp
 
@@ -66,7 +67,7 @@ def plot_angle_tuning(cluster_tuning, metric_key, goal_stratified=False, smooth_
 
 def _plot_angle_aligned_rates(bins_rad, tuning_mean, tuning_sem, ax, color="green", label=None):
     ax.plot(bins_rad, tuning_mean, color=color, label=label)
-    ax.fill_between(bins_rad, tuning_mean - tuning_sem, tuning_mean + tuning_sem, color=color, alpha=0.3)
+    ax.fill_between(bins_rad, tuning_mean - tuning_sem, tuning_mean + tuning_sem, color=color, alpha=0.1)
     return
 
 
@@ -147,3 +148,76 @@ def _get_missing_bins_df(all_bins, hd_grouped_rates):
     current_bins = hd_grouped_rates.columns
     missing_bins = np.setdiff1d(all_bins, current_bins)
     return pd.DataFrame(data=np.nan, index=hd_grouped_rates.index, columns=missing_bins)
+
+
+# %% Plot angle summary with ego, allo atg and head direction
+
+
+def plot_session_angles_summary(session, n_bins=120, smooth_SD=2):
+    """
+    Plot unit egocentric angle to goal, allocentric angle to goal and head direction tuning
+    on a single polar axis.
+    """
+    navigation_rates_df = session.get_navigation_activity_df(type="rates", cluster_kwargs={"single_units": True})
+    cluster_unique_IDs = navigation_rates_df.firing_rate.columns.to_numpy()
+    ego_tuning_df = _get_angle_tuning_df(navigation_rates_df, "egocentric", n_bins)
+    allo_tuning_df = _get_angle_tuning_df(navigation_rates_df, "allocentric", n_bins)
+    hd_tuning_mean, hd_tuning_sem = hd._process_head_direction_tuning(navigation_rates_df, n_bins)
+    for cluster_unique_ID in cluster_unique_IDs:
+        ego_tuning = ego_tuning_df[ego_tuning_df.cluster_unique_ID == cluster_unique_ID]
+        ego_mean, ego_sem = ego_tuning.egocentric_tuning.mean(axis=0), ego_tuning.egocentric_tuning.sem(axis=0)
+        allo_tuning = allo_tuning_df[allo_tuning_df.cluster_unique_ID == cluster_unique_ID]
+        allo_mean, allo_sem = allo_tuning.allocentric_tuning.mean(axis=0), allo_tuning.allocentric_tuning.sem(axis=0)
+        hd_mean, hd_sem = hd_tuning_mean[cluster_unique_ID], hd_tuning_sem[cluster_unique_ID]
+        _plot_angles_summary(
+            ego_tuning=(ego_mean, ego_sem),
+            allo_tuning=(allo_mean, allo_sem),
+            hd_tuning=(hd_mean, hd_sem),
+            smooth_SD=smooth_SD,
+        )
+    return
+
+
+def _plot_angles_summary(ego_tuning, allo_tuning, hd_tuning, smooth_SD=2, ax=None):
+    # set up axis
+    if ax is None:
+        f = plt.figure(figsize=(3, 3), clear=True)
+        ax = f.add_subplot(111, projection="polar")
+        ax.set_xticks(np.linspace(0, 2 * np.pi, 4, endpoint=False))
+        ax.set_xticklabels([int(i) for i in np.linspace(0, 360, 4, endpoint=False)])
+        # remove grid but add x, y axis
+        # ax.grid(False)
+        ax.spines["polar"].set_visible(False)
+
+    # unpack inputs
+    ego_mean, ego_sem = ego_tuning
+    allo_mean, allo_sem = allo_tuning
+    hd_mean, hd_sem = hd_tuning
+    # get bins
+    bins = ego_mean.index.to_numpy().astype(float)
+    bins = np.concatenate([bins, [bins[0]]])  # wrap
+    bins_rad = np.radians(bins)
+    # smooth
+    if smooth_SD:
+        ego_mean, ego_sem, allo_mean, allo_sem, hd_mean, hd_sem = [
+            smooth_polar(x, smooth_SD) for x in (ego_mean, ego_sem, allo_mean, allo_sem, hd_mean, hd_sem)
+        ]
+    # wrap for plotting
+    wrap = lambda x: np.concatenate([x, [x[0]]])
+    ego_mean, ego_sem, allo_mean, allo_sem, hd_mean, hd_sem = [
+        wrap(x) for x in (ego_mean, ego_sem, allo_mean, allo_sem, hd_mean, hd_sem)
+    ]
+    for mean, sem, label, color in zip(
+        [ego_mean, allo_mean, hd_mean],
+        [ego_sem, allo_sem, hd_sem],
+        ["Ego", "Allo", "HD"],
+        ["darkred", "royalblue", "black"],
+    ):
+        _plot_angle_aligned_rates(bins_rad, mean, sem, ax, label=label, color=color)
+    # adjust axis
+    rmax = ax.get_rmax()
+    ax.plot([0, 0], [0, rmax], color="black", lw=1)  # positive x–axis (0°)
+    ax.plot([np.pi, np.pi], [0, rmax], color="black", lw=1)  # negative x–axis (180°)
+    ax.plot([np.pi / 2, np.pi / 2], [0, rmax], color="black", lw=1)  # positive y–axis (90°)
+    ax.plot([3 * np.pi / 2, 3 * np.pi / 2], [0, rmax], color="black", lw=1)  # negative y–axis (270°)
+    ax.legend(fontsize=10, loc="upper left", bbox_to_anchor=(-0.2, 1.2))

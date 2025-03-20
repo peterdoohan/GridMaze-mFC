@@ -251,17 +251,33 @@ class Cluster:
             try:  # load data
                 navigation_df = load_data.load(self.analysis_data_path / "frames.navigation.parquet")
                 navigation_spike_rates_df = load_data.load(self.analysis_data_path / "frames.spikeRates.parquet")
-                navigation_spike_rates_df = navigation_rates_df.xs(
+                navigation_spike_rates_df = navigation_spike_rates_df.xs(
                     self.cluster_unique_ID, level=1, axis=1, drop_level=False
                 ).reset_index(drop=True)
             except FileNotFoundError:
                 self._print_missing_data_error(self, feature)
                 return None
+            # process data
+            metric = feature_kwargs["angle_metric"]
+            n_bins = feature_kwargs["n_bins"]
             navigation_rates_df = pd.concat([navigation_df, navigation_spike_rates_df], axis=1)
-            tuning_df = angle_to_goal._get_angle_tuning_df(
-                navigation_rates_df, feature_kwargs["angle_metric"], feature_kwargs["n_bins"]
-            )
-            return (tuning_df, feature_kwargs["angle_metric"])
+            if metric == "summary":  # plot allo, ego, hd together
+                ego_tuning = angle_to_goal._get_angle_tuning_df(navigation_rates_df, "egocentric", n_bins)
+                allo_tuning = angle_to_goal._get_angle_tuning_df(navigation_rates_df, "allocentric", n_bins)
+                hd_tuning_mean, hd_tuning_sem = head_direction._process_head_direction_tuning(
+                    navigation_rates_df, n_bins
+                )
+                ego_mean, ego_sem = ego_tuning.egocentric_tuning.mean(axis=0), ego_tuning.egocentric_tuning.sem(axis=0)
+                allo_mean, allo_sem = allo_tuning.allocentric_tuning.mean(axis=0), allo_tuning.allocentric_tuning.sem(
+                    axis=0
+                )
+                hd_mean, hd_sem = hd_tuning_mean[self.cluster_unique_ID], hd_tuning_sem[self.cluster_unique_ID]
+                return ((ego_mean, ego_sem), (allo_mean, allo_sem), (hd_mean, hd_sem))
+            else:
+                tuning_df = angle_to_goal._get_angle_tuning_df(
+                    navigation_rates_df, feature_kwargs["angle_metric"], feature_kwargs["n_bins"]
+                )
+                return (tuning_df, feature_kwargs["angle_metric"])
 
         elif feature == "distance_to_goal":
             # load_data
@@ -389,12 +405,19 @@ class Cluster:
                     smooth_SD=feature_kwargs["smooth_SD"],
                 )
         elif feature == "angle_to_goal":
-            angle_to_goal.plot_angle_tuning(
-                *tuning_data,
-                goal_stratified=feature_kwargs["goal_stratified"],
-                smooth_SD=feature_kwargs["smooth_SD"],
-                ax=ax,
-            )
+            if feature_kwargs["angle_metric"] == "summary":
+                angle_to_goal._plot_angles_summary(
+                    *tuning_data,
+                    smooth_SD=feature_kwargs["smooth_SD"],
+                    ax=ax,
+                )
+            else:
+                angle_to_goal.plot_angle_tuning(
+                    *tuning_data,
+                    goal_stratified=feature_kwargs["goal_stratified"],
+                    smooth_SD=feature_kwargs["smooth_SD"],
+                    ax=ax,
+                )
         elif feature == "distance_to_goal":
             distance_to_goal.plot_distance_tuning(
                 *tuning_data,
