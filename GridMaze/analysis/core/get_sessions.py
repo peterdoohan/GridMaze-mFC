@@ -35,15 +35,9 @@ MAZE_ANALYSIS_DATA_STRUCTURE2FILENAME = {
     "navigation_spike_counts_df": "frames.spikeCounts.parquet",
     "trial_aligned_rates_df": "trial_aligned_rates.parquet",
     "event_aligned_rates_df": "event_aligned_rates.parquet",
-    "action_aligned_rates_df": "action_aligned_rates.parquet",
     "navigation_strategies_df": "navigation_strategies.parquet",
     "trajectory_decisions_df": "trajectory_decisions.parquet",
     "distance_to_goal_aligned_rates_df": "distance_to_goal_aligned_rates.parquet",
-    "place_tuning_df": "clusters.placeTuning.parquet",
-    "place_direction_tuning_df": "clusters.placeDirectionTuning.parquet",
-    "head_direction_tuning_df": "head_direction_tuning.parquet",
-    "allocentric_angle_to_goal_tuning_df": "allocentric_angle_to_goal_tuning.parquet",
-    "egocentric_angle_to_goal_tuning_df": "egocentric_angle_to_goal_tuning.parquet",
 }
 
 ALL_MAZE_DATA_STRUCTURES2FILENAME = {**MAZE_PROCESSED_DATA_STRUCTURE2FILENAME, **MAZE_ANALYSIS_DATA_STRUCTURE2FILENAME}
