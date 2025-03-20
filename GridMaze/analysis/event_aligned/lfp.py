@@ -14,12 +14,12 @@ import matplotlib.pyplot as plt
 
 FS = 1_500  # lfp sampling frequency
 
-# %% Functions
+# %% Dev Functions
 
 
-def test():
+def test(session):
     fs = FS  # Sampling frequency in Hz
-    sig, t = get_test_lfp()
+    sig, t = get_test_csd(session)
     freqs = np.geomspace(3, 250, 100)
     cwt_result = compute_wavelet_transform(sig, freqs, fs)
 
@@ -81,7 +81,116 @@ def get_test_lfp():
     return lfp_signal, lfp_times
 
 
-# %%
+def get_test_csd(session):
+    csd_signal = get_CSD(session, "horizontal")
+    csd_times = session.lfp_times
+    # choose times
+    csd_signal = csd_signal[10_000:80_000]
+    csd_times = csd_times[10_000:80_000]
+    return csd_signal, csd_times
+
+
+# %% CSD functions
+
+
+def get_CSD(session, orientation="horizontal"):
+    """
+    CSD = c2 - ((c1 + c3) / 2)
+    for c1, c2, c3 colinear contacts in the same region
+    """
+    # load data
+    lfp_metrics = session.lfp_metrics
+    cluster_metrics = session.cluster_metrics
+    lfp_signal = session.lfp_signal
+    contact_ids = _get_channels_for_CSD(lfp_metrics, cluster_metrics, orientation)
+    # get corresponding indcies for the contact ids
+    contact_indices = [lfp_metrics[lfp_metrics.contact.id == c].index[0] for c in contact_ids]
+    c1, c2, c3 = [lfp_signal[:, c] for c in contact_indices]
+    CSD = c2 - (c1 + c3) / 2
+    return CSD
+
+
+def _get_channels_for_CSD(lfp_metrics, cluster_metrics, orientation="horizontal"):
+    """
+    NOTE only works for 6 shank cambridge neurotech probes
+    Get channel ids for computing the current source density (CSD)
+    Inputs:
+        lfp_metrics - DataFrame containing LFP channel information (MultiIndex, e.g., lfp_metrics.contact.id)
+        cluster_metrics - DataFrame containing cluster information (MultiIndex)
+        orientation - Orientation of the CSD ("horizontal" or "vertical")
+    Note:
+        - For horizontal CSD, channels are taken across shanks 1, 3, and 5 at the same depth.
+        - For vertical CSD, channels are taken from a single shank (top, middle, bottom).
+        - The function searches through available options in both orientations, giving
+          preference to channels with nearby single units and that passed QC ("good")
+          during spikesorting.
+    Returns:
+        channels - List of channel ids for computing the CSD
+    """
+    # Restrict to contacts with single units (marker of good quality)
+    cluster_metrics = cluster_metrics[cluster_metrics.single_unit]
+    single_unit_contact_ids = set(cluster_metrics.contact.id.unique())
+
+    if orientation == "horizontal":
+        horizontal_shanks = [1, 3, 5]
+        lfp_horiz = lfp_metrics[lfp_metrics.contact.shank.isin(horizontal_shanks)]
+        # Get all unique depths and sort from bottom to top (assuming higher y is deeper)
+        depths = sorted(lfp_horiz.contact.y.unique(), reverse=True)
+
+        valid_candidates = []
+        for depth in depths:
+            subset = lfp_horiz[lfp_horiz.contact.y == depth]
+            # Ensure channels from all three required shanks exist
+            if set(subset.contact.shank) != set(horizontal_shanks):
+                continue
+            # Ensure exactly three channels (one per shank)
+            if len(subset) != 3:
+                continue
+            # All channels must pass QC
+            if not (subset.contact.qc == "good").all():
+                continue
+            # All channels must be associated with a single unit
+            if not set(subset.contact.id).issubset(single_unit_contact_ids):
+                continue
+            valid_candidates.append((depth, subset))
+
+        if not valid_candidates:
+            raise ValueError("No suitable channels found for horizontal CSD computation")
+
+        # Choose the candidate from the bottom-most valid depth (first in our sorted order)
+        chosen_depth, candidate_subset = valid_candidates[0]
+        # Order channels by the required shank order (1, 3, 5)
+        candidate_subset = candidate_subset.set_index(("contact", "shank")).loc[horizontal_shanks]
+        return tuple(candidate_subset.contact.id)
+
+    elif orientation == "vertical":
+        valid_candidates = []
+        # Iterate over available shanks
+        for shank in sorted(lfp_metrics.contact.shank.unique()):
+            # consider every other channel (roughly top, middle, bottom)
+            subset = lfp_metrics[lfp_metrics.contact.shank == shank].sort_values(("contact", "y")).iloc[::2]
+            # Ensure exactly three channels (one per shank)
+            if len(subset) != 3:
+                continue
+            # All channels must pass QC
+            if not (subset.contact.qc == "good").all():
+                continue
+            # All channels must be associated with a single unit
+            if not set(subset.contact.id).issubset(single_unit_contact_ids):
+                continue
+            valid_candidates.append((shank, subset))
+        if not valid_candidates:
+            raise ValueError("No suitable channels found for vertical CSD computation")
+
+        # Choose the candidate with the earliest shank (lowest shank number)
+        valid_candidates.sort(key=lambda x: x[0])
+        chosen_shank, candidate_subset = valid_candidates[0]
+        # Order channels top-to-bottom (ascending y)
+        candidate_subset = candidate_subset.sort_values(("contact", "y"))
+        return tuple(candidate_subset.contact.id)
+
+
+# %% Wavelet functions
 
 
 def _morlet(M, gaussian_width=1.5, window_length=1.0, precision=8):
