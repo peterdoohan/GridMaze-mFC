@@ -107,20 +107,34 @@ def plot_tuning_summary_full(Cluster):
 
 
 def plot_tuning_summary_concise(Cluster):
-    fig = plt.figure(figsize=(18, 6))
-    fig.tight_layout()
-    fig.subplots_adjust(hspace=0.1, wspace=0.1)
-    gsc = GridSpec(2, 5, figure=fig)
+    fig = plt.figure(figsize=(12, 5), clear=True)
+    gsc = GridSpec(2, 4, figure=fig)
     # asign axes
     ax1 = fig.add_subplot(gsc[0:2, 0:2])  # place direction heatmap
-    ax2 = fig.add_subplot(gsc[0:1, 2:4])  # distance to goal tuning
-    ax3 = fig.add_subplot(gsc[1:2, 2:4])  # event tuning
-    ax4 = fig.add_subplot(gsc[0:1, 4:5], projection="polar")  # angle to goal tuning
-    ax5 = fig.add_subplot(gsc[1:2, 4:5])  # action tuning
+    ax2 = fig.add_subplot(gsc[0:1, 2:3])  # distance to goal tuning
+    ax3 = fig.add_subplot(gsc[1:2, 2:3])  # event tuning
+    ax4 = fig.add_subplot(gsc[0:1, 3:4], projection="polar")  # angle to goal tuning
+    ax5 = fig.add_subplot(gsc[1:2, 3:4])  # action tuning
     # use Cluser Obj to plot tuning to asigned axes
     Cluster.plot_tuning("place_direction", ax=ax1)
     Cluster.plot_tuning("distance_to_goal", ax=ax2)
     Cluster.plot_tuning("trial_events", ax=ax3)
-    # Cluster.plot_tuning("angle_to_goal", feature_kwargs={}, ax=ax4)
-    Cluster.plot_tuning("action", ax=ax5, feature_kwargs={"concise": True})
+    Cluster.plot_tuning("angle_to_goal", feature_kwargs={"angle_metric": "summary"}, ax=ax4)
+    _adjust_polar_axis(ax4)
+    Cluster.plot_tuning("actions", ax=ax5, feature_kwargs={"concise": True})
+    fig.tight_layout()
+    fig.subplots_adjust(hspace=0.5, wspace=0.3)
+    return
+
+
+def _adjust_polar_axis(ax):
+    ax.set_xticks(np.linspace(0, 2 * np.pi, 4, endpoint=False))
+    ax.set_xticklabels([int(i) for i in np.linspace(0, 360, 4, endpoint=False)])
+    ax.spines["polar"].set_visible(False)
+    rmax = ax.get_rmax()
+    ax.plot([0, 0], [0, rmax], color="black", lw=1)  # positive x–axis (0°)
+    ax.plot([np.pi, np.pi], [0, rmax], color="black", lw=1)  # negative x–axis (180°)
+    ax.plot([np.pi / 2, np.pi / 2], [0, rmax], color="black", lw=1)  # positive y–axis (90°)
+    ax.plot([3 * np.pi / 2, 3 * np.pi / 2], [0, rmax], color="black", lw=1)  # negative y–axis (270°)
+    ax.legend(fontsize=10, loc="upper left", bbox_to_anchor=(-0.2, 1.2))
     return

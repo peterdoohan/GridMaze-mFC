@@ -90,7 +90,7 @@ def plot_action_tunning_concise(action_aligned_rates, ax=None, smooth_SD=5):
         if smooth_SD:
             mean = gaussian_filter1d(mean, smooth_SD)
             sem = gaussian_filter1d(sem, smooth_SD)
-        _plot_action_tuning(mean, sem, time, color, ax, label=f"{action}")
+        _plot_action_tuning(mean, sem, time, color, ax, label=f"{action.split('_')[-1]}")
     ax.legend(fontsize=8)
 
 
