@@ -193,6 +193,15 @@ class MazeSession:
             f"{'-' * (total_width+13)}\n"
         )
 
+    def get_clusters(self, single_units=True):
+        """Returns GridMaze Cluster Objects from session"""
+        return gc.get_maze_clusters(
+            subject_IDs=[self.subject_ID],
+            maze_names=[self.maze_name],
+            days_on_maze=[self.day_on_maze],
+            single_units=single_units,
+        )
+
     def simple_maze(self):
         return mr.simple_maze(self.maze_structure)
 
