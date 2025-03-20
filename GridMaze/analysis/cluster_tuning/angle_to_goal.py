@@ -185,8 +185,6 @@ def _plot_angles_summary(ego_tuning, allo_tuning, hd_tuning, smooth_SD=2, ax=Non
         ax = f.add_subplot(111, projection="polar")
         ax.set_xticks(np.linspace(0, 2 * np.pi, 4, endpoint=False))
         ax.set_xticklabels([int(i) for i in np.linspace(0, 360, 4, endpoint=False)])
-        # remove grid but add x, y axis
-        # ax.grid(False)
         ax.spines["polar"].set_visible(False)
 
     # unpack inputs

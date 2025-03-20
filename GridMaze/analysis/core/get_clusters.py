@@ -48,7 +48,7 @@ def get_cluster(cluster_unique_ID):
     return cluster
 
 
-def get_clusters(
+def get_maze_clusters(
     subject_IDs="all",
     maze_names="all",
     days_on_maze="all",
@@ -71,30 +71,39 @@ def get_clusters(
         days_on_maze = list(range(5, 15))
     requested_clusters = []
     for subject in subject_IDs:
-        for maze_name in maze_names:
-            for day_on_maze in days_on_maze:
-                goal_set = MAZE_DAY2GOALS[maze_name][str(day_on_maze)]
-                if goal_set not in goal_subsets:
+        for maze in maze_names:
+            all_days = [int(d) for d in MAZE_DAY2DATE[maze].keys()]
+            if days_on_maze == "all":
+                days = all_days
+            elif days_on_maze == "late":
+                days = all_days[-7:]  # last 7 days
+            else:
+                days = days_on_maze
+            for day_on_maze in days:
+                # check day_on_maze is valid
+                if str(day_on_maze) not in MAZE_DAY2DATE[maze].keys():
                     continue
-                else:
-                    session_date = MAZE_DAY2DATE[maze_name][str(day_on_maze)]
-                    session_name = f"{session_date}.maze"
-                    processed_data_path = PROCESSED_DATA_PATH / subject / session_name
-                    # now search over clusters
-                    cluster_metrics = load_data.load(processed_data_path / "clusters.metrics.htsv")
-                    cluster_IDs = cluster_metrics.cluster_ID.to_numpy() if cluster_IDs == "all" else cluster_IDs
-                    cluster_IDs = filter_clusters(
-                        cluster_metrics,
-                        session_info=None,
-                        return_unique_IDs=False,
-                        single_units=single_units,
-                        multi_units=multi_units,
-                        noise_units=noise_units,
-                    )
-                    for cluster_ID in cluster_IDs:
-                        requested_clusters.append(MazeCluster(subject, session_name, cluster_ID))
+                session_date = MAZE_DAY2DATE[maze][str(day_on_maze)]
+                session_name = f"{session_date}.maze"
+                processed_data_path = PROCESSED_DATA_PATH / subject / session_name
+                # check goal subset is
+                session_info = load_data.load(processed_data_path / "session_info.json")
+                if not session_info["goal_subset"] in goal_subsets:
+                    continue
+                # now search over clusters
+                cluster_metrics = load_data.load(processed_data_path / "clusters.metrics.htsv")
+                cluster_IDs = cluster_metrics.cluster_ID.to_numpy() if cluster_IDs == "all" else cluster_IDs
+                cluster_IDs = filter_clusters(
+                    cluster_metrics,
+                    session_info=None,
+                    return_unique_IDs=False,
+                    single_units=single_units,
+                    multi_units=multi_units,
+                    noise_units=noise_units,
+                )
+                for cluster_ID in cluster_IDs:
+                    requested_clusters.append(MazeCluster(subject, session_name, cluster_ID))
     # check requested clusters have required data
-
     if len(requested_clusters) == 0:
         print("No clusters found matching the specified criteria")
     else:
