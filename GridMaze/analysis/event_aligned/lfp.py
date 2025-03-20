@@ -93,6 +93,67 @@ def get_test_csd(session):
 # %% CSD functions
 
 
+def plot_CSD_QC(session, times=(5, 7), filter_CSD=True):
+    lfp_signal = session.lfp_signal
+    lfp_metrics = session.lfp_metrics
+    lfp_times = session.lfp_times
+    mask = (lfp_times > times[0]) & (lfp_times < times[1])
+    for ort in ["horizontal", "vertical"]:
+        c1, c2, c3 = _get_channels_for_CSD(
+            lfp_metrics,
+            session.cluster_metrics,
+            ort,
+            verbose=True,
+        )
+        # check contact info
+        contact_infos = []
+        for c in [c1, c2, c3]:
+            contact_info = lfp_metrics[lfp_metrics.contact.id == c]
+            contact_infos.append(
+                {
+                    "id": contact_info.contact.id.values[0],
+                    "indx": contact_info.index.values[0],
+                    "x": contact_info.contact.x.values[0],
+                    "y": contact_info.contact.y.values[0],
+                }
+            )
+        c1_info, c2_info, c3_info = contact_infos
+        # isolate lfp from contacts of interest
+        contact_indices = [lfp_metrics[lfp_metrics.contact.id == c].index[0] for c in [c1, c2, c3]]
+        c1, c2, c3 = [lfp_signal[:, c] for c in contact_indices]
+        # get CSD
+        CSD = c2 - (c1 + c3) / 2
+        # plot (just specficied times)
+        times, c1, c2, c3, CSD = [x[mask] for x in [lfp_times, c1, c2, c3, CSD]]
+        if filter_CSD:
+            CSD = mne.filter.filter_data(
+                CSD[:, np.newaxis].T.astype(np.float64),
+                FS,
+                l_freq=None,
+                h_freq=300,
+                method="fir",
+                fir_design="firwin",
+                verbose=False,
+            ).T
+        fig, axes = plt.subplots(4, 1, figsize=(10, 10), sharex=True, sharey=True)
+        for ax in axes:
+            ax.spines[["top", "right", "bottom"]].set_visible(False)
+            ax.spines["left"].set_linewidth(0.5)
+        for ax in axes[:-1]:
+            ax.set_xticks([])
+            ax.set_ylabel("Voltage (uV)")
+        axes[0].plot(times, c1, color="black")
+        axes[0].set_title(f"Contact {c1_info['id']} at ({c1_info['x']}, {c1_info['y']})")
+        axes[1].plot(times, c2, color="black")
+        axes[1].set_title(f"Contact {c2_info['id']} at ({c2_info['x']}, {c2_info['y']})")
+        axes[2].plot(times, c3, color="black")
+        axes[2].set_title(f"Contact {c3_info['id']} at ({c3_info['x']}, {c3_info['y']})")
+        axes[3].plot(times, CSD, color="blue")
+        axes[3].set_title("CSD")
+        axes[3].set_xlabel("Time (s)")
+    return
+
+
 def get_CSD(session, orientation="horizontal"):
     """
     CSD = c2 - ((c1 + c3) / 2)
@@ -110,7 +171,7 @@ def get_CSD(session, orientation="horizontal"):
     return CSD
 
 
-def _get_channels_for_CSD(lfp_metrics, cluster_metrics, orientation="horizontal"):
+def _get_channels_for_CSD(lfp_metrics, cluster_metrics, orientation="horizontal", verbose=False):
     """
     NOTE only works for 6 shank cambridge neurotech probes
     Get channel ids for computing the current source density (CSD)
@@ -153,15 +214,21 @@ def _get_channels_for_CSD(lfp_metrics, cluster_metrics, orientation="horizontal"
             if not set(subset.contact.id).issubset(single_unit_contact_ids):
                 continue
             valid_candidates.append((depth, subset))
-
         if not valid_candidates:
             raise ValueError("No suitable channels found for horizontal CSD computation")
 
+        if verbose:
+            print(f"Found {len(valid_candidates)} valid channel sets for horizontal CSD")
         # Choose the candidate from the bottom-most valid depth (first in our sorted order)
         chosen_depth, candidate_subset = valid_candidates[0]
+        if verbose:
+            print(f"Choosing channels at depth {chosen_depth}")
         # Order channels by the required shank order (1, 3, 5)
         candidate_subset = candidate_subset.set_index(("contact", "shank")).loc[horizontal_shanks]
-        return tuple(candidate_subset.contact.id)
+        contacts = tuple(candidate_subset.contact.id)
+        if verbose:
+            print(f"Channels chosen: {contacts}")
+        return contacts
 
     elif orientation == "vertical":
         valid_candidates = []
@@ -182,12 +249,19 @@ def _get_channels_for_CSD(lfp_metrics, cluster_metrics, orientation="horizontal"
         if not valid_candidates:
             raise ValueError("No suitable channels found for vertical CSD computation")
 
+        if verbose:
+            print(f"Found {len(valid_candidates)} valid channel sets for vertical CSD")
         # Choose the candidate with the earliest shank (lowest shank number)
         valid_candidates.sort(key=lambda x: x[0])
         chosen_shank, candidate_subset = valid_candidates[0]
+        if verbose:
+            print(f"Choosing channels from shank {chosen_shank}")
         # Order channels top-to-bottom (ascending y)
         candidate_subset = candidate_subset.sort_values(("contact", "y"))
-        return tuple(candidate_subset.contact.id)
+        contacts = tuple(candidate_subset.contact.id)
+        if verbose:
+            print(f"Channels chosen: {contacts}")
+        return contacts
 
 
 # %% Wavelet functions
