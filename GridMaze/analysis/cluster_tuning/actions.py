@@ -27,6 +27,7 @@ def plot_session_action_tuning(session):
 def plot_action_tuning(action_aligned_rates, axes=None, smooth_SD=5):
     # set up plot
     action_aligned_rates = action_aligned_rates.copy()
+    times = action_aligned_rates.action_aligned_rates.columns.values.astype(float)
     if axes is None:
         f, axes = plt.subplots(1, 3, figsize=(9, 3), clear=True, sharex=True, sharey=True)
     for ax in axes:
@@ -34,6 +35,7 @@ def plot_action_tuning(action_aligned_rates, axes=None, smooth_SD=5):
         ax.spines["top"].set_visible(False)
         ax.set_ylabel("Firing Rate (Hz)")
         ax.axvline(0, color="black", linestyle="--")
+    ax.set_xlim(times[0], times[-1])
     # process data
     action_aligned_rates[("forced", "")] = action_aligned_rates.choice_degree.le(2).to_numpy()
     actions = ["turn_left", "turn_right", "go_forward"]
@@ -69,9 +71,10 @@ def plot_action_tunning_concise(action_aligned_rates, ax=None, smooth_SD=5):
     action_aligned_rates = action_aligned_rates.copy()
     if ax is None:
         f, ax = plt.subplots(1, 1, figsize=(3, 3), clear=True)
-    ax.spines[["right", "top", "left"]].set_visible(False)
+    ax.spines[["right", "top"]].set_visible(False)
     ax.set_ylabel("Firing Rate (Hz)")
     ax.axvline(0, color="black", linestyle="--")
+    ax.set_xlabel("Action aligned time (s)")
     # process data
     action_aligned_rates[("forced", "")] = action_aligned_rates.choice_degree.le(2).to_numpy()
     actions = ["turn_left", "turn_right", "go_forward"]
@@ -91,7 +94,7 @@ def plot_action_tunning_concise(action_aligned_rates, ax=None, smooth_SD=5):
             mean = gaussian_filter1d(mean, smooth_SD)
             sem = gaussian_filter1d(sem, smooth_SD)
         _plot_action_tuning(mean, sem, time, color, ax, label=f"{action.split('_')[-1]}")
-    ax.legend(fontsize=8)
+    ax.legend()
 
 
 def _plot_action_tuning(mean, sem, time, color, ax, label=None):

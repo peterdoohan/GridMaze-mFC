@@ -157,9 +157,9 @@ def _plot_angles_summary(ego_tuning, allo_tuning, hd_tuning, smooth_SD=2, ax=Non
     if ax is None:
         f = plt.figure(figsize=(3, 3), clear=True)
         ax = f.add_subplot(111, projection="polar")
-        ax.set_xticks(np.linspace(0, 2 * np.pi, 4, endpoint=False))
-        ax.set_xticklabels([int(i) for i in np.linspace(0, 360, 4, endpoint=False)])
-        ax.spines["polar"].set_visible(False)
+    ax.set_xticks(np.linspace(0, 2 * np.pi, 4, endpoint=False))
+    ax.set_xticklabels([int(i) for i in np.linspace(0, 360, 4, endpoint=False)])
+    ax.spines["polar"].set_visible(False)
 
     # unpack inputs
     ego_mean, ego_sem = ego_tuning
@@ -187,9 +187,9 @@ def _plot_angles_summary(ego_tuning, allo_tuning, hd_tuning, smooth_SD=2, ax=Non
     ):
         hd._plot_angle_aligned_rates(bins_rad, mean, sem, ax, label=label, color=color)
     # adjust axis
-    rmax = ax.get_rmax()
-    ax.plot([0, 0], [0, rmax], color="black", lw=1)  # positive x–axis (0°)
-    ax.plot([np.pi, np.pi], [0, rmax], color="black", lw=1)  # negative x–axis (180°)
-    ax.plot([np.pi / 2, np.pi / 2], [0, rmax], color="black", lw=1)  # positive y–axis (90°)
-    ax.plot([3 * np.pi / 2, 3 * np.pi / 2], [0, rmax], color="black", lw=1)  # negative y–axis (270°)
-    ax.legend(fontsize=10, loc="upper left", bbox_to_anchor=(-0.2, 1.2))
+    # rmax = ax.get_rmax()
+    # ax.plot([0, 0], [0, rmax], color="black", lw=1)  # positive x–axis (0°)
+    # ax.plot([np.pi, np.pi], [0, rmax], color="black", lw=1)  # negative x–axis (180°)
+    # ax.plot([np.pi / 2, np.pi / 2], [0, rmax], color="black", lw=1)  # positive y–axis (90°)
+    # ax.plot([3 * np.pi / 2, 3 * np.pi / 2], [0, rmax], color="black", lw=1)  # negative y–axis (270°)
+    ax.legend(loc="upper left", bbox_to_anchor=(-0.2, 1.2))

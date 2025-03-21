@@ -24,6 +24,19 @@ TUNING_SUMMARIES_SAVE_PATH = RESULTS_PATH / "tuning_summaries"
 if not TUNING_SUMMARIES_SAVE_PATH.exists():
     TUNING_SUMMARIES_SAVE_PATH.mkdir()
 
+plt.rcParams.update(
+    {
+        "font.size": 12,
+        "axes.titlesize": 14,
+        "axes.labelsize": 12,
+        "xtick.labelsize": 10,
+        "ytick.labelsize": 10,
+        "legend.fontsize": 12,
+        "figure.titlesize": 14,
+        "pdf.fonttype": 42,
+    }
+)
+
 # %% Functions
 
 
@@ -68,7 +81,7 @@ def plot_tuning_summary_concise(Cluster):
     Cluster.plot_tuning("actions", ax=ax5, feature_kwargs={"concise": True})
     fig.tight_layout()
     fig.subplots_adjust(hspace=0.5, wspace=0.3)
-    fig.title(f"{Cluster.cluster_unique_ID}")
+    fig.suptitle(f"{Cluster.cluster_unique_ID}", fontsize=16)
     return fig
 
 
