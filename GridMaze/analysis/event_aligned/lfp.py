@@ -93,68 +93,24 @@ def get_test_csd(session):
 # %% CSD functions
 
 
-def plot_CSD_QC(session, times=(5, 7), filter_CSD=True):
-    lfp_signal = session.lfp_signal
+def get_LFP(session, shank=3, single_channel=False):
+    """ """
+    # load data
     lfp_metrics = session.lfp_metrics
-    lfp_times = session.lfp_times
-    mask = (lfp_times > times[0]) & (lfp_times < times[1])
-    for ort in ["horizontal", "vertical"]:
-        c1, c2, c3 = _get_channels_for_CSD(
-            lfp_metrics,
-            session.cluster_metrics,
-            ort,
-            verbose=True,
-        )
-        # check contact info
-        contact_infos = []
-        for c in [c1, c2, c3]:
-            contact_info = lfp_metrics[lfp_metrics.contact.id == c]
-            contact_infos.append(
-                {
-                    "id": contact_info.contact.id.values[0],
-                    "indx": contact_info.index.values[0],
-                    "x": contact_info.contact.x.values[0],
-                    "y": contact_info.contact.y.values[0],
-                }
-            )
-        c1_info, c2_info, c3_info = contact_infos
-        # isolate lfp from contacts of interest
-        contact_indices = [lfp_metrics[lfp_metrics.contact.id == c].index[0] for c in [c1, c2, c3]]
-        c1, c2, c3 = [lfp_signal[:, c] for c in contact_indices]
-        # get CSD
-        CSD = c2 - (c1 + c3) / 2
-        # plot (just specficied times)
-        times, c1, c2, c3, CSD = [x[mask] for x in [lfp_times, c1, c2, c3, CSD]]
-        if filter_CSD:
-            CSD = mne.filter.filter_data(
-                CSD[:, np.newaxis].T.astype(np.float64),
-                FS,
-                l_freq=None,
-                h_freq=300,
-                method="fir",
-                fir_design="firwin",
-                verbose=False,
-            ).T
-        fig, axes = plt.subplots(4, 1, figsize=(10, 10), sharex=True, sharey=True)
-        for ax in axes:
-            ax.spines[["top", "right", "bottom"]].set_visible(False)
-            ax.spines["left"].set_linewidth(0.5)
-        for ax in axes[:-1]:
-            ax.set_xticks([])
-            ax.set_ylabel("Voltage (uV)")
-        axes[0].plot(times, c1, color="black")
-        axes[0].set_title(f"Contact {c1_info['id']} at ({c1_info['x']}, {c1_info['y']})")
-        axes[1].plot(times, c2, color="black")
-        axes[1].set_title(f"Contact {c2_info['id']} at ({c2_info['x']}, {c2_info['y']})")
-        axes[2].plot(times, c3, color="black")
-        axes[2].set_title(f"Contact {c3_info['id']} at ({c3_info['x']}, {c3_info['y']})")
-        axes[3].plot(times, CSD, color="blue")
-        axes[3].set_title("CSD")
-        axes[3].set_xlabel("Time (s)")
-    return
+    cluster_metrics = session.cluster_metrics
+    lfp_signal = session.lfp_signal
+    if single_channel:  # converting from channel_id to channel_index in lfp_signal to get the signal
+        channel_id = _get_single_channel_for_LFP(lfp_metrics, cluster_metrics, shank)
+        channel_index = lfp_metrics[lfp_metrics.contact.id == channel_id].index[0]
+        lfp = lfp_signal[:, channel_index]
+    else:  # average lfp over multiple channels
+        channel_ids = _get_shank_channels_for_LFP(lfp_metrics, cluster_metrics, shank)
+        channel_indices = lfp_metrics.contact.id.isin(channel_ids).index.values
+        lfp = lfp_signal[:, channel_indices].mean(axis=1)
+    return lfp
 
 
-def get_CSD(session, orientation="horizontal"):
+def get_CSD(session, orientation="horizontal", single_channel=False):
     """
     CSD = c2 - ((c1 + c3) / 2)
     for c1, c2, c3 colinear contacts in the same region
@@ -163,15 +119,81 @@ def get_CSD(session, orientation="horizontal"):
     lfp_metrics = session.lfp_metrics
     cluster_metrics = session.cluster_metrics
     lfp_signal = session.lfp_signal
-    contact_ids = _get_channels_for_CSD(lfp_metrics, cluster_metrics, orientation)
-    # get corresponding indcies for the contact ids
-    contact_indices = [lfp_metrics[lfp_metrics.contact.id == c].index[0] for c in contact_ids]
-    c1, c2, c3 = [lfp_signal[:, c] for c in contact_indices]
+    if single_channel:  # converting from channel_id to channel_index in lfp_signal to get the signal
+        c1_id, c2_id, c3_id = _get_single_channels_for_CSD(lfp_metrics, cluster_metrics, orientation)
+        c1_ind, c2_ind, c3_ind = [lfp_metrics[lfp_metrics.contact.id == c].index[0] for c in [c1_id, c2_id, c3_id]]
+        c1, c2, c3 = [lfp_signal[:, c] for c in [c1_ind, c2_ind, c3_ind]]
+    else:  # average lfp over multiple channels before calculating CSD
+        c1_ids, c2_ids, c3_ids = _get_shank_channels_for_CSD(lfp_metrics, cluster_metrics, orientation)
+        c1_inds, c2_inds, c3_inds = [
+            lfp_metrics[lfp_metrics.contact.id.isin(cs)].index.values for cs in [c1_ids, c2_ids, c3_ids]
+        ]
+        c1, c2, c3 = [lfp_signal[:, cs].mean(axis=1) for cs in [c1_inds, c2_inds, c3_inds]]
+    # calculate CSD (2nd spatial derivate of LFP)
     CSD = c2 - (c1 + c3) / 2
     return CSD
 
 
-def _get_channels_for_CSD(lfp_metrics, cluster_metrics, orientation="horizontal", verbose=False):
+# %% Select channels for LFP / CSD analysis
+
+
+def _get_shank_channels_for_LFP(lfp_metrics, cluster_metrics, shank=3, verbose=False, min_good=3):
+    """ """
+    cluster_metrics = cluster_metrics[cluster_metrics.single_unit]
+    lfp_shank = lfp_metrics[(lfp_metrics.contact.shank == shank) & (lfp_metrics.contact.qc == "good")]
+    if len(lfp_shank) < min_good:
+        raise ValueError(f"Shank {shank} has less than {min_good} good contacts")
+    contact_set = lfp_shank.contact.id.values
+    if verbose:
+        print(f"Shank {shank} contacts: {contact_set}")
+    return contact_set
+
+
+def _get_single_channel_for_LFP(lfp_metrics, cluster_metrics, shank=3, verbose=False):
+    """
+    Get a single LFP channel from the middle of the probe that has passed QC and is associated with single unit(s).
+    """
+    cluster_metrics = cluster_metrics[cluster_metrics.single_unit]
+    single_unit_contact_ids = set(cluster_metrics.contact.id.unique())
+    lfp_shank = lfp_metrics[
+        (lfp_metrics.contact.shank == shank)
+        & (lfp_metrics.contact.qc == "good")
+        & (lfp_metrics.contact.id.isin(single_unit_contact_ids))
+    ].sort_values(("contact", "y"))
+    if lfp_shank.empty:
+        raise ValueError(f"No suitable channels found for shank: {shank}")
+    mid_index = len(lfp_shank) // 2
+    selected_contact = lfp_shank.iloc[mid_index].contact.id
+    if verbose:
+        print(f"Selected channel: {selected_contact}")
+    return selected_contact
+
+
+def _get_shank_channels_for_CSD(lfp_metrics, cluster_metrics, orientation="horizontal", verbose=False, min_good=3):
+    """ """
+    cluster_metrics = cluster_metrics[cluster_metrics.single_unit]
+    if orientation == "horizontal":
+        horizontal_shanks = [1, 3, 5]
+        contact_sets = []
+        for shank in horizontal_shanks:
+            shank_contacts = lfp_metrics[(lfp_metrics.contact.shank == shank) & (lfp_metrics.contact.qc == "good")]
+            if len(shank_contacts) < min_good:
+                raise ValueError(f"Shank {shank} has less than {min_good} good contacts")
+            contact_set = shank_contacts.contact.id.values
+            if verbose:
+                print(f"Shank {shank} contacts: {contact_set}")
+            contact_sets.append(contact_set)
+    else:  # havn't implemented vertical version
+        raise NotImplementedError
+    return contact_sets
+
+
+def _get_single_channels_for_CSD(
+    lfp_metrics,
+    cluster_metrics,
+    orientation="horizontal",
+    verbose=False,
+):
     """
     NOTE only works for 6 shank cambridge neurotech probes
     Get channel ids for computing the current source density (CSD)
@@ -352,3 +374,67 @@ def compute_wavelet_transform(sig, freqs, fs, gaussian_width=1.5, window_length=
         cwt = cwt / (fs / np.sqrt(freqs)[:, np.newaxis])
 
     return cwt
+
+
+# %% QC functions
+
+
+def plot_CSD_QC(session, times=(5, 7), filter_CSD=True):
+    lfp_signal = session.lfp_signal
+    lfp_metrics = session.lfp_metrics
+    lfp_times = session.lfp_times
+    mask = (lfp_times > times[0]) & (lfp_times < times[1])
+    for ort in ["horizontal", "vertical"]:
+        c1, c2, c3 = _get_single_channels_for_CSD(
+            lfp_metrics,
+            session.cluster_metrics,
+            ort,
+            verbose=True,
+        )
+        # check contact info
+        contact_infos = []
+        for c in [c1, c2, c3]:
+            contact_info = lfp_metrics[lfp_metrics.contact.id == c]
+            contact_infos.append(
+                {
+                    "id": contact_info.contact.id.values[0],
+                    "indx": contact_info.index.values[0],
+                    "x": contact_info.contact.x.values[0],
+                    "y": contact_info.contact.y.values[0],
+                }
+            )
+        c1_info, c2_info, c3_info = contact_infos
+        # isolate lfp from contacts of interest
+        contact_indices = [lfp_metrics[lfp_metrics.contact.id == c].index[0] for c in [c1, c2, c3]]
+        c1, c2, c3 = [lfp_signal[:, c] for c in contact_indices]
+        # get CSD
+        CSD = c2 - (c1 + c3) / 2
+        # plot (just specficied times)
+        times, c1, c2, c3, CSD = [x[mask] for x in [lfp_times, c1, c2, c3, CSD]]
+        if filter_CSD:
+            CSD = mne.filter.filter_data(
+                CSD[:, np.newaxis].T.astype(np.float64),
+                FS,
+                l_freq=None,
+                h_freq=300,
+                method="fir",
+                fir_design="firwin",
+                verbose=False,
+            ).T
+        fig, axes = plt.subplots(4, 1, figsize=(10, 10), sharex=True, sharey=True)
+        for ax in axes:
+            ax.spines[["top", "right", "bottom"]].set_visible(False)
+            ax.spines["left"].set_linewidth(0.5)
+        for ax in axes[:-1]:
+            ax.set_xticks([])
+            ax.set_ylabel("Voltage (uV)")
+        axes[0].plot(times, c1, color="black")
+        axes[0].set_title(f"Contact {c1_info['id']} at ({c1_info['x']}, {c1_info['y']})")
+        axes[1].plot(times, c2, color="black")
+        axes[1].set_title(f"Contact {c2_info['id']} at ({c2_info['x']}, {c2_info['y']})")
+        axes[2].plot(times, c3, color="black")
+        axes[2].set_title(f"Contact {c3_info['id']} at ({c3_info['x']}, {c3_info['y']})")
+        axes[3].plot(times, CSD, color="blue")
+        axes[3].set_title("CSD")
+        axes[3].set_xlabel("Time (s)")
+    return
