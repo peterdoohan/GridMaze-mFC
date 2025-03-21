@@ -7,6 +7,7 @@ based on code from Pynapple: https://github.com/pynapple-org/pynapple/blob/main/
 import numpy as np
 import mne
 from GridMaze.analysis.core import get_sessions as gs
+from scipy.stats import zscore
 import matplotlib.pyplot as plt
 
 
@@ -88,6 +89,62 @@ def get_test_csd(session):
     csd_signal = csd_signal[10_000:80_000]
     csd_times = csd_times[10_000:80_000]
     return csd_signal, csd_times
+
+
+# %% Event (Cue or Reward) aligned spectrograms (from wavelet decomposition)
+
+
+def _get_session_event_aligned_spectrogram(
+    session,
+    event="cue",
+    signal_type="LFP",
+    single_channel=False,
+    window=(-1, 1),
+    freqs=np.geomspace(3, 250, 100),
+    plot=True,
+):
+    """ """
+    # load data
+    trials_df = session.trials_df
+    times = session.lfp_times
+    if signal_type == "LFP":
+        signal = get_LFP(session, shank=3, single_channel=single_channel)
+    elif signal_type == "CSD":
+        signal = get_CSD(session, orientation="horizontal", single_channel=single_channel)
+    else:
+        raise NotImplementedError
+    # process data
+    event_times = trials_df.time[event].values
+    nearest_event_samples = np.array([np.argmin(np.abs(times - t)) for t in event_times])
+    samples_before, samples_after = int(window[0] * FS), int(window[1] * FS)
+    specs = []
+    for s in nearest_event_samples:
+        sig = signal[s + samples_before : s + samples_after]
+        cwt = compute_wavelet_transform(sig, freqs, FS)
+        specs.append(np.abs(cwt) ** 2)  # power spectrogram for event trial
+    av_spec = np.array(specs).mean(axis=0)
+    if plot:
+        times = np.linspace(*window, av_spec.shape[1])
+        _plot_spectrogram(av_spec, times, freqs, event, f"{signal_type} single channel: {single_channel}")
+    return av_spec
+
+
+def _plot_spectrogram(x, times, freqs, event, signal_type, zscore_freqs=True, clip_zscore=(-5, 5), ax=None):
+    if ax is None:
+        f, ax = plt.subplots(1, 1, clear=True, figsize=(10, 3))
+    if zscore_freqs:
+        x = zscore(x, axis=1)
+    if clip_zscore:
+        x = np.clip(x, *clip_zscore)
+    im = ax.imshow(x, aspect="auto", extent=[times[0], times[-1], freqs[-1], freqs[0]], cmap="coolwarm")
+    ax.set_xlabel(f"{event} Aligned Time (s)")
+    ax.axvline(0, color="white", linestyle="--")
+    ax.invert_yaxis()
+    # ax.set_yscale("log")
+    ax.set_ylabel("Frequency (Hz)")
+    ax.set_title(f"{signal_type}")
+    cbar = plt.colorbar(im, ax=ax)
+    cbar.set_label("Power (z-scored)")
 
 
 # %% CSD functions
