@@ -3,41 +3,55 @@ Library for plotting tuning metric summaries
 """
 
 # %% Imports
+import json
 from pathlib import Path
-import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 from matplotlib.backends.backend_pdf import PdfPages
 
-from . import spatial
-from . import angle_to_goal as atg
-from . import events
-from . import distance_to_goal as dtg
-from . import actions
-from ..core import get_clusters as gc
+from GridMaze.analysis.core import get_clusters as gc
 
 
 # %% Global Variables
-from GridMaze.paths import RESULTS_PATH
+from GridMaze.paths import RESULTS_PATH, EXPERIMENT_INFO_PATH
 
 TUNING_SUMMARIES_SAVE_PATH = RESULTS_PATH / "tuning_summaries"
 if not TUNING_SUMMARIES_SAVE_PATH.exists():
     TUNING_SUMMARIES_SAVE_PATH.mkdir()
 
+with open(Path(EXPERIMENT_INFO_PATH) / "maze_day2date.json", "r") as input_file:
+    MAZE_DAY2DATE = json.load(input_file)
+
+with open(Path(EXPERIMENT_INFO_PATH) / "subject_IDs.json", "r") as input_file:
+    SUBJECT_IDS = json.load(input_file)
+
 plt.rcParams.update(
     {
         "font.size": 12,
-        "axes.titlesize": 14,
-        "axes.labelsize": 12,
-        "xtick.labelsize": 10,
-        "ytick.labelsize": 10,
-        "legend.fontsize": 12,
-        "figure.titlesize": 14,
+        "axes.titlesize": 16,
+        "axes.labelsize": 14,
+        "xtick.labelsize": 14,
+        "ytick.labelsize": 14,
+        "legend.fontsize": 8,
+        "figure.titlesize": 18,
         "pdf.fonttype": 42,
+        # "font.family": "FreeMono",
     }
 )
 
 # %% Functions
+
+
+def save_all_tuning_summaries(type="concise"):
+    for maze in MAZE_DAY2DATE.keys():
+        for day in MAZE_DAY2DATE[maze].keys():
+            for subject_ID in SUBJECT_IDS:
+                try:
+                    print(f"Saving {subject_ID}_{maze}_{day}_{type}.pdf")
+                    save_session_tuning_summaries(subject_ID, maze, int(day), type)
+                except:
+                    print(f"Failed to save {subject_ID}_{maze}_{day}_{type}.pdf")
+    return
 
 
 def save_session_tuning_summaries(subject_ID, maze_name, day_on_maze, type="concise"):
@@ -77,22 +91,11 @@ def plot_tuning_summary_concise(Cluster):
     Cluster.plot_tuning("distance_to_goal", ax=ax2)
     Cluster.plot_tuning("trial_events", ax=ax3)
     Cluster.plot_tuning("angle_to_goal", feature_kwargs={"angle_metric": "summary"}, ax=ax4)
-    # _adjust_polar_axis(ax4)
     Cluster.plot_tuning("actions", ax=ax5, feature_kwargs={"concise": True})
     fig.tight_layout()
     fig.subplots_adjust(hspace=0.5, wspace=0.3)
     fig.suptitle(f"{Cluster.cluster_unique_ID}", fontsize=16)
+    # make adjustments
+    ax4.legend(loc="upper left", bbox_to_anchor=(-0.4, 1.2))
+    ax5.legend(loc="upper right", bbox_to_anchor=(1.0, 1.3))
     return fig
-
-
-def _adjust_polar_axis(ax):
-    ax.set_xticks(np.linspace(0, 2 * np.pi, 4, endpoint=False))
-    ax.set_xticklabels([int(i) for i in np.linspace(0, 360, 4, endpoint=False)])
-    ax.spines["polar"].set_visible(False)
-    rmax = ax.get_rmax()
-    ax.plot([0, 0], [0, rmax], color="black", lw=1)  # positive x–axis (0°)
-    ax.plot([np.pi, np.pi], [0, rmax], color="black", lw=1)  # negative x–axis (180°)
-    ax.plot([np.pi / 2, np.pi / 2], [0, rmax], color="black", lw=1)  # positive y–axis (90°)
-    ax.plot([3 * np.pi / 2, 3 * np.pi / 2], [0, rmax], color="black", lw=1)  # negative y–axis (270°)
-    ax.legend(fontsize=10, loc="upper left", bbox_to_anchor=(-0.2, 1.2))
-    return

@@ -19,8 +19,8 @@ from . import representations as mr
 from ..paths import EXPERIMENT_INFO_PATH
 
 # %% Set gobal variables
-mpl.rcParams["font.family"] = "Arial"
-mpl.rcParams["font.size"] = 12
+# mpl.rcParams["font.family"] = "Arial"
+# mpl.rcParams["font.size"] = 12
 
 with open(EXPERIMENT_INFO_PATH / "maze_configs.json", "r") as input_file:
     MAZE_CONFIGS = json.load(input_file)
@@ -44,7 +44,15 @@ CUSTOM_COLORMAPS = {
     ]
 }
 CUSTOM_COLORMAPS["heat"] = LinearSegmentedColormap.from_list(
-    "heat", ["silver", "gold", "darkorange", "red", "firebrick"]
+    "heat", ["silver", "#d3d3d3", "gold", "darkorange", "red", "firebrick"]
+)
+
+CUSTOM_COLORMAPS["blueviolet"] = LinearSegmentedColormap.from_list(
+    "blueviolet", ["silver", "#d3d3d3", "#87CEEB", "#4682B4", "#4169E1", "#9400D3"]
+)
+
+CUSTOM_COLORMAPS["purpledash"] = LinearSegmentedColormap.from_list(
+    "purpledash", ["silver", "#d3d3d3", "#D8BFD8", "#DA70D6", "#C71585", "#8B0000"]
 )
 # %% Simple Heatmap plotting functions
 

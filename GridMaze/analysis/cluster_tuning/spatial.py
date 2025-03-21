@@ -47,8 +47,11 @@ def plot_place_direction_tuning(simple_maze, place_direction_tuning_df, ax=None)
     mp.plot_directed_heatmap(
         simple_maze,
         place_direction_tuning_df,
-        colormap="plasma",
-        # title=place_direction_tuning_df.name,
+        colormap="heat",
+        silhouette_node_size=650,
+        silhouette_edge_size=13,
+        star_base_length=0.05,
+        max_point_length=0.026,
         value_label="Firing Rate (Hz)",
         ax=ax,
     )

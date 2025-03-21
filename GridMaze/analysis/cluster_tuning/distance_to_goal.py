@@ -55,7 +55,7 @@ def get_distance_to_goal_tuning_df(
     return tuning_df
 
 
-def plot_distance_tuning(distance_tuning_df, metrics, goal_stratified=False, smooth_SD=1, ax=None, color="black"):
+def plot_distance_tuning(distance_tuning_df, metrics, goal_stratified=False, smooth_SD=1, ax=None, color="darkcyan"):
     """"""
     # format axis
     if ax is None:

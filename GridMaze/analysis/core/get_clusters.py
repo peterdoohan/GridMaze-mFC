@@ -180,10 +180,10 @@ class Cluster:
                 "exclude_time_at_goal": False,
                 "goal_stratified": False,
                 "smooth_SD": 1,
-                "color": "black",
+                "color": "darkcyan",
             }
         elif feature == "trial_events":
-            default_kwargs = {"smooth_SD": 10, "color": "black", "goal_stratified": False}
+            default_kwargs = {"smooth_SD": 10, "color": "darkgreen", "goal_stratified": False}
 
         elif feature == "spatial":
             default_kwargs = {

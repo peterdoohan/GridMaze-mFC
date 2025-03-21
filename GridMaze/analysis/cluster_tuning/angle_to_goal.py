@@ -183,13 +183,7 @@ def _plot_angles_summary(ego_tuning, allo_tuning, hd_tuning, smooth_SD=2, ax=Non
         [ego_mean, allo_mean, hd_mean],
         [ego_sem, allo_sem, hd_sem],
         ["Ego", "Allo", "HD"],
-        ["darkred", "royalblue", "black"],
+        ["mediumorchid", "olive", "darkgrey"],
     ):
         hd._plot_angle_aligned_rates(bins_rad, mean, sem, ax, label=label, color=color)
-    # adjust axis
-    # rmax = ax.get_rmax()
-    # ax.plot([0, 0], [0, rmax], color="black", lw=1)  # positive x–axis (0°)
-    # ax.plot([np.pi, np.pi], [0, rmax], color="black", lw=1)  # negative x–axis (180°)
-    # ax.plot([np.pi / 2, np.pi / 2], [0, rmax], color="black", lw=1)  # positive y–axis (90°)
-    # ax.plot([3 * np.pi / 2, 3 * np.pi / 2], [0, rmax], color="black", lw=1)  # negative y–axis (270°)
     ax.legend(loc="upper left", bbox_to_anchor=(-0.2, 1.2))
