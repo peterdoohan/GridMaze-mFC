@@ -5,6 +5,7 @@ based on code from Pynapple: https://github.com/pynapple-org/pynapple/blob/main/
 
 # %% Imports
 import numpy as np
+import json
 import mne
 from GridMaze.analysis.core import get_sessions as gs
 from scipy.stats import zscore
@@ -13,89 +14,58 @@ from scipy.signal import fftconvolve
 
 
 # %% Global Variables
+from GridMaze.paths import EXPERIMENT_INFO_PATH
 
-FS = 1_500  # lfp sampling frequency
+with open(EXPERIMENT_INFO_PATH / "maze_configs.json", "r") as input_file:
+    MAZE_CONFIGS = json.load(input_file)
 
-# %% Dev Functions
+with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
+    SUBJECT_IDS = json.load(input_file)
+
+with open(EXPERIMENT_INFO_PATH / "maze_day2date.json", "r") as input_file:
+    MAZE_DAY2DATE = json.load(input_file)
+
+FS = 1500  # lfp sampling frequency
+
+# %% average over all session
 
 
-def test(session):
-    fs = FS  # Sampling frequency in Hz
-    sig, t = get_test_csd(session)
+def test():
+    """
+    Note cannot load all session objects at once, will overload memory
+    """
+    event = "cue"
+    signal_type = "CSD"
+    single_channel = False
+    window = (-2, 2)
     freqs = np.geomspace(3, 250, 100)
-    cwt_result = compute_wavelet_transform(sig, freqs, fs)
+    session_specs = []
+    for subject in SUBJECT_IDS:
+        for maze in MAZE_CONFIGS.keys():
+            all_days = [int(d) for d in MAZE_DAY2DATE[maze].keys()]
+            days = all_days[-7:]  # last 7 days (late sessions)
+            for day in days:
+                session = gs.get_maze_sessions(
+                    subject_IDs=[subject],
+                    maze_names=[maze],
+                    days_on_maze=[day],
+                    with_data=["trials_df", "lfp_times", "lfp_signal", "lfp_metrics", "cluster_metrics"],
+                    must_have_data=True,
+                )
+                return session
+                session_specs.append(
+                    _get_session_event_aligned_spectrogram(
+                        session, event, signal_type, single_channel, window, freqs, plot=False
+                    )
+                )
 
-    # For visualization (optional)
-    plt.imshow(np.abs(cwt_result), aspect="auto", extent=[t[0], t[-1], freqs[-1], freqs[0]])
-    plt.xlabel("Time (s)")
-    plt.gca().invert_yaxis()
-    plt.yscale("log")
-    plt.ylabel("Frequency (Hz)")
-    plt.title("Wavelet Transform Power")
-    plt.colorbar(label="Power")
-    plt.show()
-
-    plt.plot(t, sig)
-    plt.show()
-
-
-def get_test_lfp():
-    session = gs.get_maze_sessions(
-        subject_IDs=["m2"],
-        maze_names=["maze_2"],
-        days_on_maze=[11],
-        with_data=[
-            "trials_df",
-            "lfp_signal",
-            "lfp_times",
-            "lfp_metrics",
-            "cluster_metrics",
-        ],
-    )
-    # load_data
-    lfp_metrics = session.lfp_metrics
-    lfp_signal = session.lfp_signal
-    lfp_times = session.lfp_times
-    # change dtype
-    lfp_signal = lfp_signal.astype(np.float64)
-    # choose times
-    lfp_signal = lfp_signal[250_000:255_000]
-    lfp_times = lfp_times[250_000:255_000]
-    # low pass
-    lfp_signal = mne.filter.filter_data(
-        lfp_signal.T, FS, l_freq=None, h_freq=300, method="fir", fir_design="firwin", verbose=False
-    ).T
-    # remove bad channels
-    good_channel_mask = lfp_metrics.contact.qc == "good"
-    lfp_metrics = lfp_metrics[good_channel_mask].reset_index(drop=True)
-    lfp_signal = lfp_signal[:, good_channel_mask]
-    # common average reference
-    # lfp_signal = lfp_signal - lfp_signal.mean(axis=1)[:, None]
-    # choose a channel with lots of single units as an example channel
-    cluster_metrics = session.cluster_metrics
-    best_channels = cluster_metrics[cluster_metrics.single_unit].contact.id.mode().values
-    for c in best_channels:
-        contact_info = lfp_metrics[lfp_metrics.contact.id == c]
-        if not contact_info.empty:
-            break
-    channel_ind = contact_info.index[0]
-    lfp_signal = lfp_signal[:, channel_ind]
-    return lfp_signal, lfp_times
-
-
-def get_test_csd(session):
-    csd_signal = get_CSD(session, "horizontal")
-    csd_times = session.lfp_times
-    # choose times
-    csd_signal = csd_signal[10_000:80_000]
-    csd_times = csd_times[10_000:80_000]
-    return csd_signal, csd_times
+    return session_specs
 
 
 # %% Event (Cue or Reward) aligned spectrograms (from wavelet decomposition)
 
 
-def _get_session_event_aligned_spectrogram2(
+def _get_session_event_aligned_spectrogram(
     session,
     event="cue",
     signal_type="LFP",
@@ -116,7 +86,7 @@ def _get_session_event_aligned_spectrogram2(
     else:
         raise NotImplementedError
     # wavelet transform entire session
-    cwt = compute_wavelet_transform(signal, freqs, FS)
+    cwt = compute_wavelet_transform_fft(signal, freqs, FS)
     spec = np.abs(cwt) ** 2  # freq x time x power (spectrogram)
     # zscore spectrogram (across frequencies)
     if zscore_freqs:
@@ -127,41 +97,6 @@ def _get_session_event_aligned_spectrogram2(
     samples_before, samples_after = int(window[0] * FS), int(window[1] * FS)
     spec_windows = [spec[:, s + samples_before : s + samples_after] for s in nearest_event_samples]
     av_spec = np.array(spec_windows).mean(axis=0)
-    if plot:
-        times = np.linspace(*window, av_spec.shape[1])
-        _plot_spectrogram(av_spec, times, freqs, event, f"{signal_type} single channel: {single_channel}")
-    return
-
-
-def _get_session_event_aligned_spectrogram(
-    session,
-    event="cue",
-    signal_type="LFP",
-    single_channel=False,
-    window=(-1, 1),
-    freqs=np.geomspace(3, 250, 100),
-    plot=True,
-):
-    """ """
-    # load data
-    trials_df = session.trials_df
-    times = session.lfp_times
-    if signal_type == "LFP":
-        signal = get_LFP(session, shank=3, single_channel=single_channel)
-    elif signal_type == "CSD":
-        signal = get_CSD(session, orientation="horizontal", single_channel=single_channel)
-    else:
-        raise NotImplementedError
-    # process data
-    event_times = trials_df.time[event].values
-    nearest_event_samples = np.array([np.argmin(np.abs(times - t)) for t in event_times])
-    samples_before, samples_after = int(window[0] * FS), int(window[1] * FS)
-    specs = []
-    for s in nearest_event_samples:
-        sig = signal[s + samples_before : s + samples_after]
-        cwt = compute_wavelet_transform(sig, freqs, FS)
-        specs.append(np.abs(cwt) ** 2)  # power spectrogram for event trial
-    av_spec = np.array(specs).mean(axis=0)
     if plot:
         times = np.linspace(*window, av_spec.shape[1])
         _plot_spectrogram(av_spec, times, freqs, event, f"{signal_type} single channel: {single_channel}")
@@ -444,33 +379,6 @@ def generate_morlet_filterbank(freqs, fs, gaussian_width=1.5, window_length=1.0,
         padded_filters.append(np.pad(filt, (pad_left, pad_right), mode="constant"))
 
     return np.array(padded_filters), time
-
-
-def compute_wavelet_transform(sig, freqs, fs, gaussian_width=1.5, window_length=1.0, precision=16, norm="l1"):
-    filter_bank, _ = generate_morlet_filterbank(freqs, fs, gaussian_width, window_length, precision)
-    n_freqs, filter_len = filter_bank.shape
-    n_time = len(sig)
-    cwt = np.zeros((n_freqs, n_time), dtype=complex)
-
-    for i in range(n_freqs):
-        # Compute full convolution
-        full_conv_real = np.convolve(sig, np.real(filter_bank[i]), mode="full")
-        full_conv_imag = np.convolve(sig, np.imag(filter_bank[i]), mode="full")
-
-        # Calculate the starting index for extracting the central portion
-        start_idx = (len(full_conv_real) - n_time) // 2
-        conv_real = full_conv_real[start_idx : start_idx + n_time]
-        conv_imag = full_conv_imag[start_idx : start_idx + n_time]
-
-        cwt[i] = conv_real + 1j * conv_imag
-
-    # Normalize the coefficients if desired.
-    if norm == "l1":
-        cwt = cwt / (fs / freqs[:, np.newaxis])
-    elif norm == "l2":
-        cwt = cwt / (fs / np.sqrt(freqs)[:, np.newaxis])
-
-    return cwt
 
 
 def compute_wavelet_transform_fft(sig, freqs, fs, gaussian_width=1.5, window_length=1.0, precision=16, norm="l1"):
