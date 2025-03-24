@@ -9,6 +9,7 @@ import mne
 from GridMaze.analysis.core import get_sessions as gs
 from scipy.stats import zscore
 import matplotlib.pyplot as plt
+from scipy.signal import fftconvolve
 
 
 # %% Global Variables
@@ -167,18 +168,19 @@ def _get_session_event_aligned_spectrogram(
     return av_spec
 
 
-def _plot_spectrogram(x, times, freqs, event, signal_type, zscore_freqs=True, clip_zscore=(-5, 5), ax=None):
+def _plot_spectrogram(x, times, freqs, event, signal_type, ax=None):
     if ax is None:
         f, ax = plt.subplots(1, 1, clear=True, figsize=(10, 3))
-    if zscore_freqs:
-        x = zscore(x, axis=1)
-    if clip_zscore:
-        x = np.clip(x, *clip_zscore)
-    im = ax.imshow(x, aspect="auto", extent=[times[0], times[-1], freqs[-1], freqs[0]], cmap="coolwarm")
+    im = ax.imshow(
+        x,
+        aspect="auto",
+        extent=[times[0], times[-1], freqs[-1], freqs[0]],
+        cmap="coolwarm",
+    )
     ax.set_xlabel(f"{event} Aligned Time (s)")
     ax.axvline(0, color="white", linestyle="--")
     ax.invert_yaxis()
-    # ax.set_yscale("log")
+    ax.set_yscale("log")
     ax.set_ylabel("Frequency (Hz)")
     ax.set_title(f"{signal_type}")
     cbar = plt.colorbar(im, ax=ax)
@@ -460,6 +462,26 @@ def compute_wavelet_transform(sig, freqs, fs, gaussian_width=1.5, window_length=
         conv_real = full_conv_real[start_idx : start_idx + n_time]
         conv_imag = full_conv_imag[start_idx : start_idx + n_time]
 
+        cwt[i] = conv_real + 1j * conv_imag
+
+    # Normalize the coefficients if desired.
+    if norm == "l1":
+        cwt = cwt / (fs / freqs[:, np.newaxis])
+    elif norm == "l2":
+        cwt = cwt / (fs / np.sqrt(freqs)[:, np.newaxis])
+
+    return cwt
+
+
+def compute_wavelet_transform_fft(sig, freqs, fs, gaussian_width=1.5, window_length=1.0, precision=16, norm="l1"):
+    filter_bank, _ = generate_morlet_filterbank(freqs, fs, gaussian_width, window_length, precision)
+    n_freqs, _ = filter_bank.shape
+    n_time = len(sig)
+    cwt = np.zeros((n_freqs, n_time), dtype=complex)
+
+    for i in range(n_freqs):
+        conv_real = fftconvolve(sig, np.real(filter_bank[i]), mode="same")
+        conv_imag = fftconvolve(sig, np.imag(filter_bank[i]), mode="same")
         cwt[i] = conv_real + 1j * conv_imag
 
     # Normalize the coefficients if desired.
