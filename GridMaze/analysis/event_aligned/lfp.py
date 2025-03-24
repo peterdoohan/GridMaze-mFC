@@ -94,6 +94,44 @@ def get_test_csd(session):
 # %% Event (Cue or Reward) aligned spectrograms (from wavelet decomposition)
 
 
+def _get_session_event_aligned_spectrogram2(
+    session,
+    event="cue",
+    signal_type="LFP",
+    single_channel=False,
+    window=(-1, 1),
+    freqs=np.geomspace(3, 250, 100),
+    zscore_freqs=True,
+    plot=True,
+):
+    """ """
+    # load data
+    trials_df = session.trials_df
+    times = session.lfp_times
+    if signal_type == "LFP":
+        signal = get_LFP(session, shank=3, single_channel=single_channel)
+    elif signal_type == "CSD":
+        signal = get_CSD(session, orientation="horizontal", single_channel=single_channel)
+    else:
+        raise NotImplementedError
+    # wavelet transform entire session
+    cwt = compute_wavelet_transform(signal, freqs, FS)
+    spec = np.abs(cwt) ** 2  # freq x time x power (spectrogram)
+    # zscore spectrogram (across frequencies)
+    if zscore_freqs:
+        spec = zscore(spec, axis=1)
+    # average normalised spectrogram around event times
+    event_times = trials_df.time[event].values
+    nearest_event_samples = np.array([np.argmin(np.abs(times - t)) for t in event_times])
+    samples_before, samples_after = int(window[0] * FS), int(window[1] * FS)
+    spec_windows = [spec[:, s + samples_before : s + samples_after] for s in nearest_event_samples]
+    av_spec = np.array(spec_windows).mean(axis=0)
+    if plot:
+        times = np.linspace(*window, av_spec.shape[1])
+        _plot_spectrogram(av_spec, times, freqs, event, f"{signal_type} single channel: {single_channel}")
+    return
+
+
 def _get_session_event_aligned_spectrogram(
     session,
     event="cue",
