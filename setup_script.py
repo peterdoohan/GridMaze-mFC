@@ -16,11 +16,7 @@ analysis_data_path = Path("../data/analysis_data/m2/2022-07-04.maze")
 from GridMaze.analysis.core import get_sessions as gs
 
 session = gs.get_maze_sessions(
-    subject_IDs=["m2"],
-    maze_names=["maze_1"],
-    days_on_maze=[12],
-    with_data="all",
-    must_have_data=False
+    subject_IDs=["m2"], maze_names=["maze_1"], days_on_maze=[12], with_data="all", must_have_data=False
 )
 
 cluster_unique_ID = "m2.2022-07-17.maze_cluster141"
