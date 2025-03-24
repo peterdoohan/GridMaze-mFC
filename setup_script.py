@@ -17,18 +17,10 @@ from GridMaze.analysis.core import get_sessions as gs
 
 session = gs.get_maze_sessions(
     subject_IDs=["m2"],
-    maze_names=["maze_2"],
-    days_on_maze=[11],
-    with_data=[
-        "navigation_df",
-        "cluster_metrics",
-        "event_aligned_rates_df",
-        "trial_aligned_rates_df",
-        "navigation_df",
-        "navigation_spike_rates_df",
-        "navigation_spike_counts_df",
-        "trials_df",
-    ],
+    maze_names=["maze_1"],
+    days_on_maze=[12],
+    with_data="all",
+    must_have_data=False
 )
 
 cluster_unique_ID = "m2.2022-07-17.maze_cluster141"

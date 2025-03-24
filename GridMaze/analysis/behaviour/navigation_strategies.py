@@ -233,7 +233,7 @@ def get_strategy_weights_across_sessions(n_itter=1000, plot=False):
     return navigation_strategy_weights_df
 
 
-def plot_nav_strategy_weights_over_sessions(nav_strategy_weights_df, cmap="viridis", axes=None):
+def plot_nav_strategy_weights_over_sessions(nav_strategy_weights_df, cmap="viridis", fig=None, axes=None):
     # firt calculate the upper and lower 95CIs for each weight over bootstrapped itters
     grouped_df = nav_strategy_weights_df.groupby(["maze_name", "day_on_maze"])
     upper_CI95_df = grouped_df.quantile(0.975)
@@ -243,8 +243,8 @@ def plot_nav_strategy_weights_over_sessions(nav_strategy_weights_df, cmap="virid
     df["weight_vector_upper"] = upper_CI95_df.weight_vector.to_numpy()
     df["weight_structure_lower"] = lower_CI95_df.weight_structure.to_numpy()
     df["weight_structure_upper"] = upper_CI95_df.weight_structure.to_numpy()
-    if axes is None:
-        f, axes = plt.subplots(1, 3, figsize=(18, 6))
+    if axes is None or fig is None:
+        fig, axes = plt.subplots(1, 3, figsize=(18, 6))
     for maze, marker, ax in zip(df.maze_name.unique(), ["o", "o", "o"], axes):
         maze_df = df[df.maze_name == maze]
         cmap = plt.cm.get_cmap(cmap)
@@ -267,7 +267,7 @@ def plot_nav_strategy_weights_over_sessions(nav_strategy_weights_df, cmap="virid
         ax.axhline(0, color="silver", linestyle="--", alpha=0.5, lw=1.5)
         sm = ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0.2, vmax=0.95))
         sm.set_array([])
-        cbar = f.colorbar(sm, ax=ax, orientation="horizontal", shrink=0.5, pad=-0.1)
+        cbar = fig.colorbar(sm, ax=ax, orientation="horizontal", shrink=0.5, pad=-0.1)
         cbar.outline.set_edgecolor("none")
         cbar.set_ticks([0.2, 0.95], labels=["First", "Last"])
     return
