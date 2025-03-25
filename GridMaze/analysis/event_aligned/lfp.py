@@ -1,9 +1,9 @@
 """
 library for plotting lfp aligned to trial events
-based on code from Pynapple: https://github.com/pynapple-org/pynapple/blob/main/pynapple/process/wavelets.py!
 """
 
 # %% Imports
+import pandas as pd
 import numpy as np
 import json
 import mne
@@ -14,7 +14,11 @@ from scipy.signal import fftconvolve
 
 
 # %% Global Variables
-from GridMaze.paths import EXPERIMENT_INFO_PATH
+from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
+
+LFP_RESULTS = RESULTS_PATH / "event_aligned" / "lfp"
+if not LFP_RESULTS.exists():
+    LFP_RESULTS.mkdir(parents=True)
 
 with open(EXPERIMENT_INFO_PATH / "maze_configs.json", "r") as input_file:
     MAZE_CONFIGS = json.load(input_file)
@@ -28,6 +32,43 @@ with open(EXPERIMENT_INFO_PATH / "maze_day2date.json", "r") as input_file:
 FS = 1500  # lfp sampling frequency
 
 # %% average over all session
+
+
+def test2(event="cue", window=(-2, 2)):
+    """
+    Quick plot average CSD for a session
+    """
+    av_csds = []
+    subject = "m6"
+    for maze in MAZE_CONFIGS.keys():
+        all_days = [int(d) for d in MAZE_DAY2DATE[maze].keys()]
+        days = all_days[-7:]  # last 7 days (late sessions)
+        for day in days:
+            session = gs.get_maze_sessions(
+                subject_IDs=[subject],
+                maze_names=[maze],
+                days_on_maze=[day],
+                with_data=["trials_df", "lfp_times", "lfp_signal", "lfp_metrics", "cluster_metrics"],
+                must_have_data=True,
+            )
+            # get csd
+            csd = get_CSD(session, single_channel=False)
+            # zscore
+            csd = zscore(csd, axis=0)
+            # get signal around event
+            trials_df = session.trials_df
+            times = session.lfp_times
+            event_times = trials_df.time[event].values
+            nearest_event_samples = np.array([np.argmin(np.abs(times - t)) for t in event_times])
+            samples_before, samples_after = int(window[0] * FS), int(window[1] * FS)
+            csd_windows = [csd[s + samples_before : s + samples_after] for s in nearest_event_samples]
+            av_csd = np.array(csd_windows).mean(axis=0)
+            av_csds.append(av_csd)
+    x = np.array([i for i in av_csds if i.shape[0] != 0]).mean(axis=0)  # hack
+    times = np.linspace(*window, x.shape[0])
+    plt.plot(times, x)
+    plt.axvline(0, color="k", ls="--")
+    return x
 
 
 def test():
@@ -70,6 +111,48 @@ def test():
     return session_specs
 
 
+def _get_spectrogram_df(
+    session,
+    signal_type="CSD",
+    single_channel=False,
+    window=(-2, 2),
+    freqs=np.geomspace(3, 250, 100),
+    overwrite=False,
+):
+    """
+    Calculates the average spectogram pwoer of LFP/CSD signal aliged to cue and reward (store in combined
+    dataframe for convience).
+
+    Note: Function tries to load data from disk if available, otherwise computes and saves to disk.
+    Set overwrite to True to force recomputation and
+    """
+    # process av specfram for each event
+    dfs = []
+    for event in ["cue", "reward"]:
+        av_spec = _get_session_event_aligned_spectrogram(
+            session, event, signal_type, single_channel, window, freqs, plot=False
+        )
+        times = np.linspace(*window, av_spec.shape[1])
+        spec_df = pd.DataFrame(av_spec, columns=times)
+        spec_df.columns = pd.MultiIndex.from_product([[f"{event}_aligned_time"], spec_df.columns])
+        dfs.append(spec_df)
+    # add info columns useful when combining multiple sessions
+    info_df = pd.DataFrame(index=spec_df.index)
+    info_df[("subject_ID", "")] = session.subject_ID
+    info_df[("maze_name", "")] = session.maze_name
+    info_df[("day_on_maze", "")] = session.day_on_maze
+    info_df[("signal_type", "")] = signal_type
+    info_df[("single_channel", "")] = single_channel
+    info_df[("signal_type", "")] = signal_type
+    info_df.columns = pd.MultiIndex.from_tuples(info_df.columns)
+    # combine dataframes
+    df = pd.concat([info_df] + dfs, axis=1)
+    if save:
+        save_path = LFP_RESULTS / f"{session.name}.parquet"
+        df.to_parquet(save_path, compression="gzip")
+    return df
+
+
 # %% Event (Cue or Reward) aligned spectrograms (from wavelet decomposition)
 
 
@@ -78,7 +161,7 @@ def _get_session_event_aligned_spectrogram(
     event="cue",
     signal_type="LFP",
     single_channel=False,
-    window=(-1, 1),
+    window=(-2, 2),
     freqs=np.geomspace(3, 250, 100),
     zscore_freqs=True,
     plot=True,
