@@ -30,16 +30,8 @@ FS = 1500  # lfp sampling frequency
 # %% average over all session
 
 
-def test():
-    """
-    Note cannot load all session objects at once, will overload memory
-    """
-    event = "cue"
-    signal_type = "CSD"
-    single_channel = False
-    window = (-2, 2)
-    freqs = np.geomspace(3, 250, 100)
-    session_specs = []
+def _check_contacts():
+    """ """
     for subject in SUBJECT_IDS:
         for maze in MAZE_CONFIGS.keys():
             all_days = [int(d) for d in MAZE_DAY2DATE[maze].keys()]
@@ -52,12 +44,54 @@ def test():
                     with_data=["trials_df", "lfp_times", "lfp_signal", "lfp_metrics", "cluster_metrics"],
                     must_have_data=True,
                 )
-                return session
-                session_specs.append(
-                    _get_session_event_aligned_spectrogram(
-                        session, event, signal_type, single_channel, window, freqs, plot=False
-                    )
+                lfp_metrics = session.lfp_metrics
+                cluster_metrics = session.cluster_metrics
+                print(session)
+                _get_shank_channels_for_CSD(
+                    lfp_metrics,
+                    cluster_metrics,
+                    orientation="horizontal",
+                    verbose=True,
                 )
+    return
+
+
+def test():
+    """
+    Note cannot load all session objects at once, will overload memory
+    """
+    event = "cue"
+    signal_type = "CSD"
+    single_channel = False
+    window = (-2, 2)
+    freqs = np.geomspace(3, 250, 100)
+    session_specs = []
+    skipped_session = []
+    for subject in SUBJECT_IDS:
+        for maze in MAZE_CONFIGS.keys():
+            all_days = [int(d) for d in MAZE_DAY2DATE[maze].keys()]
+            days = all_days[-7:]  # last 7 days (late sessions)
+            for day in days:
+                session = gs.get_maze_sessions(
+                    subject_IDs=[subject],
+                    maze_names=[maze],
+                    days_on_maze=[day],
+                    with_data=["trials_df", "lfp_times", "lfp_signal", "lfp_metrics", "cluster_metrics"],
+                    must_have_data=True,
+                )
+                print(session)
+                try:
+                    session_specs.append(
+                        _get_session_event_aligned_spectrogram(
+                            session, event, signal_type, single_channel, window, freqs, plot=False
+                        )
+                    )
+                except ValueError as e:
+                    print(e)
+                    print(f"skipping session: {session.name}")
+                    skipped_session.append(session.name)
+    # should save this out in a nice way where it can be loaded and used for different analyses
+    # eg, random effect, fixed effects etc.
 
     return session_specs
 
@@ -115,7 +149,7 @@ def _plot_spectrogram(x, times, freqs, event, signal_type, ax=None):
     ax.set_xlabel(f"{event} Aligned Time (s)")
     ax.axvline(0, color="white", linestyle="--")
     ax.invert_yaxis()
-    ax.set_yscale("log")
+    # ax.set_yscale("log")
     ax.set_ylabel("Frequency (Hz)")
     ax.set_title(f"{signal_type}")
     cbar = plt.colorbar(im, ax=ax)
@@ -169,7 +203,7 @@ def get_CSD(session, orientation="horizontal", single_channel=False):
 # %% Select channels for LFP / CSD analysis
 
 
-def _get_shank_channels_for_LFP(lfp_metrics, cluster_metrics, shank=3, verbose=False, min_good=3):
+def _get_shank_channels_for_LFP(lfp_metrics, cluster_metrics, shank=3, verbose=False, min_good=2):
     """ """
     cluster_metrics = cluster_metrics[cluster_metrics.single_unit]
     lfp_shank = lfp_metrics[(lfp_metrics.contact.shank == shank) & (lfp_metrics.contact.qc == "good")]
@@ -201,7 +235,7 @@ def _get_single_channel_for_LFP(lfp_metrics, cluster_metrics, shank=3, verbose=F
     return selected_contact
 
 
-def _get_shank_channels_for_CSD(lfp_metrics, cluster_metrics, orientation="horizontal", verbose=False, min_good=3):
+def _get_shank_channels_for_CSD(lfp_metrics, cluster_metrics, orientation="horizontal", verbose=False, min_good=2):
     """ """
     cluster_metrics = cluster_metrics[cluster_metrics.single_unit]
     if orientation == "horizontal":
