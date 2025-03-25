@@ -30,32 +30,6 @@ FS = 1500  # lfp sampling frequency
 # %% average over all session
 
 
-def _check_contacts():
-    """ """
-    for subject in SUBJECT_IDS:
-        for maze in MAZE_CONFIGS.keys():
-            all_days = [int(d) for d in MAZE_DAY2DATE[maze].keys()]
-            days = all_days[-7:]  # last 7 days (late sessions)
-            for day in days:
-                session = gs.get_maze_sessions(
-                    subject_IDs=[subject],
-                    maze_names=[maze],
-                    days_on_maze=[day],
-                    with_data=["trials_df", "lfp_times", "lfp_signal", "lfp_metrics", "cluster_metrics"],
-                    must_have_data=True,
-                )
-                lfp_metrics = session.lfp_metrics
-                cluster_metrics = session.cluster_metrics
-                print(session)
-                _get_shank_channels_for_CSD(
-                    lfp_metrics,
-                    cluster_metrics,
-                    orientation="horizontal",
-                    verbose=True,
-                )
-    return
-
-
 def test():
     """
     Note cannot load all session objects at once, will overload memory
@@ -239,7 +213,16 @@ def _get_shank_channels_for_CSD(lfp_metrics, cluster_metrics, orientation="horiz
     """ """
     cluster_metrics = cluster_metrics[cluster_metrics.single_unit]
     if orientation == "horizontal":
-        horizontal_shanks = [1, 3, 5]
+        # choose every other shank, check which option has best signal (proxy single unit counts)
+        set_1 = [1, 3, 5]
+        set_2 = [2, 4, 6]
+        set_1_total_units = len(cluster_metrics[cluster_metrics.contact.shank.isin(set_1)])
+        set_2_total_units = len(cluster_metrics[cluster_metrics.contact.shank.isin(set_2)])
+        if set_1_total_units > set_2_total_units:
+            horizontal_shanks = set_1
+        else:
+            horizontal_shanks = set_2
+        # get contacts
         contact_sets = []
         for shank in horizontal_shanks:
             shank_contacts = lfp_metrics[(lfp_metrics.contact.shank == shank) & (lfp_metrics.contact.qc == "good")]
