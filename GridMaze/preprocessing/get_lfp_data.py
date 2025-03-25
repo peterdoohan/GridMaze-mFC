@@ -99,15 +99,14 @@ def get_LFP_metrics(session_dir, downsample_frequency=1500):
     """
     _, probe = _load_recording(session_dir)
     probe_df = probe.to_dataframe()
-    with open(Path(session_dir.spikesorting_path) / "channel_assignments.json", "r") as file:
-        channel_assigments = json.load(file)
+    channel_assignments = _load_channel_assignments(session_dir)
     probe_anatomy_df = ed.load_subject_probe(session_dir.subject_ID)
     tissue_sample = ed._get_tissue_sample(session_dir.subject_ID, session_dir.date)
     probe_anatomy_df = probe_anatomy_df[probe_anatomy_df.tissue_sample == tissue_sample]
     channels_to_keep = get_lfp_channels_to_keep(probe_df)
     lfp_metrics_df = probe_anatomy_df[probe_anatomy_df.contact.id.isin(channels_to_keep)].copy()
     lfp_metrics_df.loc[:, ("contact", "qc")] = lfp_metrics_df.contact.id.apply(lambda x: f"CH{x}").map(
-        channel_assigments
+        channel_assignments
     )
     lfp_metrics_df.loc[:, ("sampling_rate", "")] = downsample_frequency
     return lfp_metrics_df
@@ -116,12 +115,35 @@ def get_LFP_metrics(session_dir, downsample_frequency=1500):
 # %% supporting functions
 
 
+def _load_channel_assignments(session_dir):
+    """
+    Correct instances where channel assignments start from 65 instead of 1.
+    Consistant with _load_recording function
+    """
+    # load channel assignmnets from spikesorting (see code/SpikeSorting/spikesort_sessions.py)
+    with open(Path(session_dir.spikesorting_path) / "channel_assignments.json", "r") as file:
+        channel_assigments = json.load(file)
+    # check channel IDs start from 1 (sometimes start from 65, fault in raw recording)
+    # correct consistent with _load_recordings function below.
+    raw_rec = se.read_openephys(session_dir.ephys_data_path, block_index=0)
+    channels = [c for c in raw_rec.get_channel_ids() if "CH" in c]  # exclude accelerometer channels (AUX1, etc.)
+    if "CH1" not in channels:
+        n_channels = len(channels)  # should be 64
+        channel_name_corrections = {f"CH{i}": f"CH{i-n_channels}" for i in [int(c.split("CH")[1]) for c in channels]}
+        channel_assigments = {channel_name_corrections[k]: v for k, v in channel_assigments.items()}
+    return channel_assigments
+
+
 def _load_recording(session_dir):
+    """
+    Note checks for channel IDs starting from 1, if not corrects to start from 1.
+    (overwrites spikeinterface probe and recording object)
+    """
     probe = pi.get_probe(manufacturer="cambridgeneurotech", probe_name="ASSY-236-F")
     probe.wiring_to_device("cambridgeneurotech_mini-amp-64")
     raw_rec = se.read_openephys(session_dir.ephys_data_path, block_index=0)
     channel_IDs = raw_rec.channel_ids
-    if channel_IDs[0].split("CH")[1] != 1:  # sometimes channel IDs start from 65? fix this to set probe correclty
+    if "CH1" not in channel_IDs:  # sometimes channel IDs start from 65? fix this to set probe correclty
         new_channel_IDs = [f"CH{i}" for i in np.arange(1, raw_rec.get_num_channels() + 1)]
         raw_rec = raw_rec.channel_slice(channel_IDs, new_channel_IDs)
     raw_rec = raw_rec.set_probe(probe)
