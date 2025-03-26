@@ -8,6 +8,7 @@ import numpy as np
 import json
 import mne
 from GridMaze.analysis.core import get_sessions as gs
+from GridMaze.analysis.core import load_data
 from scipy.stats import zscore
 import matplotlib.pyplot as plt
 from scipy.signal import fftconvolve
@@ -112,7 +113,113 @@ def test():
     return session_specs
 
 
-def _get_spectrogram_df(
+# %%
+def get_all_spectrogram_dfs(overwrite=False, verbose=False):
+    spectrogram_dfs = []
+    skipped_sessions = []
+    for subject in SUBJECT_IDS:
+        for maze in MAZE_CONFIGS.keys():
+            for day in [int(d) for d in MAZE_DAY2DATE[maze].keys()]:
+                try:
+                    session = gs.get_maze_sessions(
+                        subject_IDs=[subject],
+                        maze_names=[maze],
+                        days_on_maze=[day],
+                        with_data=["trials_df", "lfp_times", "lfp_signal", "lfp_metrics", "cluster_metrics"],
+                        must_have_data=True,
+                    )
+                except FileNotFoundError as e:
+                    if verbose:
+                        print(e)
+                        continue
+                if verbose:
+                    print(session)
+                try:
+                    spectrogram_dfs.appeend(get_spectrogram_df(session, overwrite=overwrite))
+                except ValueError as e:
+                    if verbose:
+                        print(e)
+                        print(f"skipping session: {session.name}")
+                    skipped_sessions.append(session.name)
+    if verbose:
+        print(f"skipped sessions: {skipped_sessions}")
+    return spectrogram_dfs
+
+
+def get_aligned_CSD_df(overwrite=False, single_channel=False, window=(-2, 2), verbose=False):
+    """Generates a dataframe of event-aligned CSD data for all sessions"""
+    save_path = LFP_RESULTS / "aligned_csds.parquet"
+    if not overwrite and save_path.exists():
+        df = load_data._load_multiindex_parquet(save_path)
+    else:
+        aligned_csds = []
+        info_df = []
+        skipped_sessions = []
+        for subject in SUBJECT_IDS:
+            for maze in MAZE_CONFIGS.keys():
+                for day in [int(d) for d in MAZE_DAY2DATE[maze].keys()]:
+                    try:
+                        session = gs.get_maze_sessions(
+                            subject_IDs=[subject],
+                            maze_names=[maze],
+                            days_on_maze=[day],
+                            with_data=["trials_df", "lfp_times", "lfp_signal", "lfp_metrics", "cluster_metrics"],
+                            must_have_data=True,
+                        )
+                    except FileNotFoundError as e:
+                        if verbose:
+                            print(e)
+                            continue
+                    if verbose:
+                        print(session)
+                    try:
+                        csds = []
+                        for event in ["cue", "reward"]:
+                            av_csd = _get_session_event_aligned_csd(
+                                session,
+                                event=event,
+                                signal_type="CSD",
+                                single_channel=single_channel,
+                                window=window,
+                                zscore_signal=True,
+                            )
+                            csds.append(av_csd)
+                        times = np.linspace(*window, av_csd.shape[0])
+                        aligned_csds.append(
+                            pd.Series(
+                                index=pd.MultiIndex.from_product([["cue_aligned_time", "reward_aligned_time"], times]),
+                                data=np.hstack(csds),
+                            )
+                        )
+                        info_df.append(
+                            {
+                                ("subject_ID", ""): session.subject_ID,
+                                ("maze_name", ""): session.maze_name,
+                                ("day_on_maze", ""): session.day_on_maze,
+                                ("signal_type", ""): "CSD",
+                                ("single_channel", ""): single_channel,
+                                ("probe_depth", ""): session.probe_depth,
+                                ("tissue_sample", ""): session.tissue_sample,
+                            }
+                        )
+                    except ValueError as e:
+                        if verbose:
+                            print(e)
+                            print(f"skipping session: {session.name}")
+                        skipped_sessions.append(session.name)
+        info_df = pd.DataFrame(info_df)
+        info_df.columns = pd.MultiIndex.from_tuples(info_df.columns)
+        aligned_csds = pd.concat(aligned_csds, axis=1).T
+        df = pd.concat([info_df, aligned_csds], axis=1)
+        # save
+        save_path = LFP_RESULTS / "aligned_csds.parquet"
+        df.to_parquet(save_path, compression="gzip")
+        if verbose:
+            print(f"skipped sessions: {skipped_sessions}")
+    return df
+
+
+def get_spectrogram_df(
     session,
     signal_type="CSD",
     single_channel=False,
@@ -131,7 +238,7 @@ def _get_spectrogram_df(
     # try to load from disk
     save_path = LFP_RESULTS / "aligned_spectrograms" / f"{session.name}.parquet"
     if not overwrite and save_path.exists():
-        df = pd.read_parquet(save_path)
+        df = load_data._load_multiindex_parquet(save_path)
     else:
         save_path.parent.mkdir(parents=True, exist_ok=True)
         dfs = []
@@ -162,7 +269,7 @@ def _get_spectrogram_df(
     return df
 
 
-# %% Event (Cue or Reward) aligned spectrograms (from wavelet decomposition)
+# %% session level Event (Cue or Reward) aligned functions
 
 
 def _get_session_event_aligned_csd(
@@ -339,8 +446,8 @@ def _get_shank_channels_for_CSD(lfp_metrics, cluster_metrics, orientation="horiz
     cluster_metrics = cluster_metrics[cluster_metrics.single_unit]
     if orientation == "horizontal":
         # choose every other shank, check which option has best signal (proxy single unit counts)
-        set_1 = [1, 3, 5]
-        set_2 = [2, 4, 6]
+        set_1 = [0, 2, 4]
+        set_2 = [1, 3, 5]
         set_1_total_units = len(cluster_metrics[cluster_metrics.contact.shank.isin(set_1)])
         set_2_total_units = len(cluster_metrics[cluster_metrics.contact.shank.isin(set_2)])
         if set_1_total_units > set_2_total_units:
