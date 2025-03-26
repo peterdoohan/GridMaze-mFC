@@ -39,7 +39,7 @@ def test2(event="cue", window=(-2, 2)):
     Quick plot average CSD for a session
     """
     av_csds = []
-    subject = "m6"
+    subject = "m3"
     for maze in MAZE_CONFIGS.keys():
         all_days = [int(d) for d in MAZE_DAY2DATE[maze].keys()]
         days = all_days[-7:]  # last 7 days (late sessions)
@@ -62,6 +62,7 @@ def test2(event="cue", window=(-2, 2)):
             nearest_event_samples = np.array([np.argmin(np.abs(times - t)) for t in event_times])
             samples_before, samples_after = int(window[0] * FS), int(window[1] * FS)
             csd_windows = [csd[s + samples_before : s + samples_after] for s in nearest_event_samples]
+            return csd_windows
             av_csd = np.array(csd_windows).mean(axis=0)
             av_csds.append(av_csd)
     x = np.array([i for i in av_csds if i.shape[0] != 0]).mean(axis=0)  # hack
@@ -82,7 +83,7 @@ def test():
     freqs = np.geomspace(3, 250, 100)
     session_specs = []
     skipped_session = []
-    for subject in SUBJECT_IDS:
+    for subject in ["m2"]:
         for maze in MAZE_CONFIGS.keys():
             all_days = [int(d) for d in MAZE_DAY2DATE[maze].keys()]
             days = all_days[-7:]  # last 7 days (late sessions)
@@ -116,39 +117,47 @@ def _get_spectrogram_df(
     signal_type="CSD",
     single_channel=False,
     window=(-2, 2),
-    freqs=np.geomspace(3, 250, 100),
+    freqs=np.geomspace(1, 250, 100),
     overwrite=False,
 ):
     """
+    Session level function.
     Calculates the average spectogram pwoer of LFP/CSD signal aliged to cue and reward (store in combined
     dataframe for convience).
 
     Note: Function tries to load data from disk if available, otherwise computes and saves to disk.
     Set overwrite to True to force recomputation and
     """
-    # process av specfram for each event
-    dfs = []
-    for event in ["cue", "reward"]:
-        av_spec = _get_session_event_aligned_spectrogram(
-            session, event, signal_type, single_channel, window, freqs, plot=False
-        )
-        times = np.linspace(*window, av_spec.shape[1])
-        spec_df = pd.DataFrame(av_spec, columns=times)
-        spec_df.columns = pd.MultiIndex.from_product([[f"{event}_aligned_time"], spec_df.columns])
-        dfs.append(spec_df)
-    # add info columns useful when combining multiple sessions
-    info_df = pd.DataFrame(index=spec_df.index)
-    info_df[("subject_ID", "")] = session.subject_ID
-    info_df[("maze_name", "")] = session.maze_name
-    info_df[("day_on_maze", "")] = session.day_on_maze
-    info_df[("signal_type", "")] = signal_type
-    info_df[("single_channel", "")] = single_channel
-    info_df[("signal_type", "")] = signal_type
-    info_df.columns = pd.MultiIndex.from_tuples(info_df.columns)
-    # combine dataframes
-    df = pd.concat([info_df] + dfs, axis=1)
-    if save:
-        save_path = LFP_RESULTS / f"{session.name}.parquet"
+    # try to load from disk
+    save_path = LFP_RESULTS / "aligned_spectrograms" / f"{session.name}.parquet"
+    if not overwrite and save_path.exists():
+        df = pd.read_parquet(save_path)
+    else:
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        dfs = []
+        for event in ["cue", "reward"]:
+            av_spec = _get_session_event_aligned_spectrogram(
+                session, event, signal_type, single_channel, window, freqs, plot=False
+            )
+            times = np.linspace(*window, av_spec.shape[1])
+            spec_df = pd.DataFrame(av_spec, columns=times)
+            spec_df.columns = pd.MultiIndex.from_product([[f"{event}_aligned_time"], spec_df.columns])
+            dfs.append(spec_df)
+        # add info columns useful when combining multiple sessions
+        info_df = pd.DataFrame(index=spec_df.index)
+        info_df[("subject_ID", "")] = session.subject_ID
+        info_df[("maze_name", "")] = session.maze_name
+        info_df[("day_on_maze", "")] = session.day_on_maze
+        info_df[("signal_type", "")] = signal_type
+        info_df[("single_channel", "")] = single_channel
+        info_df[("signal_type", "")] = signal_type
+        info_df[("probe_depth", "")] = session.probe_depth
+        info_df[("tissue_sample", "")] = session.tissue_sample
+        info_df[("frequencies", "")] = freqs
+        info_df.columns = pd.MultiIndex.from_tuples(info_df.columns)
+        # combine dataframes
+        df = pd.concat([info_df] + dfs, axis=1)
+        # save to disk
         df.to_parquet(save_path, compression="gzip")
     return df
 
@@ -156,13 +165,45 @@ def _get_spectrogram_df(
 # %% Event (Cue or Reward) aligned spectrograms (from wavelet decomposition)
 
 
+def _get_session_event_aligned_csd(
+    session,
+    event="cue",
+    signal_type="CSD",
+    single_channel=False,
+    window=(-2, 2),
+    zscore_signal=True,
+    plot=True,
+):
+    """ """
+    # load data
+    trials_df = session.trials_df
+    times = session.lfp_times
+    if signal_type == "LFP":
+        signal = get_LFP(session, shank=3, single_channel=single_channel)
+    elif signal_type == "CSD":
+        signal = get_CSD(session, orientation="horizontal", single_channel=single_channel)
+    else:
+        raise NotImplementedError
+    if zscore_signal:
+        signal = zscore(signal, axis=0)
+    # average normalised signal around event times
+    event_times = trials_df.time[event].values
+    nearest_event_samples = np.array([np.argmin(np.abs(times - t)) for t in event_times])
+    samples_before, samples_after = int(window[0] * FS), int(window[1] * FS)
+    signal_windows = [signal[s + samples_before : s + samples_after] for s in nearest_event_samples]
+    expected_samples = np.abs(samples_before) + np.abs(samples_after)
+    signal_windows = [s for s in signal_windows if s.shape[0] == expected_samples]
+    av_signal = np.array(signal_windows).mean(axis=0)
+    return av_signal
+
+
 def _get_session_event_aligned_spectrogram(
     session,
     event="cue",
-    signal_type="LFP",
+    signal_type="CSD",
     single_channel=False,
     window=(-2, 2),
-    freqs=np.geomspace(3, 250, 100),
+    freqs=np.geomspace(1, 250, 100),
     zscore_freqs=True,
     plot=True,
 ):
@@ -187,33 +228,34 @@ def _get_session_event_aligned_spectrogram(
     nearest_event_samples = np.array([np.argmin(np.abs(times - t)) for t in event_times])
     samples_before, samples_after = int(window[0] * FS), int(window[1] * FS)
     spec_windows = [spec[:, s + samples_before : s + samples_after] for s in nearest_event_samples]
+    expected_samples = np.abs(samples_before) + np.abs(samples_after)
+    spec_windows = [s for s in spec_windows if s.shape[1] == expected_samples]
     av_spec = np.array(spec_windows).mean(axis=0)
     if plot:
         times = np.linspace(*window, av_spec.shape[1])
-        _plot_spectrogram(av_spec, times, freqs, event, f"{signal_type} single channel: {single_channel}")
+        _plot_spectrogram(av_spec, times, freqs)
     return av_spec
 
 
-def _plot_spectrogram(x, times, freqs, event, signal_type, ax=None):
+def _plot_spectrogram(x, times, freqs, ax=None):
+    """ """
     if ax is None:
-        f, ax = plt.subplots(1, 1, clear=True, figsize=(10, 3))
-    im = ax.imshow(
-        x,
-        aspect="auto",
-        extent=[times[0], times[-1], freqs[-1], freqs[0]],
-        cmap="coolwarm",
-    )
-    ax.set_xlabel(f"{event} Aligned Time (s)")
+        fig, ax = plt.subplots(1, 1, figsize=(8, 4))
+    ax.spines[["top", "right", "left", "bottom"]].set_visible(False)
+    pcmesh = ax.pcolormesh(times, freqs, x, shading="auto", cmap="coolwarm")
     ax.axvline(0, color="white", linestyle="--")
-    ax.invert_yaxis()
-    # ax.set_yscale("log")
+    ax.grid(False)
+    ax.set_yscale("log")
+    ax.set_title(f"Wavelet Decomposition")
     ax.set_ylabel("Frequency (Hz)")
-    ax.set_title(f"{signal_type}")
-    cbar = plt.colorbar(im, ax=ax)
+    ax.set_xlabel("Time (s)")
+    cbar = plt.colorbar(pcmesh, ax=ax, orientation="vertical")
     cbar.set_label("Power (z-scored)")
+    for spine in cbar.ax.spines.values():
+        spine.set_visible(False)
 
 
-# %% CSD functions
+# %% get CSD/LFP functions
 
 
 def get_LFP(session, shank=3, single_channel=False):
@@ -418,7 +460,7 @@ def _get_single_channels_for_CSD(
         return contacts
 
 
-# %% Wavelet functions
+# %% Custom Wavelet functions
 
 
 def _morlet(M, gaussian_width=1.5, window_length=1.0, precision=8):
@@ -451,8 +493,8 @@ def generate_morlet_filterbank(freqs, fs, gaussian_width=1.5, window_length=1.0,
     filter_bank = []
     cutoff = 8  # Determines the time support of the wavelet
     M = 2**precision
-    # Create a finely-sampled, conjugated Morlet wavelet as a template.
-    morlet_wavelet = np.conj(_morlet(M, gaussian_width, window_length, precision))
+    # FIX: Remove precision from the call to _morlet so that it uses its default precision value (8)
+    morlet_wavelet = np.conj(_morlet(M, gaussian_width, window_length))
     x = np.linspace(-cutoff, cutoff, M)
     max_len = 0
     time = None
@@ -481,7 +523,7 @@ def generate_morlet_filterbank(freqs, fs, gaussian_width=1.5, window_length=1.0,
     return np.array(padded_filters), time
 
 
-def compute_wavelet_transform_fft(sig, freqs, fs, gaussian_width=1.5, window_length=1.0, precision=16, norm="l1"):
+def compute_wavelet_transform_fft(sig, freqs, fs, gaussian_width=1.5, window_length=1.0, precision=16, norm=False):
     filter_bank, _ = generate_morlet_filterbank(freqs, fs, gaussian_width, window_length, precision)
     n_freqs, _ = filter_bank.shape
     n_time = len(sig)
@@ -499,6 +541,19 @@ def compute_wavelet_transform_fft(sig, freqs, fs, gaussian_width=1.5, window_len
         cwt = cwt / (fs / np.sqrt(freqs)[:, np.newaxis])
 
     return cwt
+
+
+def plot_filterbank(filter_bank, time, freqs):
+    fig, ax = plt.subplots(1, constrained_layout=True, figsize=(5, 15))
+    ax.spines[["top", "right", "left"]].set_visible(False)
+    for f_i in range(filter_bank.shape[0]):
+        ax.plot(time, np.real(filter_bank[f_i, :]) + f_i * 1.5)
+        ax.text(-1.5, 1.5 * f_i, f"{np.round(freqs[f_i], 2)}Hz", va="center", ha="left")
+
+    ax.set_yticks([])
+    ax.set_xlim(-1, 1)
+    ax.set_xlabel("Time (s)")
+    ax.set_title("Wavlet Filterbank")
 
 
 # %% QC functions
