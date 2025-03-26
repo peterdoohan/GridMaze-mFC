@@ -71,7 +71,6 @@ def get_LFP_times(session_dir, downsample_frequency=1500):
     """
     raw_rec, _ = _load_recording(session_dir)
     original_sample_rate = int(raw_rec.get_sampling_frequency())  # Hz
-    print(original_sample_rate)
     if session_dir.session_type == "rest":
         lfp_times = raw_rec.get_times()  # seconds
     else:  # "maze"
