@@ -35,8 +35,16 @@ FS = 1500  # lfp sampling frequency
 # %% high level analysis
 
 
-# %%
-def get_all_spectrogram_dfs(overwrite=False, verbose=False):
+# %% top level save/load data functions
+def load_spectrogram_dfs_from_disk(subject_IDs=["m2"]):
+    save_paths = list((LFP_RESULTS / "aligned_spectrograms").iterdir())
+    if subject_IDs != "all":
+        save_paths = [p for p in save_paths if p.name.split(".")[0] in subject_IDs]
+    dfs = [load_data._load_multiindex_parquet(p) for p in save_paths]
+    return dfs
+
+
+def save_all_spectrogram_dfs(overwrite=False, signal_type="CSD", verbose=False):
     spectrogram_dfs = []
     skipped_sessions = []
     for subject in SUBJECT_IDS:
@@ -54,10 +62,14 @@ def get_all_spectrogram_dfs(overwrite=False, verbose=False):
                     if verbose:
                         print(e)
                         continue
-                if verbose:
-                    print(session)
                 try:
-                    spectrogram_dfs.appeend(get_spectrogram_df(session, overwrite=overwrite))
+                    spectrogram_dfs.append(
+                        get_spectrogram_df(
+                            session,
+                            signal_type=signal_type,
+                            overwrite=overwrite,
+                        )
+                    )
                 except ValueError as e:
                     if verbose:
                         print(e)
@@ -68,15 +80,14 @@ def get_all_spectrogram_dfs(overwrite=False, verbose=False):
     return spectrogram_dfs
 
 
-def get_aligned_CSD_df(overwrite=False, single_channel=False, window=(-2, 2), verbose=False):
+def get_aligned_signal_df(overwrite=False, signal_type="CSD", single_channel=False, window=(-2, 2), verbose=False):
     """Generates a dataframe of event-aligned CSD data for all sessions"""
-    save_path = LFP_RESULTS / "aligned_csds.parquet"
+    save_path = LFP_RESULTS / f"aligned_{signal_type}.parquet"
     if not overwrite and save_path.exists():
         df = load_data._load_multiindex_parquet(save_path)
     else:
-        aligned_csds = []
-        info_df = []
-        skipped_sessions = []
+        print(f"Computing aligned {signal_type} signal df")
+        signal_dfs = []
         for subject in SUBJECT_IDS:
             for maze in MAZE_CONFIGS.keys():
                 for day in [int(d) for d in MAZE_DAY2DATE[maze].keys()]:
@@ -95,50 +106,19 @@ def get_aligned_CSD_df(overwrite=False, single_channel=False, window=(-2, 2), ve
                     if verbose:
                         print(session)
                     try:
-                        csds = []
-                        for event in ["cue", "reward"]:
-                            av_csd = _get_session_event_aligned_csd(
-                                session,
-                                event=event,
-                                signal_type="CSD",
-                                single_channel=single_channel,
-                                window=window,
-                                zscore_signal=True,
-                            )
-                            csds.append(av_csd)
-                        times = np.linspace(*window, av_csd.shape[0])
-                        aligned_csds.append(
-                            pd.Series(
-                                index=pd.MultiIndex.from_product([["cue_aligned_time", "reward_aligned_time"], times]),
-                                data=np.hstack(csds),
-                            )
-                        )
-                        info_df.append(
-                            {
-                                ("subject_ID", ""): session.subject_ID,
-                                ("maze_name", ""): session.maze_name,
-                                ("day_on_maze", ""): session.day_on_maze,
-                                ("signal_type", ""): "CSD",
-                                ("single_channel", ""): single_channel,
-                                ("probe_depth", ""): session.probe_depth,
-                                ("tissue_sample", ""): session.tissue_sample,
-                            }
-                        )
+                        signal_dfs.append(_get_signal_df(session, signal_type, single_channel, window))
                     except ValueError as e:
                         if verbose:
                             print(e)
                             print(f"skipping session: {session.name}")
-                        skipped_sessions.append(session.name)
-        info_df = pd.DataFrame(info_df)
-        info_df.columns = pd.MultiIndex.from_tuples(info_df.columns)
-        aligned_csds = pd.concat(aligned_csds, axis=1).T
-        df = pd.concat([info_df, aligned_csds], axis=1)
+        df = pd.concat(signal_dfs, axis=0)
         # save
-        save_path = LFP_RESULTS / "aligned_csds.parquet"
+        df.columns = df.columns.map(lambda x: str(x))
         df.to_parquet(save_path, compression="gzip")
-        if verbose:
-            print(f"skipped sessions: {skipped_sessions}")
     return df
+
+
+# %%
 
 
 def get_spectrogram_df(
@@ -158,10 +138,11 @@ def get_spectrogram_df(
     Set overwrite to True to force recomputation and
     """
     # try to load from disk
-    save_path = LFP_RESULTS / "aligned_spectrograms" / f"{session.name}.parquet"
+    save_path = LFP_RESULTS / "aligned_spectrograms" / signal_type / f"{session.name}.parquet"
     if not overwrite and save_path.exists():
         df = load_data._load_multiindex_parquet(save_path)
     else:
+        print(f"Computing spectrogram for {session.name}")
         save_path.parent.mkdir(parents=True, exist_ok=True)
         dfs = []
         for event in ["cue", "reward"]:
@@ -173,35 +154,24 @@ def get_spectrogram_df(
             spec_df.columns = pd.MultiIndex.from_product([[f"{event}_aligned_time"], spec_df.columns])
             dfs.append(spec_df)
         # add info columns useful when combining multiple sessions
-        info_df = pd.DataFrame(index=spec_df.index)
-        info_df[("subject_ID", "")] = session.subject_ID
-        info_df[("maze_name", "")] = session.maze_name
-        info_df[("day_on_maze", "")] = session.day_on_maze
-        info_df[("signal_type", "")] = signal_type
-        info_df[("single_channel", "")] = single_channel
-        info_df[("signal_type", "")] = signal_type
-        info_df[("probe_depth", "")] = session.probe_depth
-        info_df[("tissue_sample", "")] = session.tissue_sample
+        info_df = _get_info_df(session, spec_df.index, signal_type, single_channel)
         info_df[("frequencies", "")] = freqs
-        info_df.columns = pd.MultiIndex.from_tuples(info_df.columns)
         # combine dataframes
         df = pd.concat([info_df] + dfs, axis=1)
         # save to disk
+        if not save_path.exists():
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+        df.columns = df.columns.map(lambda x: str(x))
         df.to_parquet(save_path, compression="gzip")
     return df
 
 
-# %% session level Event (Cue or Reward) aligned functions
-
-
-def _get_session_event_aligned_csd(
+def _get_signal_df(
     session,
-    event="cue",
     signal_type="CSD",
     single_channel=False,
     window=(-2, 2),
     zscore_signal=True,
-    plot=True,
 ):
     """ """
     # load data
@@ -216,14 +186,48 @@ def _get_session_event_aligned_csd(
     if zscore_signal:
         signal = zscore(signal, axis=0)
     # average normalised signal around event times
-    event_times = trials_df.time[event].values
-    nearest_event_samples = np.array([np.argmin(np.abs(times - t)) for t in event_times])
+    sig_dfs = []
     samples_before, samples_after = int(window[0] * FS), int(window[1] * FS)
-    signal_windows = [signal[s + samples_before : s + samples_after] for s in nearest_event_samples]
-    expected_samples = np.abs(samples_before) + np.abs(samples_after)
-    signal_windows = [s for s in signal_windows if s.shape[0] == expected_samples]
-    av_signal = np.array(signal_windows).mean(axis=0)
-    return av_signal
+    for event in ["cue", "reward"]:
+        event_times = trials_df.time[event].values
+        trials = trials_df.trial
+        nearest_event_samples = np.array([np.argmin(np.abs(times - t)) for t in event_times])
+        signal_windows = [signal[s + samples_before : s + samples_after] for s in nearest_event_samples]
+        expected_samples = np.abs(samples_before) + np.abs(samples_after)
+        keep_sig, keep_trials = [], []
+        for i, sig in enumerate(signal_windows):
+            if sig.shape[0] != expected_samples:
+                print(f"trial: {trials[i]} window out of bounds")
+            else:
+                keep_sig.append(sig)
+                keep_trials.append(trials[i])
+        t = np.linspace(*window, expected_samples)
+        sig_dfs.append(
+            pd.DataFrame(data=np.array(keep_sig), columns=pd.MultiIndex.from_product([[f"{event}_aligned_time"], t]))
+        )
+    # return as dataframe with some session info
+    info_df = _get_info_df(session, sig_dfs[0].index, signal_type, single_channel)
+    info_df[("trial", "")] = keep_trials
+    df = pd.concat([info_df] + sig_dfs, axis=1)
+    return df
+
+
+def _get_info_df(session, index, signal_type, single_channel):
+    late_session = (
+        True if session.day_on_maze in [int(d) for d in MAZE_DAY2DATE[session.maze_name].keys()][-7:] else False
+    )
+    info_df = pd.DataFrame(index=index)
+    info_df[("subject_ID", "")] = session.subject_ID
+    info_df[("maze_name", "")] = session.maze_name
+    info_df[("day_on_maze", "")] = session.day_on_maze
+    info_df[("late_session", "")] = late_session
+    info_df[("signal_type", "")] = signal_type
+    info_df[("single_channel", "")] = single_channel
+    info_df[("signal_type", "")] = signal_type
+    info_df[("probe_depth", "")] = session.probe_depth
+    info_df[("tissue_sample", "")] = session.tissue_sample
+    info_df.columns = pd.MultiIndex.from_tuples(info_df.columns)
+    return info_df
 
 
 def _get_session_event_aligned_spectrogram(
@@ -234,7 +238,7 @@ def _get_session_event_aligned_spectrogram(
     window=(-2, 2),
     freqs=np.geomspace(1, 250, 100),
     zscore_freqs=True,
-    plot=True,
+    plot=False,
 ):
     """ """
     # load data
@@ -261,33 +265,70 @@ def _get_session_event_aligned_spectrogram(
     spec_windows = [s for s in spec_windows if s.shape[1] == expected_samples]
     av_spec = np.array(spec_windows).mean(axis=0)
     if plot:
-        times = np.linspace(*window, av_spec.shape[1])
-        _plot_spectrogram(av_spec, times, freqs)
+        t = np.linspace(*window, av_spec.shape[1])
+        _plot_spectrogram(av_spec, t, freqs)
     return av_spec
 
 
-def _plot_spectrogram(x, times, freqs, ax=None):
+# %% Plotting functions
+
+
+def _plot_spectrogram_from_df(df, axes=None, window=False):
+    """ """
+    _df = df.copy()
+    if axes is None:
+        fig, axes = plt.subplots(1, 2, figsize=(10, 4), width_ratios=[0.9, 1])
+    if window:
+        new_columns = []
+        for col in _df.columns:
+            if col[0] in ["cue_aligned_time", "reward_aligned_time"]:
+                time_val = float(col[1])
+                if window[0] <= time_val <= window[1]:
+                    new_columns.append(col)
+            else:
+                new_columns.append(col)  # Keep metadata columns
+        _df = _df[new_columns]
+    # get common max, min values
+    _max = _df[["cue_aligned_time", "reward_aligned_time"]].max().max()
+    _min = _df[["cue_aligned_time", "reward_aligned_time"]].min().min()
+    freqs = _df.frequencies.values
+    for i, event in enumerate(["cue", "reward"]):
+        times = _df[f"{event}_aligned_time"].columns.astype("float")
+        spec = _df[f"{event}_aligned_time"].values
+        cbar = True if i == 1 else False
+        _plot_spectrogram(spec, times, freqs, ax=axes[i], _min=_min, _max=_max, colorbar=cbar)
+        axes[i].set_title("")
+        axes[i].set_xlabel(f"{event}-aligned time (s)")
+        if i == 1:
+            axes[1].set_ylabel("")
+    fig.tight_layout()
+
+
+def _plot_spectrogram(x, times, freqs, ax=None, _min=None, _max=None, colorbar=True):
     """ """
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=(8, 4))
     ax.spines[["top", "right", "left", "bottom"]].set_visible(False)
-    pcmesh = ax.pcolormesh(times, freqs, x, shading="auto", cmap="coolwarm")
+    _min = x.min() if _min is None else _min
+    _max = x.max() if _max is None else _max
+    pcmesh = ax.pcolormesh(times, freqs, x, shading="auto", cmap="coolwarm", vmin=_min, vmax=_max)
     ax.axvline(0, color="white", linestyle="--")
     ax.grid(False)
     ax.set_yscale("log")
     ax.set_title(f"Wavelet Decomposition")
     ax.set_ylabel("Frequency (Hz)")
     ax.set_xlabel("Time (s)")
-    cbar = plt.colorbar(pcmesh, ax=ax, orientation="vertical")
-    cbar.set_label("Power (z-scored)")
-    for spine in cbar.ax.spines.values():
-        spine.set_visible(False)
+    if colorbar:
+        cbar = plt.colorbar(pcmesh, ax=ax, orientation="vertical")
+        cbar.set_label("Power (z-scored)")
+        for spine in cbar.ax.spines.values():
+            spine.set_visible(False)
 
 
 # %% get CSD/LFP functions
 
 
-def get_LFP(session, shank=3, single_channel=False):
+def get_LFP(session, shank=3, single_channel=False, remove_artifacts=True):
     """ """
     # load data
     lfp_metrics = session.lfp_metrics
@@ -301,10 +342,12 @@ def get_LFP(session, shank=3, single_channel=False):
         channel_ids = _get_shank_channels_for_LFP(lfp_metrics, cluster_metrics, shank)
         channel_indices = lfp_metrics.contact.id.isin(channel_ids).index.values
         lfp = lfp_signal[:, channel_indices].mean(axis=1)
+    if remove_artifacts:
+        lfp = _remove_artifacts(lfp, thres=500)
     return lfp
 
 
-def get_CSD(session, orientation="horizontal", single_channel=False):
+def get_CSD(session, orientation="horizontal", single_channel=False, remove_artifacts=True):
     """
     CSD = c2 - ((c1 + c3) / 2)
     for c1, c2, c3 colinear contacts in the same region
@@ -325,7 +368,32 @@ def get_CSD(session, orientation="horizontal", single_channel=False):
         c1, c2, c3 = [lfp_signal[:, cs].mean(axis=1) for cs in [c1_inds, c2_inds, c3_inds]]
     # calculate CSD (2nd spatial derivate of LFP)
     CSD = c2 - (c1 + c3) / 2
+    if remove_artifacts:
+        CSD = _remove_artifacts(CSD, thres=100)
     return CSD
+
+
+def _remove_artifacts(signal, thres=500, window=(-100, 100)):
+    """ """
+    sig_med = np.median(signal)
+    sig_mean_dev = np.abs(signal - sig_med)
+    artifact_mask = sig_mean_dev > thres
+    # Create a mask for indices to remove.
+    removal_mask = np.zeros(signal.shape, dtype=bool)
+    artifact_indices = np.where(artifact_mask)[0]
+    for idx in artifact_indices:
+        start = max(0, idx + window[0])
+        end = min(len(signal), idx + window[1] + 1)
+        removal_mask[start:end] = True
+    good_indices = np.where(~removal_mask)[0]
+    # Check that we have at least two good points for interpolation.
+    if len(good_indices) < 2:
+        raise ValueError("Not enough good points for interpolation.")
+    new_signal = signal.copy()
+    x = np.arange(len(signal))
+    # Interpolate over the removed indices.
+    new_signal[removal_mask] = np.interp(x[removal_mask], x[good_indices], signal[good_indices])
+    return new_signal
 
 
 # %% Select channels for LFP / CSD analysis
