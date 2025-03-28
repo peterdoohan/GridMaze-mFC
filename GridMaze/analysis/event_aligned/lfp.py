@@ -12,6 +12,9 @@ from GridMaze.analysis.core import load_data
 from scipy.stats import zscore
 import matplotlib.pyplot as plt
 from scipy.signal import fftconvolve
+from scipy.ndimage import gaussian_filter
+
+from GridMaze.analysis.event_aligned import delta_distance_to_goal as ddtg
 
 
 # %% Global Variables
@@ -35,13 +38,102 @@ FS = 1500  # lfp sampling frequency
 # %% high level analysis
 
 
+def test(ddtg_thres=-0.1):
+    """
+    Split trials into goal-directed and non-goal directed at cue from ddtg and
+    plot average CSD aligned to cue to see if there is a difference
+    """
+    ddtg_df = ddtg.get_all_sessions_ddtg_at_cue(s=2, multi_index=True)
+    csd_df = get_aligned_signal_df(signal_type="LFP")
+
+    def _get_trial_unique_ID(row):
+        return f"{row.subject_ID.values[0]}_{row.maze_name.values[0]}_{row.day_on_maze.values[0]}_{int(row.trial.values[0])}"
+
+    ddtg_df["trial_unique_ID"] = ddtg_df.apply(_get_trial_unique_ID, axis=1)
+    csd_df["trial_unique_ID"] = csd_df.apply(_get_trial_unique_ID, axis=1)
+    goal_directed_trials = ddtg_df[ddtg_df.ddtg != 0].trial_unique_ID
+    non_goal_directed_trials = ddtg_df[ddtg_df.ddtg == 0].trial_unique_ID
+    goal_directed_csd = csd_df[csd_df.trial_unique_ID.isin(goal_directed_trials)]
+    non_goal_directed_csd = csd_df[csd_df.trial_unique_ID.isin(non_goal_directed_trials)]
+    for subject in SUBJECT_IDS:
+        f, ax = plt.subplots()
+        goal_directed_csd[goal_directed_csd.subject_ID == subject].cue_aligned_time.mean(0).plot(ax=ax)
+        non_goal_directed_csd[non_goal_directed_csd.subject_ID == subject].cue_aligned_time.mean(0).plot(ax=ax)
+    f, ax = plt.subplots()
+    goal_directed_csd.cue_aligned_time.mean(0).plot(ax=ax)
+    non_goal_directed_csd.cue_aligned_time.mean(0).plot(ax=ax)
+
+
+def plot_exp_average_spectrograms(axes=None, smooth_SD=False):
+    if axes is None:
+        fig, axes = plt.subplots(1, 2, figsize=(10, 4), width_ratios=[0.9, 1])
+    save_path = LFP_RESULTS / "aligned_spectrograms_CSD.parquet"
+    df = load_data._load_multiindex_parquet(save_path)
+    df = df[df.late_session]
+    cue_df = df.groupby("frequencies").cue_aligned_time.mean()
+    reward_df = df.groupby("frequencies").reward_aligned_time.mean()
+    # get common max, min values
+    _max = max(cue_df.max().max(), reward_df.max().max())
+    _min = min(cue_df.min().min(), reward_df.min().min())
+    freqs = cue_df.index.values
+    times = df.cue_aligned_time.columns.astype("float")
+    events = ["cue", "reward"]
+    for i, _df in enumerate([cue_df, reward_df]):
+        spec = _df.values
+        if smooth_SD:
+            spec = gaussian_filter(spec, sigma=smooth_SD)
+        cbar = True if i == 1 else False
+        _plot_spectrogram(spec, times, freqs, ax=axes[i], _min=_min, _max=_max, colorbar=cbar)
+        axes[i].set_title("")
+        axes[i].set_xlabel(f"{events[i]}-aligned time (s)")
+        if i == 1:
+            axes[1].set_ylabel("")
+    fig.tight_layout()
+
+
+def plot_bands(axes=None, low_band=(1, 3), theta_band=(8, 12), high_band=(150, 250)):
+    """ """
+    if axes is None:
+        fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharey=True)
+    for ax in axes:
+        ax.spines[["top", "right"]].set_visible(False)
+    save_path = LFP_RESULTS / "aligned_spectrograms_CSD.parquet"
+    df = load_data._load_multiindex_parquet(save_path)
+    df = df[df.late_session]
+    for band, label, color in zip(
+        [low_band, theta_band, high_band], ["low", "theta", "high"], ["blue", "green", "red"]
+    ):
+        band_df = df.loc[df.frequencies.between(*band).values]
+        cue_responses, reward_responses = [], []
+        for subject in SUBJECT_IDS:
+            subject_df = band_df[band_df.subject_ID == subject].groupby("frequencies")
+            cue_responses.append(subject_df.cue_aligned_time.mean().mean().values)
+            reward_responses.append(subject_df.reward_aligned_time.mean().mean().values)
+        cue_mean = np.array(cue_responses).mean(axis=0)
+        cue_sem = np.array(cue_responses).std(axis=0) / np.sqrt(len(SUBJECT_IDS))
+        reward_mean = np.array(reward_responses).mean(axis=0)
+        reward_sem = np.array(reward_responses).std(axis=0) / np.sqrt(len(SUBJECT_IDS))
+        times = band_df.cue_aligned_time.columns.astype("float")
+        for i, (mean, sem) in enumerate(zip([cue_mean, reward_mean], [cue_sem, reward_sem])):
+            axes[i].plot(times, mean, label=f"{label}: {band[0]}-{band[1]} Hz", color=color)
+            axes[i].fill_between(times, mean - sem, mean + sem, alpha=0.3, color=color)
+    axes[1].legend()
+    axes[0].set_title("cue aligned time (s)")
+    axes[1].set_title("reward aligned time (s)")
+    axes[0].set_ylabel("Power (z-scored)")
+    return
+
+
 # %% top level save/load data functions
-def load_spectrogram_dfs_from_disk(subject_IDs=["m2"]):
-    save_paths = list((LFP_RESULTS / "aligned_spectrograms").iterdir())
-    if subject_IDs != "all":
-        save_paths = [p for p in save_paths if p.name.split(".")[0] in subject_IDs]
-    dfs = [load_data._load_multiindex_parquet(p) for p in save_paths]
-    return dfs
+# def load_spectrogram_dfs_from_disk(signal_type="CSD", subject_IDs="all"):
+#     save_paths = list((LFP_RESULTS / "aligned_spectrograms" / signal_type).iterdir())
+#     if subject_IDs != "all":
+#         save_paths = [p for p in save_paths if p.name.split(".")[0] in subject_IDs]
+#     dfs = []
+#     for p in save_paths:
+#         print(f"loading {p.name}")
+#         dfs.append(load_data._load_multiindex_parquet(p))
+#     return dfs
 
 
 def save_all_spectrogram_dfs(overwrite=False, signal_type="CSD", verbose=False):
