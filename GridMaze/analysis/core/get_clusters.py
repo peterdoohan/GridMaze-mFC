@@ -161,7 +161,12 @@ class Cluster:
         """
         # Step 1
         if feature == "actions":
-            default_kwargs = {"window": (-3, 3), "smooth_SD": 5, "concise": False}
+            default_kwargs = {
+                "window": (-3, 3),
+                "smooth_SD": 5,
+                "concise": False,
+                "forced_only": True,
+            }
 
         elif feature == "angle_to_goal":
             default_kwargs = {
@@ -406,7 +411,9 @@ class Cluster:
         # plot tuning feature
         if feature == "actions":
             if feature_kwargs["concise"]:
-                actions.plot_action_tunning_concise(tuning_data, ax=ax, smooth_SD=feature_kwargs["smooth_SD"])
+                actions.plot_action_tunning_concise(
+                    tuning_data, ax=ax, smooth_SD=feature_kwargs["smooth_SD"], forced_only=feature_kwargs["forced_only"]
+                )
             else:
                 actions.plot_action_tuning(
                     tuning_data,

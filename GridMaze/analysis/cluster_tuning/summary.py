@@ -43,7 +43,7 @@ plt.rcParams.update(
 
 
 def save_all_tuning_summaries(type="concise"):
-    for maze in MAZE_DAY2DATE.keys():
+    for maze in ["rooms_maze"]:
         for day in MAZE_DAY2DATE[maze].keys():
             for subject_ID in SUBJECT_IDS:
                 try:
@@ -91,7 +91,8 @@ def plot_tuning_summary_concise(Cluster):
     Cluster.plot_tuning("distance_to_goal", ax=ax2)
     Cluster.plot_tuning("trial_events", ax=ax3)
     Cluster.plot_tuning("angle_to_goal", feature_kwargs={"angle_metric": "summary"}, ax=ax4)
-    Cluster.plot_tuning("actions", ax=ax5, feature_kwargs={"concise": True})
+    forced_actions_only = False if Cluster.maze_name == "rooms_maze" else True
+    Cluster.plot_tuning("actions", ax=ax5, feature_kwargs={"concise": True, "forced_only": forced_actions_only})
     fig.tight_layout()
     fig.subplots_adjust(hspace=0.5, wspace=0.3)
     fig.suptitle(f"{Cluster.cluster_unique_ID}", fontsize=16)
