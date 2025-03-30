@@ -64,11 +64,19 @@ def test(ddtg_thres=-0.1):
     non_goal_directed_csd.cue_aligned_time.mean(0).plot(ax=ax)
 
 
-def plot_exp_average_spectrograms(axes=None, smooth_SD=False):
+def plot_exp_average_spectrograms(signal_type, axes=None, smooth_SD=False):
     if axes is None:
         fig, axes = plt.subplots(1, 2, figsize=(10, 4), width_ratios=[0.9, 1])
-    save_path = LFP_RESULTS / "aligned_spectrograms_CSD.parquet"
+    if signal_type == "CSD":
+        save_path = LFP_RESULTS / "aligned_spectrograms_CSD.parquet"
+    elif signal_type == "LFP":
+        save_path = LFP_RESULTS / "aligned_spectrograms_LFP.parquet"
+    else:
+        NotImplementedError
+
     df = load_data._load_multiindex_parquet(save_path)
+    # issue with freqs having diffent precisions HACK fix
+    df[("frequencies", "")] = df.frequencies.apply(lambda f: round(f, 5))
     df = df[df.late_session]
     cue_df = df.groupby("frequencies").cue_aligned_time.mean()
     reward_df = df.groupby("frequencies").reward_aligned_time.mean()
@@ -125,15 +133,15 @@ def plot_bands(axes=None, low_band=(1, 3), theta_band=(8, 12), high_band=(150, 2
 
 
 # %% top level save/load data functions
-# def load_spectrogram_dfs_from_disk(signal_type="CSD", subject_IDs="all"):
-#     save_paths = list((LFP_RESULTS / "aligned_spectrograms" / signal_type).iterdir())
-#     if subject_IDs != "all":
-#         save_paths = [p for p in save_paths if p.name.split(".")[0] in subject_IDs]
-#     dfs = []
-#     for p in save_paths:
-#         print(f"loading {p.name}")
-#         dfs.append(load_data._load_multiindex_parquet(p))
-#     return dfs
+def load_spectrogram_dfs_from_disk(signal_type="CSD", subject_IDs="all"):
+    save_paths = list((LFP_RESULTS / "aligned_spectrograms" / signal_type).iterdir())
+    if subject_IDs != "all":
+        save_paths = [p for p in save_paths if p.name.split(".")[0] in subject_IDs]
+    dfs = []
+    for p in save_paths:
+        print(f"loading {p.name}")
+        dfs.append(load_data._load_multiindex_parquet(p))
+    return dfs
 
 
 def save_all_spectrogram_dfs(overwrite=False, signal_type="CSD", verbose=False):
