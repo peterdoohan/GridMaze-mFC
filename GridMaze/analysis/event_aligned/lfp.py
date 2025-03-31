@@ -13,6 +13,9 @@ from scipy.stats import zscore
 import matplotlib.pyplot as plt
 from scipy.signal import fftconvolve
 from scipy.ndimage import gaussian_filter
+from scipy.signal import welch
+from mne.time_frequency import psd_array_welch
+from mne.time_frequency import psd_array_multitaper
 
 from GridMaze.analysis.event_aligned import delta_distance_to_goal as ddtg
 
@@ -218,7 +221,133 @@ def get_aligned_signal_df(overwrite=False, signal_type="CSD", single_channel=Fal
     return df
 
 
-# %%
+# %% Session level Welsh method
+
+
+def get_trial_phase_PSD(
+    session,
+    signal_type="LFP",
+    single_channel=False,
+    event_windows={"cue": (0, 0.5), "reward": (-0.5, 0.5), "ERC": (-0.5, 0.5)},
+    trial_phase_windows={"navigation": (0.5, -0.5), "RC": (0.5, -0.5), "ITI": (0.5, -0.5)},
+    min_window=1,
+):
+    """
+    Compute the average power spectral density (PSD) of LFP/CSD signals
+    in different trial phases: navigation, reward consumption (RC), ITI,
+    and different trial events: cue, reward, end reward consumption (ERC),
+    using the Welsh method.
+
+    Note:
+    - event_windows: specifies the window (s) around event to calculate PSD
+    - trial_phase_windows: specifies the times pre-post surrounding events to calc PSD:
+        - "navigation": cue+t[0], reward-t[1]
+        - "RC": reward+t[0], ERC-t[1]
+        - "ITI": ERC+t[0], cue-t[1]
+    """
+    # load data
+    trials_df = session.trials_df
+    times = session.lfp_times
+    if signal_type == "LFP":
+        signal = get_LFP(session, shank=3, single_channel=single_channel)
+    elif signal_type == "CSD":
+        signal = get_CSD(session, orientation="horizontal", single_channel=single_channel)
+
+    # get trial_phase/event windows
+    cue_times = trials_df.time.cue.values
+    reward_times = trials_df.time.reward.values
+    ERC_times = trials_df.time.end_reward_consumption.values
+    trial_end_times = trials_df.time.trial_end.values
+    label2windows = {
+        "cue": list(zip(cue_times + event_windows["cue"][0], cue_times + event_windows["cue"][1])),
+        "reward": list(zip(reward_times + event_windows["reward"][0], reward_times + event_windows["reward"][1])),
+        "ERC": list(zip(ERC_times + event_windows["ERC"][0], ERC_times + event_windows["ERC"][1])),
+    }
+    nav_windows = list(
+        zip(cue_times + trial_phase_windows["navigation"][0], reward_times + trial_phase_windows["navigation"][1])
+    )
+    RC_windows = list(zip(reward_times + trial_phase_windows["RC"][0], ERC_times + trial_phase_windows["RC"][1]))
+    ITI_windows = list(zip(ERC_times + trial_phase_windows["ITI"][0], trial_end_times + trial_phase_windows["ITI"][1]))
+    # ensure windows are all > min_window (if not remove that trial's window)
+    label2windows["navigation"] = [x for x in nav_windows if np.diff(x) - min_window > 0]
+    label2windows["RC"] = [x for x in RC_windows if np.diff(x) - min_window > 0]
+    label2windows["ITI"] = [x for x in ITI_windows if np.diff(x) - min_window > 0]
+    # get segments for each event/trial_phase
+    segments = {}
+    for label, windows in label2windows.items():
+        segments[label] = []
+        for window in windows:
+            start_sample = np.argmin(np.abs(times - window[0]))
+            end_sample = np.argmin(np.abs(times - window[1]))
+            segments[label].append(signal[start_sample:end_sample])
+    # calculate average PSD for each segment and return in df
+    label2psd = []
+    for label, segs in segments.items():
+        f, psd = _avg_psd_multitaper(segs)
+        label2psd.append((label, psd))
+    results_df = pd.DataFrame()
+    results_df["frequencies"] = f
+    for label, psd in label2psd:
+        results_df[label] = psd
+    return results_df
+
+
+def _avg_psd(segments):
+    """
+    Compute the average PSD over many segments using Welch's method.
+    Returns:
+    - f: Frequency bins.
+    - avg_psd: Averaged power spectral density across segments.
+    """
+    psds = []
+    for seg in segments:
+        f, psd = welch(seg, fs=FS, nperseg=FS // 2, noverlap=None, window="hann", scaling="spectrum")
+        psds.append(psd)
+    psds = np.array(psds)
+    avg_psd = np.mean(psds, axis=0)
+    return f, avg_psd
+
+
+def _avg_psd_multitaper(segments, fs=FS, fmin=1, fmax=250, n_freqs=100, normalization="full"):
+    """
+    Compute the average PSD over many segments using MNE's multitaper method.
+
+    Because the segments have variable lengths (and thus may yield different frequency bins),
+    each segment's PSD is interpolated onto a common frequency grid before averaging.
+
+    Parameters:
+    - segments: list of 1D numpy arrays (each a segment of data).
+    - fs: Sampling frequency.
+    - fmin: Minimum frequency of interest.
+    - fmax: Maximum frequency of interest.
+    - n_freqs: Number of frequency points for the common grid.
+    - normalization: Normalization method passed to psd_array_multitaper.
+
+    Returns:
+    - common_freqs: 1D numpy array with the common frequency grid.
+    - avg_psd: 1D numpy array with the averaged PSD across segments.
+    """
+    # Create a common frequency grid over the range of interest.
+    common_freqs = np.geomspace(fmin, fmax, n_freqs)
+    psd_list = []
+
+    for seg in segments:
+        # Compute the PSD for this segment using multitaper.
+        # Note: psd_array_multitaper returns psd and corresponding frequencies.
+        psd, freqs = psd_array_multitaper(
+            seg, sfreq=fs, fmin=fmin, fmax=fmax, normalization=normalization, verbose=False
+        )
+        # Interpolate this segment's PSD onto the common frequency grid.
+        interp_psd = np.interp(common_freqs, freqs, psd)
+        psd_list.append(interp_psd)
+
+    psd_array = np.array(psd_list)
+    avg_psd = np.mean(psd_array, axis=0)
+
+    return common_freqs, avg_psd
+
+
+# %% Session level spectrogram and signals
 
 
 def get_spectrogram_df(
