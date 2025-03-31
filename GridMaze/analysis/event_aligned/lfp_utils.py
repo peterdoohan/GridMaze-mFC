@@ -1,3 +1,7 @@
+"""
+Ultility functions to support main lfp.py library
+"""
+
 # %% Imports
 import pandas as pd
 import numpy as np
