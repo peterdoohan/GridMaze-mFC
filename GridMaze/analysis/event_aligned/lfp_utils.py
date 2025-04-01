@@ -7,44 +7,38 @@ import pandas as pd
 import numpy as np
 import json
 import mne
-from GridMaze.analysis.core import get_sessions as gs
-from GridMaze.analysis.core import load_data
 from scipy.stats import zscore
 import matplotlib.pyplot as plt
 from scipy.signal import fftconvolve
-from scipy.ndimage import gaussian_filter
 from scipy.signal import welch
-from mne.time_frequency import psd_array_welch
 from mne.time_frequency import psd_array_multitaper
+
+from GridMaze.analysis.event_aligned import delta_distance_to_goal as ddtg
 
 # %% Global Variables
 
-from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
-
-LFP_RESULTS = RESULTS_PATH / "event_aligned" / "lfp"
-if not LFP_RESULTS.exists():
-    LFP_RESULTS.mkdir(parents=True)
-
-with open(EXPERIMENT_INFO_PATH / "maze_configs.json", "r") as input_file:
-    MAZE_CONFIGS = json.load(input_file)
-
-with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
-    SUBJECT_IDS = json.load(input_file)
+from GridMaze.paths import EXPERIMENT_INFO_PATH
 
 with open(EXPERIMENT_INFO_PATH / "maze_day2date.json", "r") as input_file:
     MAZE_DAY2DATE = json.load(input_file)
 
 FS = 1500  # lfp sampling frequency
 
+DDTG_LOWER_THRES = -0.1  # rate of change of distance to goal thres for goal-directed behaviour at cue
+
+DDTG_UPPER_THRES = 0.015  #  ... for non-goal-directed at cue
+
+DDTG_WINDOW = (1, 3)  # seconds post cue to calculate ddtg
+
 
 # %%
-def get_trial_phase_PSD(
+def _get_trial_phase_PSD_df(
     session,
     signal_type="LFP",
     single_channel=False,
     event_windows={"cue": (0, 0.5), "reward": (-0.5, 0.5), "ERC": (-0.5, 0.5)},
     trial_phase_windows={"navigation": (0.5, -0.5), "RC": (0.5, -0.5), "ITI": (0.5, -0.5)},
-    min_window=1,
+    min_window=0.5,
 ):
     """
     Compute the average power spectral density (PSD) of LFP/CSD signals
@@ -100,11 +94,12 @@ def get_trial_phase_PSD(
         f, psd = _av_psd_multitaper(segs)
         label2psd.append((label, psd))
     results_df = pd.DataFrame()
-    results_df["frequencies"] = f
     for label, psd in label2psd:
         results_df[label] = psd
+    results_df.columns = pd.MultiIndex.from_product([["power"], results_df.columns])
     # info df
     info_df = _get_info_df(session, results_df.index, signal_type, single_channel)
+    info_df[("frequency", "")] = f
     return pd.concat([info_df, results_df], axis=1)
 
 
@@ -204,8 +199,7 @@ def _get_signal_df(
 
 def _get_spectrogram_df(
     session,
-    trials="all",
-    events=["cue", "reward", "end_reward_consumption"],
+    events=["cue", "reward", "end_reward_consumption", "cue_goal_directed", "cue_non_goal_directed", "cue_not_moving"],
     signal_type="CSD",
     single_channel=False,
     window=(-3, 3),
@@ -215,9 +209,6 @@ def _get_spectrogram_df(
     """ """
     # load data
     trials_df = session.trials_df
-    if not trials == "all":  # only get trials of interest (eg, goal-directed)
-        assert isinstance(trials, list)
-        trials_df = trials_df[trials_df.trial.isin(trials)]
     times = session.lfp_times
     if signal_type == "LFP":
         signal = get_LFP(session, shank=3, single_channel=single_channel)
@@ -225,6 +216,9 @@ def _get_spectrogram_df(
         signal = get_CSD(session, orientation="horizontal", single_channel=single_channel)
     else:
         raise NotImplementedError
+    if any(["goal_directed" or "not_moving" in e for e in events]):
+        ddtg_df = ddtg.get_session_delta_dtg(session, window=DDTG_WINDOW)
+        mean_ddtg = ddtg_df.cue_aligned_time.mean(1)
     # wavelet transform entire session
     cwt = compute_wavelet_transform_fft(signal, freqs, FS)
     spec = np.abs(cwt) ** 2  # freq x time x power (spectrogram)
@@ -234,7 +228,21 @@ def _get_spectrogram_df(
     # average normalised spectrogram around event times
     av_specs = []
     for event in events:
-        event_times = trials_df.time[event].values
+        # special instance split trials based on goal-directed criteria
+        if event == "cue_goal_directed":
+            goal_directed_trials = ddtg_df[mean_ddtg.le(DDTG_LOWER_THRES)].trial.values
+            event_times = trials_df[trials_df.trial.isin(goal_directed_trials)].time.cue.values
+        elif event == "cue_non_goal_directed":
+            non_goal_directed_trials = ddtg_df[mean_ddtg.ge(DDTG_UPPER_THRES)].trial.values
+            event_times = trials_df[trials_df.trial.isin(non_goal_directed_trials)].time.cue.values
+        elif event == "cue_not_moving":  # control: stationary trials
+            stationary_trials = ddtg_df[mean_ddtg == 0].trial.values
+            event_times = trials_df[trials_df.trial.isin(stationary_trials)].time.cue.values
+        else:  # normal instance: compute over all trials
+            event_times = trials_df.time[event].values
+        if event_times.size == 0:
+            print(f"no trials for event: {event}")
+            continue
         nearest_event_samples = np.array([np.argmin(np.abs(times - t)) for t in event_times])
         samples_before, samples_after = int(window[0] * FS), int(window[1] * FS)
         spec_windows = [spec[:, s + samples_before : s + samples_after] for s in nearest_event_samples]
@@ -267,61 +275,6 @@ def _get_info_df(session, index, signal_type, single_channel):
     info_df[("tissue_sample", "")] = session.tissue_sample
     info_df.columns = pd.MultiIndex.from_tuples(info_df.columns)
     return info_df
-
-
-# %% Plotting functions
-
-
-def _plot_spectrogram_from_df(df, axes=None, window=False):
-    """ """
-    _df = df.copy()
-    if axes is None:
-        fig, axes = plt.subplots(1, 2, figsize=(10, 4), width_ratios=[0.9, 1])
-    if window:
-        new_columns = []
-        for col in _df.columns:
-            if col[0] in ["cue_aligned_time", "reward_aligned_time"]:
-                time_val = float(col[1])
-                if window[0] <= time_val <= window[1]:
-                    new_columns.append(col)
-            else:
-                new_columns.append(col)  # Keep metadata columns
-        _df = _df[new_columns]
-    # get common max, min values
-    _max = _df[["cue_aligned_time", "reward_aligned_time"]].max().max()
-    _min = _df[["cue_aligned_time", "reward_aligned_time"]].min().min()
-    freqs = _df.frequencies.values
-    for i, event in enumerate(["cue", "reward"]):
-        times = _df[f"{event}_aligned_time"].columns.astype("float")
-        spec = _df[f"{event}_aligned_time"].values
-        cbar = True if i == 1 else False
-        _plot_spectrogram(spec, times, freqs, ax=axes[i], _min=_min, _max=_max, colorbar=cbar)
-        axes[i].set_title("")
-        axes[i].set_xlabel(f"{event}-aligned time (s)")
-        if i == 1:
-            axes[1].set_ylabel("")
-    fig.tight_layout()
-
-
-def _plot_spectrogram(x, times, freqs, ax=None, _min=None, _max=None, colorbar=True):
-    """ """
-    if ax is None:
-        fig, ax = plt.subplots(1, 1, figsize=(8, 4))
-    ax.spines[["top", "right", "left", "bottom"]].set_visible(False)
-    _min = x.min() if _min is None else _min
-    _max = x.max() if _max is None else _max
-    pcmesh = ax.pcolormesh(times, freqs, x, shading="auto", cmap="coolwarm", vmin=_min, vmax=_max)
-    ax.axvline(0, color="white", linestyle="--")
-    ax.grid(False)
-    ax.set_yscale("log")
-    ax.set_title(f"Wavelet Decomposition")
-    ax.set_ylabel("Frequency (Hz)")
-    ax.set_xlabel("Time (s)")
-    if colorbar:
-        cbar = plt.colorbar(pcmesh, ax=ax, orientation="vertical")
-        cbar.set_label("Power (z-scored)")
-        for spine in cbar.ax.spines.values():
-            spine.set_visible(False)
 
 
 # %% get CSD/LFP functions

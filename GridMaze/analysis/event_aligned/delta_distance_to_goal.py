@@ -33,7 +33,7 @@ FRAME_RATE = 60
 # %% dev
 
 
-def get_all_sessions_ddtg_at_cue(s=2, overwrite=False, multi_index=False):
+def get_all_sessions_ddtg_at_cue(window=(1, 3), overwrite=False, multi_index=False):
     """ """
     save_path = RESULTS_PATH / "event_aligned" / "delta_distance_to_goal" / f"cue_aligned_ddtg_{s}s.htsv"
     if not overwrite and save_path.exists():
@@ -47,7 +47,7 @@ def get_all_sessions_ddtg_at_cue(s=2, overwrite=False, multi_index=False):
             with_data=["navigation_df"],
         )
         for session in sessions:
-            df = get_session_delta_dtg(session, window=(0, s))
+            df = get_session_delta_dtg(session, window=window)
             ddtg_df = df.loc[:, [("subject_ID", ""), ("maze_name", ""), ("day_on_maze", ""), ("trial", "")]]
             ddtg_df["ddtg"] = df.cue_aligned_time.mean(1).values  # mean ddtg in first s seconds of each trial
             ddtgs.append(ddtg_df)
