@@ -48,7 +48,7 @@ def plot_cue_aligned_spectrogram_residuals(
     events=["cue_goal_directed", "cue_non_goal_directed"],
     axes=None,
     window=(-1, 1),
-    bands=[(4, 5), (7, 9), (9, 12)],
+    bands=[(4, 5), (7, 9), (9, 12)],  # Hz
 ):
     """ """
     # prepare axes
@@ -200,13 +200,40 @@ def plot_PSD(
 # %% Event aligned signal plots
 
 
+def plot_av_event_aligned_signal(
+    signal_df, axes=None, windows={"cue": (-0.5, 0.5), "reward": (-1.5, 1.5), "end_reward_consumption": (-0.5, 0.5)}
+):
+    """mean, sem across subjects plotted"""
+    # prepare axes
+    if axes is None:
+        fig, axes = plt.subplots(1, 3, figsize=(6, 3), width_ratios=[1, 3, 1], sharey=True)
+    for ax in axes.flatten():
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("uV")
+        ax.axhline(0, color="black", linestyle="--", alpha=0.2)
+        ax.axvline(0, color="black", linestyle="--", alpha=0.2)
+    # process data for plot
+    df = signal_df[signal_df.late_session]
+    event_dfs = [df[df.event == e] for e in ["cue", "reward", "end_reward_consumption"]]
+    av_subject_dfs = [df.groupby("subject_ID").time.mean().time for df in event_dfs]
+    t = av_subject_dfs[0].columns.values.astype(np.float64)
+    for event, ax, av_subject_df in zip(["cue", "reward", "end_reward_consumption"], axes, av_subject_dfs):
+        mean = av_subject_df.mean(axis=0).values
+        sem = av_subject_df.sem(axis=0).values
+        ax.plot(t, mean, label=event, color="k")
+        ax.fill_between(t, mean - sem, mean + sem, alpha=0.3, color="k")
+        ax.set_title(event)
+        ax.set_xlim(*windows[event])
+
+
 def plot_av_subject_signal(
     signal_df,
     event="cue",
     window=(-1, 1),
     axes=None,
 ):
-    """ """
+    """subjects plotted in separate pannels"""
     # prepare axes
     if axes is None:
         fig, axes = plt.subplots(2, 3, figsize=(6, 4), sharey=True)
