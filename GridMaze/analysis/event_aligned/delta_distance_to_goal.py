@@ -35,7 +35,7 @@ FRAME_RATE = 60
 
 def get_all_sessions_ddtg_at_cue(window=(1, 3), overwrite=False, multi_index=False):
     """ """
-    save_path = RESULTS_PATH / "event_aligned" / "delta_distance_to_goal" / f"cue_aligned_ddtg_{s}s.htsv"
+    save_path = RESULTS_PATH / "event_aligned" / "delta_distance_to_goal" / f"cue_aligned_ddtg.htsv"
     if not overwrite and save_path.exists():
         cue_ddtg_df = pd.read_csv(save_path, sep="\t")
     else:
@@ -56,7 +56,7 @@ def get_all_sessions_ddtg_at_cue(window=(1, 3), overwrite=False, multi_index=Fal
         cue_ddtg_df.to_csv(save_path, sep="\t", index=False)
     if multi_index:
         cue_ddtg_df.columns = pd.MultiIndex.from_product([cue_ddtg_df.columns, [""]])
-    return cue_ddtg_df
+    return cue_ddtg_df.dropna().reset_index(drop=True)
 
 
 # %% Functions

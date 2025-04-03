@@ -98,19 +98,23 @@ def plot_cue_aligned_spectrogram_residuals(
 
 
 def plot_average_spectrogram(
-    spectrogram_df, axes=None, windows={"cue": (-1, 1), "reward": (-3, 3), "end_reward_consumption": (-1, 1)}
+    spectrogram_df,
+    axes=None,
+    windows={"cue": (-1, 2), "reward": (-3, 3), "end_reward_consumption": (-1, 1)},
+    vmax=None,
+    vmin=None,
 ):
     """ """
     # prepare axes
     if axes is None:
-        fig, axes = plt.subplots(1, 3, figsize=(6, 3), width_ratios=[0.4, 1, 0.5], sharey=True)
+        fig, axes = plt.subplots(1, 3, figsize=(7, 3), width_ratios=[0.5, 1, 0.5], sharey=True)
     # process data for plot
     events = ["cue", "reward", "end_reward_consumption"]
     df = spectrogram_df[spectrogram_df.late_session]
     event_dfs = [df[df.event == e] for e in events]
     av_spec_dfs = [_df.groupby("frequency").time.mean().time for _df in event_dfs]
-    _max = max([av_spec_df.max().max() for av_spec_df in av_spec_dfs])
-    _min = min([av_spec_df.min().min() for av_spec_df in av_spec_dfs])
+    _max = max([av_spec_df.max().max() for av_spec_df in av_spec_dfs]) if vmax is None else vmax
+    _min = min([av_spec_df.min().min() for av_spec_df in av_spec_dfs]) if vmin is None else vmin
     for i, (ax, av_spec_df) in enumerate(zip(axes, av_spec_dfs)):
         t = av_spec_df.columns.values.astype(np.float64)
         spec = av_spec_df.values
@@ -198,6 +202,56 @@ def plot_PSD(
 
 
 # %% Event aligned signal plots
+
+
+def plot_cue_aligned_signal_residuals(
+    signal_df,
+    conditions=["goal_directed", "non_goal_directed"],
+    ddtg_thresholds=(lu.DDTG_LOWER_THRES, lu.DDTG_UPPER_THRES),
+    window=(-1, 1),
+    ax=None,
+):
+    """ """
+    # prepare axes
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=(3, 3))
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("residual uV")
+    ax.axhline(0, color="black", linestyle="--", alpha=0.2)
+    ax.axvline(0, color="black", linestyle="--", alpha=0.2)
+
+    # process data for plot
+    def _get_trial_unique_ID(row, multi_index=False):
+        if multi_index:
+            row = row.droplevel(1)
+        return f"{row.subject_ID}_{row.maze_name}_{int(row.day_on_maze)}_{int(row.trial)}"
+
+    ddtg_df = ddtg.get_all_sessions_ddtg_at_cue()
+    ddtg_df["trial_unique_ID"] = ddtg_df.apply(_get_trial_unique_ID, axis=1)
+    condition2tu1Ds = {
+        "goal_directed": ddtg_df[ddtg_df.ddtg.le(ddtg_thresholds[0])].trial_unique_ID.values,
+        "non_goal_directed": ddtg_df[ddtg_df.ddtg.ge(ddtg_thresholds[1])].trial_unique_ID.values,
+        "not_moving": ddtg_df[ddtg_df.ddtg == 0].trial_unique_ID.values,
+    }
+    df = signal_df[(signal_df.late_session) & (signal_df.event == "cue")].copy()
+    df[("trial_unique_ID", "")] = df.apply(lambda row: _get_trial_unique_ID(row, True), axis=1)
+    times = df.time.columns.values.astype(np.float64)
+    results = np.zeros((len(SUBJECT_IDS), len(times)))
+    for i, subject in enumerate(SUBJECT_IDS):
+        subject_df = df[df.subject_ID == subject]
+        cond_1_df = subject_df[subject_df.trial_unique_ID.isin(condition2tu1Ds[conditions[0]])]
+        cond_2_df = subject_df[subject_df.trial_unique_ID.isin(condition2tu1Ds[conditions[1]])]
+        cond_1_mean = cond_1_df.time.mean(axis=0).values
+        cond_2_mean = cond_2_df.time.mean(axis=0).values
+        residual = cond_1_mean - cond_2_mean
+        results[i, :] = residual
+    mean = results.mean(axis=0)
+    sem = results.std(axis=0) / np.sqrt(len(SUBJECT_IDS))
+    # plot
+    ax.plot(times, mean, label="residual", color="k")
+    ax.fill_between(times, mean - sem, mean + sem, alpha=0.2)
+    ax.set_xlim(*window)
 
 
 def plot_av_event_aligned_signal(
