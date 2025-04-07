@@ -46,16 +46,13 @@ FS = 1500  # lfp sampling frequency
 def plot_cue_aligned_spectrogram_residuals(
     spectrogram_df,
     events=["cue_goal_directed", "cue_non_goal_directed"],
-    axes=None,
+    ax=None,
     window=(-1, 1),
-    bands=[(4, 5), (7, 9), (9, 12)],  # Hz
 ):
     """ """
     # prepare axes
-    if axes is None:
-        f, axes = plt.subplots(1, 2, figsize=(6, 3), width_ratios=[1, 0.75])
-    axes[1].spines[["top", "right"]].set_visible(False)
-    axes[1].set_xlabel("Time (s)")
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(3, 3))
 
     # process data for spectrogram plot
     df = spectrogram_df[spectrogram_df.late_session]
@@ -69,32 +66,8 @@ def plot_cue_aligned_spectrogram_residuals(
     _min = spec[:, t_mask].min()
     _max = spec[:, t_mask].max()
     # plot
-    _plot_spectrogram(spec, t, freqs, ax=axes[0], _min=_min, _max=_max)
-    axes[0].set_xlim(*window)
-
-    # process data for band power plot
-    band_results = np.zeros((len(SUBJECT_IDS), len(bands), df.time.shape[1]))
-    for i, subject in enumerate(SUBJECT_IDS):
-        subject_df = df[df.subject_ID == subject]
-        event_dfs = [subject_df[subject_df.event == e] for e in events]
-        av_spec_dfs = [_df.groupby("frequency").time.mean().time for _df in event_dfs]
-        residual_df = av_spec_dfs[0] - av_spec_dfs[1]
-        for j, band in enumerate(bands):
-            band_df = residual_df.loc[residual_df.reset_index().frequency.between(*band).values]
-            band_mean = band_df.mean(axis=0)
-            band_results[i, j, :] = band_mean
-    band_results_mean = band_results.mean(axis=0)
-    band_results_sem = band_results.std(axis=0) / np.sqrt(len(SUBJECT_IDS))
-    # plot
-    for i, band in enumerate(bands):
-        band_mean = band_results_mean[i, :]
-        band_sem = band_results_sem[i, :]
-        axes[1].plot(t, band_mean, label=f"{band[0]}-{band[1]} Hz")
-        axes[1].fill_between(t, band_mean - band_sem, band_mean + band_sem, alpha=0.2)
-    axes[1].legend()
-    axes[1].set_xlim(*window)
-    axes[1].axhline(0, color="black", linestyle="--")
-    f.tight_layout()
+    _plot_spectrogram(spec, t, freqs, ax=ax, _min=_min, _max=_max)
+    ax.set_xlim(*window)
 
 
 def plot_average_spectrogram(
@@ -134,7 +107,7 @@ def plot_average_spectrogram(
         event = events[i]
         ax.set_title(event)
         ax.set_xlim(*windows[event])
-    fig.tight_layout()
+    # fig.tight_layout()
     return
 
 
@@ -145,7 +118,17 @@ def _plot_spectrogram(x, times, freqs, ax=None, _min=None, _max=None, colorbar=T
     ax.spines[["top", "right", "left", "bottom"]].set_visible(False)
     _min = x.min() if _min is None else _min
     _max = x.max() if _max is None else _max
-    pcmesh = ax.pcolormesh(times, freqs, x, shading="auto", cmap="coolwarm", vmin=_min, vmax=_max)
+    pcmesh = ax.pcolormesh(
+        times,
+        freqs,
+        x,
+        shading="auto",
+        cmap="coolwarm",
+        vmin=_min,
+        vmax=_max,
+        edgecolors="none",
+        antialiased=False,
+    )
     ax.axvline(0, color="white", linestyle="--")
     ax.grid(False)
     ax.set_yscale("log")
@@ -164,23 +147,23 @@ def _plot_spectrogram(x, times, freqs, ax=None, _min=None, _max=None, colorbar=T
 
 def plot_PSD(
     PSD_df,
-    axes=None,
+    ax=None,
     normalise=False,
+    fmax=150,
 ):
     """
     Looks much better with LFP, maybe too low s/n in CSD
+    change to only plot trial phases
     """
     # prepare axes
-    if axes is None:
-        fig, axes = plt.subplots(1, 2, figsize=(6, 3), sharex=True, sharey=True)
-    for ax in axes:
-        ax.spines[["top", "right"]].set_visible(False)
-        ax.set_xlabel("Frequency (Hz)")
-        ax.set_ylabel("Power")
-        ax.set_xscale("log")
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=(3, 3), sharex=True, sharey=True)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_xlabel("Frequency (Hz)")
+    ax.set_ylabel("Power")
+    ax.set_xscale("log")
     # process data for plot
     df = PSD_df[PSD_df.late_session]
-    trial_events = ["cue", "reward", "ERC"]
     trial_phases = ["navigation", "RC", "ITI"]
     av_subject_psd = df.groupby(["subject_ID", "frequency"]).power.mean()
     if normalise:
@@ -192,13 +175,14 @@ def plot_PSD(
     psd_mean = subject_grouped_psd.mean().power
     psd_sem = subject_grouped_psd.sem().power
     freqs = psd_mean.index.values
-    for ax, trial_sections in zip(axes, [trial_events, trial_phases]):
-        for s in trial_sections:
-            mean = psd_mean[s].values
-            sem = psd_sem[s].values
-            ax.plot(freqs, mean, label=s)
-            ax.fill_between(freqs, mean - sem, mean + sem, alpha=0.2)
+    for s in trial_phases:
+        mean = psd_mean[s].values
+        sem = psd_sem[s].values
+        ax.plot(freqs, mean, label=s)
+        ax.fill_between(freqs, mean - sem, mean + sem, alpha=0.2)
         ax.legend()
+    if fmax:
+        ax.set_xlim(1, fmax)
 
 
 # %% Event aligned signal plots
@@ -279,6 +263,7 @@ def plot_av_event_aligned_signal(
         ax.fill_between(t, mean - sem, mean + sem, alpha=0.3, color="k")
         ax.set_title(event)
         ax.set_xlim(*windows[event])
+        ax.set_ylim(-0.5, 0.5)
 
 
 def plot_av_subject_signal(

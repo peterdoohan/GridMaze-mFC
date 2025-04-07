@@ -91,7 +91,7 @@ def plot_subject_cell_counts(results_df, ax=None):
     results_df = results_df[["PL", "ACAd", "ACAv", "MOs"]]
     colors = ["mediumvioletred", "royalblue", "cornflowerblue", "slategrey"]
     results_df.plot(kind="bar", stacked=True, ax=ax, color=colors, alpha=0.5, width=0.8)
-    ax.tick_params(axis="x", rotation=0)
+    ax.tick_params(axis="x", rotation=30)
     ax.legend(loc="lower left", bbox_to_anchor=(1.05, 0.5), ncol=1, fontsize=10)
 
 
