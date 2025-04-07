@@ -24,20 +24,145 @@ with open(ANALYSIS_INFO_PATH / "intra_trial_interval_times.json", "r") as input_
 
 FRAME_RATE = 60
 
-DDTG_LOWER_THRES = -0.1  # rate of change of distance to goal thres for goal-directed behaviour at cue
+DDTG_LOWER_THRES = -0.03  # -0.1 # rate of change of distance to goal thres for goal-directed behaviour at cue
 
-DDTG_UPPER_THRES = 0.015  #  ... for non-goal-directed at cue
+DDTG_UPPER_THRES = 0.03  # 0.015 #  ... for non-goal-directed at cue
 
 DDTG_WINDOW = (1, 3)  # seconds post cue to calculate ddtg
 
 # %% New functions
 
+# %%
+
+
+def _get_trial2cue_moving(session, window=(-0.5, 0.5)):
+    """ """
+    navigation_df = session.navigation_df
+    trial2cue_moving = {}
+    for trial in navigation_df.trial.dropna().unique():
+        trial_df = navigation_df[navigation_df.trial == trial]
+        cue_frame = trial_df.index[0]
+        start_frame, end_frame = cue_frame + window[0] * FRAME_RATE, cue_frame + window[1] * FRAME_RATE
+        speeds = trial_df.loc[start_frame:end_frame, "speed"].values
+        moving = True if speeds.mean() > DDTG_UPPER_THRES else False
+        trial2cue_moving[trial] = moving
+    return trial2cue_moving
+
 
 # %% Population activity timeseries
 
 
+def test2():
+    """ """
+    dfs = []
+    for subject in SUBJECT_IDS:
+        sessions = gs.get_maze_sessions(
+            subject_IDs=[subject],
+            maze_names="all",
+            days_on_maze="late",
+            with_data=["trial_aligned_rates_df", "cluster_metrics", "navigation_df"],
+        )
+        gd_dfs, ngd_dfs, nm_dfs = [], [], []
+        for session in sessions:
+            aligned_rates_df = session.trial_aligned_rates_df
+            # only include single units
+            cluster_metrics = session.cluster_metrics
+            single_units = cluster_metrics[cluster_metrics.single_unit].cluster_ID.values
+            aligned_rates_df = aligned_rates_df[aligned_rates_df.cluster_ID.isin(single_units)]
+            # z score normalise neurons across trials
+            norm_aligned_rates_df = (
+                aligned_rates_df.set_index(["cluster_unique_ID", "trial"])
+                .firing_rate.reset_index("trial")
+                .pivot(columns="trial")  # stack trials [neurons, timepoints x trials]
+                .sort_index(axis=1, level=1)
+                .apply(zscore, axis=1)
+            )
+            pop_activity_df = norm_aligned_rates_df.stack(future_stack=True).groupby("trial").mean(0)
+            all_trials = pop_activity_df.index.values.astype(int)
+            # split trials into goal_direced, non_goal_directed and not_moving
+            ddtg_df = ddtg.get_session_delta_dtg(session, DDTG_WINDOW)
+            trial2condition = {}
+            window2ddtg = ddtg_df.set_index("trial").cue_aligned_time.mean(1)
+            trial2ddtg = {}
+            for trial, ddtg in window2ddtg.items():
+                if ddtg <= DDTG_LOWER_THRES:
+                    trial2condition[trial] = "goal_directed"
+                elif ddtg >= DDTG_UPPER_THRES:
+                    trial2condition[trial] = "non_goal_directed"
+                else:
+                    trial2condition[trial] = "not_moving"
+
+            goal_directed_trials = ddtg_df[ddtg_df.cue_aligned_time.mean(1).le(DDTG_LOWER_THRES)].trial.values.astype(
+                int
+            )
+            non_goal_directed_trials = ddtg_df[
+                ddtg_df.cue_aligned_time.mean(1).ge(DDTG_UPPER_THRES)
+            ].trial.values.astype(int)
+            not_moving_trials = ddtg_df[
+                ddtg_df.cue_aligned_time.mean(1).between(DDTG_LOWER_THRES, DDTG_UPPER_THRES)
+            ].trial.values.astype(int)
+            # remove trials not included in pop activity (eg, very short trial)
+            goal_directed_trials, non_goal_directed_trials, not_moving_trials = [
+                np.intersect1d(trials, all_trials)
+                for trials in [goal_directed_trials, non_goal_directed_trials, not_moving_trials]
+            ]
+            # get average population activity in each condition
+            if not goal_directed_trials.size == 0:
+                gd_dfs.append(pop_activity_df.loc[goal_directed_trials])
+            if not non_goal_directed_trials.size == 0:
+                ngd_dfs.append(pop_activity_df.loc[non_goal_directed_trials])
+            if not not_moving_trials.size == 0:
+                nm_dfs.append(pop_activity_df.loc[not_moving_trials])
+        conditions_df = pd.concat([pd.concat(df, axis=0).mean() for df in [gd_dfs, ngd_dfs, nm_dfs]], axis=1).T
+        conditions_df.columns = pd.MultiIndex.from_product([["time"], conditions_df.columns])
+        conditions_df[("condition", "")] = ["goal-directed", "non-goal-directed", "not-moving"]
+        conditions_df[("subject_ID", "")] = subject
+        dfs.append(conditions_df)
+    results_df = pd.concat(dfs, axis=0)
+    return results_df
+
+
+def get_event_aligned_population_activity2():
+    """
+    same as below but with more z-scoring
+    """
+    subject_means = []
+    for subject in SUBJECT_IDS:
+        sessions = gs.get_maze_sessions(
+            subject_IDs=[subject],
+            maze_names="all",
+            days_on_maze="late",
+            with_data=["trial_aligned_rates_df", "cluster_metrics"],
+        )
+        pop_activity_dfs = []
+        for session in sessions:
+            aligned_rates_df = session.trial_aligned_rates_df
+            # only include single units
+            cluster_metrics = session.cluster_metrics
+            single_units = cluster_metrics[cluster_metrics.single_unit].cluster_ID.values
+            aligned_rates_df = aligned_rates_df[aligned_rates_df.cluster_ID.isin(single_units)]
+            # z score normalise neurons across trials
+            norm_aligned_rates_df = (
+                aligned_rates_df.set_index(["cluster_unique_ID", "trial"])
+                .firing_rate.reset_index("trial")
+                .pivot(columns="trial")  # stack trials [neurons, timepoints x trials]
+                .sort_index(axis=1, level=1)
+                .apply(zscore, axis=1)
+            )
+            # average neurons over trials to get population activity per trial
+            pop_activity_df = norm_aligned_rates_df.stack(future_stack=True).groupby("trial").mean(0)
+            pop_activity_dfs.append(pop_activity_df.reset_index(drop=True))
+        subject_means.append(pd.concat(pop_activity_dfs, axis=0).mean(0))
+    population_activity_df = pd.concat(subject_means, axis=1).T
+    population_activity_df.index = SUBJECT_IDS
+    return population_activity_df
+
+
 def get_event_aligned_population_acitivity(
-    plot=True, aligned_to="trial", normalise_clusters="max", normalise_sessions="zscore"
+    aligned_to="trial",
+    normalise_clusters="max",
+    normalise_sessions="zscore",
+    plot=True,
 ):
     """"""
     av_rates = []
@@ -85,7 +210,7 @@ def get_event_aligned_population_acitivity(
     return population_average_rates
 
 
-def _plot_population_event_aligned_activity(population_average_rates, ax=None, color="black"):
+def _plot_population_event_aligned_activity(population_average_rates, smooth_SD=1, ax=None, color="black"):
     if ax is None:
         f, axes = plt.subplots(1, 2, figsize=(6, 3), clear=True, sharey=True)
     ax.spines[["right", "top"]].set_visible(False)
@@ -94,9 +219,12 @@ def _plot_population_event_aligned_activity(population_average_rates, ax=None, c
         time = event_aligned_activity.columns.to_numpy(dtype=float)
         y = event_aligned_activity.mean(axis=0).to_numpy()
         sem = event_aligned_activity.sem(axis=0).to_numpy()
+        if smooth_SD:
+            y = gaussian_filter1d(y, smooth_SD * FRAME_RATE)
+            sem = gaussian_filter1d(sem, smooth_SD * FRAME_RATE)
         axes[i].plot(time, y, color=color)
         axes[i].fill_between(time, y - sem, y + sem, color=color, alpha=0.5)
-        axes[i].axvline(0, color="k", linewidth=1, alpha=0.5, zorder=0)
+        axes[i].axvline(0, color="k", alpha=0.2, zorder=0)
         axes[i].set_xlabel(f"{event} time (s)")
         axes[i].spines["right"].set_visible(False)
         axes[i].spines["top"].set_visible(False)
@@ -105,11 +233,15 @@ def _plot_population_event_aligned_activity(population_average_rates, ax=None, c
     return
 
 
-def _plot_population_trial_aligned_activity(population_average_rates, color="black", ax=None, t_min=-2):
+def _plot_population_trial_aligned_activity(population_average_rates, smooth_SD=5, t_min=-2, color="black", ax=None):
     if ax is None:
         f, ax = plt.subplots(1, 1, figsize=(6, 2), clear=True)
-    ax.spines[["right", "top"]].set_visible(False)
     time = population_average_rates.columns.to_numpy(dtype=float)
+    if smooth_SD:
+        population_average_rates = population_average_rates.apply(
+            lambda x: gaussian_filter1d(x, smooth_SD), axis=1
+        ).apply(pd.Series)
+    ax.spines[["right", "top"]].set_visible(False)
     mask = time > t_min
     time = time[mask]
     y = population_average_rates.mean(axis=0).to_numpy()
@@ -117,9 +249,9 @@ def _plot_population_trial_aligned_activity(population_average_rates, color="bla
     sem = population_average_rates.sem(axis=0).to_numpy()
     sem = sem[mask]
     ax.plot(time, y, color=color)
-    ax.fill_between(time, y - sem, y + sem, color=color, alpha=0.5)
+    ax.fill_between(time, y - sem, y + sem, color=color, alpha=0.2)
     for x in INTRA_TRIAL_INTERVAL_TIMES.values():
-        ax.axvline(x, color="k", linewidth=1, ls="--", alpha=0.5, zorder=0)
+        ax.axvline(x, color="k", ls="--", alpha=0.2, zorder=0)
     ax.set_xlabel("Time (s)")
     ax.set_xticks([float(x) for x in INTRA_TRIAL_INTERVAL_TIMES.values()])
     ax.set_xticklabels(["Cue", "Reward", "ERC", "ITI"])
@@ -186,21 +318,19 @@ def get_cue_aligned_population_activity_residual(normalise_clusters=False, norma
         dfs.append(conditions_df)
     results_df = pd.concat(dfs, axis=0)
     if plot:
-        plot_cue_aligned_residuals(results_df, conditions=["goal-directed", "non-goal-directed"])
+        _plot_cue_aligned_residuals(results_df, conditions=["goal-directed", "non-goal-directed"])
     return results_df
 
 
-def plot_cue_aligned_residuals(
-    results_df, conditions=["goal-directed", "non-goal-directed"], window=(-0.5, 1), ax=None
-):
+def _plot_cue_aligned_residuals(results_df, conditions=["goal-directed", "non-goal-directed"], window=(-1, 1), ax=None):
     """ """
     # prepare axes
     if ax is None:
         f, ax = plt.subplots(1, 1, figsize=(3, 3), clear=True)
     ax.spines[["right", "top"]].set_visible(False)
-    ax.set_xlabel("Cue-aligned Time (s)")
-    ax.set_ylabel("Pop. Rate (z-score)")
-    ax.axvline(0, color="k", linestyle="--", alpha=0.5)
+    ax.set_xlabel("Cue (s)")
+    ax.set_ylabel("Goal-dir. — non-goal-dir. \n Δ Firing Rate (Hz)")
+    ax.axvline(0, color="k", linestyle="--", alpha=0.2)
     # prepare and plot data
     time = results_df.time.columns.values.astype(float)
     if not conditions:  # plot conditions separately
@@ -210,7 +340,7 @@ def plot_cue_aligned_residuals(
             sem = condition_df.sem()
             ax.plot(time, mean, color=color, label=condition)
             ax.fill_between(time, mean - sem, mean + sem, color=color, alpha=0.2)
-            # ax.set_ylim(-0.05, 2)
+            ax.set_ylim(0, 0.1)
     else:  # plot residual between condtions
         residuals = np.zeros((len(SUBJECT_IDS), len(time)))
         for i, subject in enumerate(SUBJECT_IDS):
@@ -224,11 +354,11 @@ def plot_cue_aligned_residuals(
         sem = residuals.std(axis=0) / np.sqrt(len(SUBJECT_IDS))
         ax.plot(time, mean, color="purple", label=f"{conditions[0]} - {conditions[1]}")
         ax.fill_between(time, mean - sem, mean + sem, color="purple", alpha=0.2)
-        ax.set_ylim(-0.1, 0.8)
+        ax.set_ylim(-0.1, 0.4)
         ax.axhline(0, color="k", linestyle="--", alpha=0.5)
 
     ax.set_xlim(*window)
-    # ax.legend(fontsize=8, loc="upper right")
+    ax.legend()
 
 
 # %%
