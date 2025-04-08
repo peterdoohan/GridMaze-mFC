@@ -149,6 +149,7 @@ def plot_trial_aligned_heatmap(norm_aligned_rates_df, normalisation_method, ax):
         ax=ax,
         linewidths=0,
         linecolor=None,
+        rasterized=True,
         cbar_kws={"shrink": 0.5, "label": "z-scored Firing Rate"},
     )
     event_times = list(INTRA_TRIAL_INTERVAL_TIMES.values())[:-1]

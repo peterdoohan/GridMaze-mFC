@@ -126,8 +126,7 @@ def _plot_spectrogram(x, times, freqs, ax=None, _min=None, _max=None, colorbar=T
         cmap="coolwarm",
         vmin=_min,
         vmax=_max,
-        edgecolors="none",
-        antialiased=False,
+        rasterized=True,
     )
     ax.axvline(0, color="white", linestyle="--")
     ax.grid(False)
@@ -175,11 +174,11 @@ def plot_PSD(
     psd_mean = subject_grouped_psd.mean().power
     psd_sem = subject_grouped_psd.sem().power
     freqs = psd_mean.index.values
-    for s in trial_phases:
+    for s, color in zip(trial_phases, ["darkred", "grey", "dodgerblue"]):
         mean = psd_mean[s].values
         sem = psd_sem[s].values
-        ax.plot(freqs, mean, label=s)
-        ax.fill_between(freqs, mean - sem, mean + sem, alpha=0.2)
+        ax.plot(freqs, mean, label=s, color=color)
+        ax.fill_between(freqs, mean - sem, mean + sem, alpha=0.2, color=color)
         ax.legend()
     if fmax:
         ax.set_xlim(1, fmax)

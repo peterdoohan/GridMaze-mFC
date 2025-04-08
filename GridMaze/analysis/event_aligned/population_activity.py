@@ -106,7 +106,7 @@ def _get_trial2cue_moving(session, window=(-0.5, 0.5)):
     return trial2cue_moving
 
 
-def _plot_population_aligned_activity(results_df, smooth_SD=3, t_min=-2, color="black", ax=None):
+def _plot_population_aligned_activity(results_df, smooth_SD=3, t_min=-2, color="slategrey", ax=None):
     """ """
     # prepare axes
     if ax is None:
@@ -124,8 +124,8 @@ def _plot_population_aligned_activity(results_df, smooth_SD=3, t_min=-2, color="
     sem = df.sem(axis=0).to_numpy()
     sem = sem[mask]
     # plot
-    ax.plot(time, y, color=color)
-    ax.fill_between(time, y - sem, y + sem, color=color, alpha=0.2)
+    ax.plot(time, y, color=color, lw=2)
+    ax.fill_between(time, y - sem, y + sem, color=color, alpha=0.3)
     for x in INTRA_TRIAL_INTERVAL_TIMES.values():
         ax.axvline(x, color="k", ls="--", alpha=0.2, zorder=0)
     ax.set_xlabel("Time (s)")
