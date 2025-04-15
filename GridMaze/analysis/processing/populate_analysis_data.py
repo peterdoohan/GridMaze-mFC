@@ -6,19 +6,11 @@ import pandas as pd
 
 from .get_navigation_df import get_navigation_df
 from .get_navigation_spike_dfs import get_navigation_spike_rates_df, get_navigation_spike_counts_df
-from .get_basic_action_aligned_rates_dfs import get_basic_action_aligned_rates_df
 from .get_time_aligned_rates_dfs import get_trial_aligned_rates_df, get_event_aligned_rates_df
 from .get_navigation_strategies_dfs import get_navigation_strategies_df
 from .get_trajectory_decisions_dfs import get_trajectory_decisions_df
 
 from .get_distance_to_goal_aligned_rates_dfs import get_distance_to_goal_aligned_rates_df
-from .get_cluster_heatmap_dfs import get_place_df, get_place_direction_df
-
-from .get_angle_to_goal_dfs import (
-    get_head_direction_tuning_df,
-    get_allocentric_angle_to_goal_tuning_df,
-    get_egocentric_angle_to_goal_tuning_df,
-)
 
 # %% Global variables
 
@@ -45,11 +37,6 @@ ANALYSIS_DATA_STRUCTURES_DF = pd.DataFrame(
             "session_types": ["maze"],
         },
         {
-            "filename": "action_aligned_rates.parquet",
-            "function": get_basic_action_aligned_rates_df,
-            "session_types": ["maze"],
-        },
-        {
             "filename": "trajectory_decisions.parquet",
             "function": get_trajectory_decisions_df,
             "session_types": ["maze"],
@@ -57,27 +44,6 @@ ANALYSIS_DATA_STRUCTURES_DF = pd.DataFrame(
         {
             "filename": "distance_to_goal_aligned_rates.parquet",
             "function": get_distance_to_goal_aligned_rates_df,
-            "session_types": ["maze"],
-        },
-        {"filename": "clusters.placeTuning.parquet", "function": get_place_df, "session_types": ["maze"]},
-        {
-            "filename": "clusters.placeDirectionTuning.parquet",
-            "function": get_place_direction_df,
-            "session_types": ["maze"],
-        },
-        {
-            "filename": "head_direction_tuning.parquet",
-            "function": get_head_direction_tuning_df,
-            "session_types": ["maze"],
-        },
-        {
-            "filename": "allocentric_angle_to_goal_tuning.parquet",
-            "function": get_allocentric_angle_to_goal_tuning_df,
-            "session_types": ["maze"],
-        },
-        {
-            "filename": "egocentric_angle_to_goal_tuning.parquet",
-            "function": get_egocentric_angle_to_goal_tuning_df,
             "session_types": ["maze"],
         },
     ]
