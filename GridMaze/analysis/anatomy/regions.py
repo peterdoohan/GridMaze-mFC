@@ -8,6 +8,7 @@ import json
 import re
 import pandas as pd
 import numpy as np
+import seaborn as sns
 from datetime import date
 from collections import Counter
 from GridMaze.analysis.core import get_sessions as gs
@@ -146,7 +147,7 @@ def plot_single_unit_stability(df, log_scale=True, ax=None):
     ax.tick_params(axis="x", which="major", length=0)
     if log_scale:
         ax.set_yscale("log")
-    colors = ["#a1a1a1", "#a559aa", "#59a89c", "#f0c571", "#e02b35", "#082a54"]
+    colors = sns.color_palette("blend:royalblue,salmon", len(SUBJECT_IDS))
     # plot data
     for subject, color in zip(SUBJECT_IDS, colors):
         subject_df = df[df.subject_ID == subject]

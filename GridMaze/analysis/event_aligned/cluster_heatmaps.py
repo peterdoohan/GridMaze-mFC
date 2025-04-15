@@ -172,3 +172,100 @@ def plot_trial_aligned_heatmap(norm_aligned_rates_df, normalisation_method, ax):
     ax.set_ylabel("Neurons", labelpad=-10)
     ax.set_xlabel("Time (s)")
     return
+
+
+# %% Event aligned heatmap versions
+
+
+def test(
+    sessions,
+    smooth_SD=5,
+    normalisation="zscore",
+):
+    """"""
+    rates, rates_for_ordering = [], []
+    for session in sessions:
+        aligned_rates_df = session.event_aligned_rates_df
+        # only include single units
+        cluster_metrics = session.cluster_metrics
+        single_units = cluster_metrics[cluster_metrics.single_unit].cluster_ID.values
+        aligned_rates_df = aligned_rates_df[aligned_rates_df.cluster_ID.isin(single_units)]
+        # select random half of trials
+        trials = aligned_rates_df.trial.unique()
+        random_half_trails = np.random.choice(trials, len(trials) // 2, replace=False)
+        _rates_for_ordering = aligned_rates_df[aligned_rates_df.trial.isin(random_half_trails)]
+        # average reponses over trials
+        rates.append(aligned_rates_df.groupby("cluster_unique_ID").firing_rate.mean().firing_rate)
+        rates_for_ordering.append(_rates_for_ordering.groupby("cluster_unique_ID").firing_rate.mean().firing_rate)
+
+    rates_df = pd.concat(rates, axis=0)
+    rates_for_ordering_df = pd.concat(rates_for_ordering, axis=0)
+
+    # smooth rates if requested
+    if smooth_SD:
+
+        def _smooth_rates(x):
+            y = x.copy()
+            rates = gaussian_filter1d(y.to_numpy(), sigma=smooth_SD, axis=1)
+            y.loc[:, x.columns] = rates
+            return y
+
+        rates_df = _smooth_rates(rates_df)
+        rates_for_ordering_df = _smooth_rates(rates_for_ordering_df)
+
+    # normalise rates by maximum firing rate
+    if normalisation == "zscore":
+
+        def _norm_rates(x):
+            y = x.copy()
+            rates = zscore(y.to_numpy(), axis=1)
+            y.loc[:, x.columns] = rates
+            return y
+
+        rates_df = _norm_rates(rates_df)
+        rates_for_ordering_df = _norm_rates(rates_for_ordering_df)
+
+    else:
+        raise NotImplementedError
+    return rates_df, rates_for_ordering_df
+
+
+def plot_event_aligned_rates(
+    aligned_rates_df,
+    rates_for_ordering_df,
+    xlims={"cue": (-2, 2), "reward": (-5, 5), "end_reward_consumption": (-2, 2)},
+    vmin=-2.5,
+    vmax=7.5,
+    axes=None,
+):
+    """ """
+    if axes is None:
+        f, axes = plt.subplots(1, 3, figsize=(15, 5), clear=True)
+    for event, ax in zip(["cue", "reward"], axes):
+        df = aligned_rates_df.xs(f"{event}_aligned", axis=1, level=0)
+        ordering_df = rates_for_ordering_df.xs(f"{event}_aligned", axis=1, level=0)
+        # filter response within window
+        df = df.loc[:, (df.columns >= xlims[event][0]) & (df.columns <= xlims[event][1])]
+        ordering_df = ordering_df.loc[
+            :, (ordering_df.columns >= xlims[event][0]) & (ordering_df.columns <= xlims[event][1])
+        ]
+        # order by cluster argmax
+        order = np.argmax(ordering_df.to_numpy(), axis=1).argsort()
+        df = df.iloc[order]
+        # plot heatmap
+        cbar = True if event == "reward" else False
+        sns.heatmap(
+            df,
+            cmap="coolwarm",
+            ax=ax,
+            vmin=vmin,
+            vmax=vmax,
+            rasterized=True,
+            cbar=cbar,
+            cbar_kws={"shrink": 0.5, "label": "Firing Rate (z-scored)"},
+        )
+        ax.axvline(0, color="white", linewidth=1, ls="--", zorder=3)
+        ax.set_yticks([])
+        ax.set_xticks([])
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Single Units")
