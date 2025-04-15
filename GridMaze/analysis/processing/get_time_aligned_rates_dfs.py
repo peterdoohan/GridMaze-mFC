@@ -102,7 +102,7 @@ def get_trial_aligned_rates_df(processed_data_path, analysis_data_path):
     return session_rates_df
 
 
-def get_event_aligned_rates_df(processed_data_path, analysis_data_path, window_size=15, sampling_rate=25):
+def get_event_aligned_rates_df(processed_data_path, analysis_data_path, window_size=10, sampling_rate=25):
     """
     Generates a dataframe with cue_aligned and reward_aligned single unit
     firing rates (raw or filtered) for all trials in a list of sessions.
@@ -140,6 +140,13 @@ def get_event_aligned_rates_df(processed_data_path, analysis_data_path, window_s
         event="reward",
         window_size=window_size,
         fs_out=sampling_rate,
+    ).values()
+    (
+        erc_aligned_rates,
+        erc_aligned_times,
+        erc_aligned_clusters,
+    ) = get_event_aligned_activity(
+        processed_data_path, event="end_reward_consumption", window_size=window_size, fs_out=sampling_rate
     ).values()
     # loop over trials
     trial_dfs = []
@@ -183,7 +190,14 @@ def get_event_aligned_rates_df(processed_data_path, analysis_data_path, window_s
             data=reward_aligned_activity,
             columns=pd.MultiIndex.from_product([["firing_rate"], ["reward_aligned"], reward_aligned_times.tolist()]),
         )
-        trial_dfs.append(pd.concat([trial_info, cue_aligned_df, reward_aligned_df], axis=1))
+        erc_aligned_activity = erc_aligned_rates[t, :, :]
+        erc_aligned_df = pd.DataFrame(
+            data=erc_aligned_activity,
+            columns=pd.MultiIndex.from_product(
+                [["firing_rate"], ["end_reward_consumption"], erc_aligned_times.tolist()]
+            ),
+        )
+        trial_dfs.append(pd.concat([trial_info, cue_aligned_df, reward_aligned_df, erc_aligned_df], axis=1))
     event_aligned_rates_df = pd.concat(trial_dfs, axis=0).reset_index(drop=True)
     return event_aligned_rates_df
 
