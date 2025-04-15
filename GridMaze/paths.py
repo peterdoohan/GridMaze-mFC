@@ -5,33 +5,35 @@ from pathlib import Path
 
 # %% Define paths
 
-MOUNTED_DATA_PATH = Path("/Volumes/behrens/peter_doohan/goalNav_mFC/experiment/data")
-RELATIVE_DATA_PATH = Path("../data")
-if MOUNTED_DATA_PATH.exists():
-    DATA_PATH = MOUNTED_DATA_PATH
-else:
-    if RELATIVE_DATA_PATH.exists():
-        DATA_PATH = RELATIVE_DATA_PATH
-    else:
-        raise FileNotFoundError(
-            "Raw data directory not found. Check Ceph drive is mounted if working locally. Check relative path is available if working on HPC."
-        )
+# MOUNTED_DATA_PATH = Path("/Volumes/behrens/peter_doohan/goalNav_mFC/experiment/data")
+# RELATIVE_DATA_PATH = Path("../data")
+# if MOUNTED_DATA_PATH.exists():
+#     DATA_PATH = MOUNTED_DATA_PATH
+# else:
+#     if RELATIVE_DATA_PATH.exists():
+#         DATA_PATH = RELATIVE_DATA_PATH
+#     else:
+#         raise FileNotFoundError(
+#             "Raw data directory not found. Check Ceph drive is mounted if working locally. Check relative path is available if working on HPC."
+#         )
 
-RAW_DATA_PATH = Path("../data/raw_data")
+DATA_PATH = Path("/ceph/behrens/peter_doohan/goalNav_mFC/experiment/data")
 
-EXPERIMENT_INFO_PATH = Path("../data/experiment_info")
+RAW_DATA_PATH = DATA_PATH / "raw_data"
 
-PROCESSED_DATA_PATH = Path("../data/processed_data")
+EXPERIMENT_INFO_PATH = DATA_PATH / "experiment_info"
 
-PREPROCESSED_DATA_PATH = Path("../data/preprocessed_data")
+PROCESSED_DATA_PATH = DATA_PATH / "processed_data"
 
-ANALYSIS_DATA_PATH = Path("../data/analysis_data")
+PREPROCESSED_DATA_PATH = DATA_PATH / "preprocessed_data"
 
-ANALYSIS_INFO_PATH = Path("../data/analysis_data/analysis_info")
+ANALYSIS_DATA_PATH = DATA_PATH / "analysis_data"
 
-RESULTS_PATH = Path("../results")
+ANALYSIS_INFO_PATH = ANALYSIS_DATA_PATH / "analysis_info"
 
-#%% Subpaths
+RESULTS_PATH = Path("/ceph/behrens/peter_doohan/goalNav_mFC/experiment/results")
+
+# %% Subpaths
 
 PYCONTROL_PATH = RAW_DATA_PATH / "pycontrol"
 

@@ -125,6 +125,7 @@ def plot_place_tuning(simple_maze, place_tuning_df, goals=None, ax=None):
         title=place_tuning_df.name,
         value_label="Firing Rate (Hz)",
         highlight_nodes=goals,
+        ax=ax,
     )
     return
 
