@@ -150,13 +150,13 @@ def plot_trial_aligned_heatmap(norm_aligned_rates_df, normalisation_method, ax):
         linewidths=0,
         linecolor=None,
         rasterized=True,
-        cbar_kws={"shrink": 0.5, "label": "z-scored Firing Rate"},
+        cbar_kws={"shrink": 0.5, "label": "Firing Rate (z-scored)"},
     )
     event_times = list(INTRA_TRIAL_INTERVAL_TIMES.values())[:-1]
     timepoints = [float(col) for col in norm_aligned_rates_df.columns]
     event_inds = [np.argmin(np.abs(np.array(timepoints) - time)) for time in event_times]
     for ind in event_inds:
-        ax.axvline(ind, color="silver", linewidth=1, alpha=0.5)
+        ax.axvline(ind, color="white", linewidth=1, ls="--")
     ax.set_xticks(event_inds)
     ax.set_xticklabels(
         [
