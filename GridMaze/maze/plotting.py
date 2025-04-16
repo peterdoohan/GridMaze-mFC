@@ -528,28 +528,23 @@ def get_coords2value(maze, nodes_and_edges2value):
 # %% Figure legend plotting
 
 
-def plot_simple_maze_for_figure_legend(simple_maze, ax, goals, colormap, node_size=15, edge_size=1):
-    node2position = nx.get_node_attributes(simple_maze, "position")
-    node_labels = node_labels = np.array([i for i in nx.get_node_attributes(simple_maze, "label").values()])
-    goal2standard_color = get_goal2standard_color(colormap)
+def plot_maze_legend(simple_maze, goals, ax=None, node_size=30, edge_size=3):
+    """ """
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=(1.5, 1.6))
+    node_labels = np.array([i for i in nx.get_node_attributes(simple_maze, "label").values()])
+    goal2standard_color = get_goal2standard_color()
     node2color = {
-        node_label: goal2standard_color[node_label] if node_label in goals else "lightgrey"
-        for node_label in node_labels
+        node_label: goal2standard_color[node_label] if node_label in goals else "silver" for node_label in node_labels
     }
-    ax.set_facecolor("none")
-    ax.set_aspect("equal")
-    ax.axis("off")
-    nx.draw_networkx(
+    plot_simple_maze_silhouette(
         simple_maze,
-        pos=node2position,
-        ax=ax,
-        node_color=node2color.values(),
+        ax,
+        color="silver",
         node_size=node_size,
-        edge_color="lightgrey",
-        width=edge_size,
-        with_labels=False,
+        edge_size=edge_size,
+        special_location2color=node2color,
     )
-    return
 
 
 def get_goal2standard_color(colormap="gist_rainbow"):

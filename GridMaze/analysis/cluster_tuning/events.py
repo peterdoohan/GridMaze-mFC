@@ -70,14 +70,17 @@ def plot_trial_aligned_rates(trial_aligned_rates, goal_stratified=False, smooth_
             sem = aligned_rates_sem.to_numpy()
             if smooth_SD:
                 mean = gaussian_filter1d(mean, smooth_SD)
-                sem = gaussian_filter1d(sem, smooth_SD)
-            _plot_trial_aligned_rates(mean, sem, time, ax, goal2color[goal])
+                # sem = gaussian_filter1d(sem, smooth_SD)
+            _plot_trial_aligned_rates(mean, None, time, ax, goal2color[goal])
     return
 
 
 def _plot_trial_aligned_rates(mean, sem, time, ax, color):
-    ax.plot(time, mean, color=color)
-    ax.fill_between(time, mean - sem, mean + sem, color=color, alpha=0.2)
+    if sem is not None:
+        ax.plot(time, mean, color=color)
+        ax.fill_between(time, mean - sem, mean + sem, color=color, alpha=0.2)
+    else:
+        ax.plot(time, mean, color=color, alpha=0.8, lw=2)
     return
 
 
