@@ -140,7 +140,7 @@ def run_allocentric_goal_decoding(
     goal_subset="subset_1",
     alignment="trial",
     include_multi_units=True,
-    window_size=0.2,
+    window_size=0.5,
     smooth_SD=4,
     plot=True,
 ):
@@ -175,7 +175,7 @@ def get_sessions_for_analysis(subject_IDs, maze_name, goal_subset, alignment):
     # check sessions have enough trials (>=2) per goal for test-train split (cannot combine data across sessions)
     for session in sessions:
         trials_per_goal = get_trials_per_goal(session, alignment)
-        if trials_per_goal.apply(len).le(2).any():
+        if trials_per_goal.apply(len).lt(2).any():
             print(f"{session} has some goals have less than 2 valid trials")
             sessions.remove(session)
     return sessions
@@ -239,13 +239,14 @@ def get_activity_df(sessions, alignment="event", include_multi_units=True, windo
     return activity_df
 
 
-def _get_decoding_accurary(activity_df, validation_folds_df):
+def _get_decoding_accurary(activity_df, validation_folds_df, classifier="logreg", decoder_kwargs={"inv_alpha": None}):
     """Returns decoding accuracy for each timepoint and fold"""
     timepoints = activity_df.firing_rate.columns
     folds = validation_folds_df.columns.get_level_values(0).unique()
     results_df = pd.DataFrame(index=timepoints, columns=folds)
     for fold in folds:
         print(fold)
+
         # get test, train data for logistic regression
         fold_df = validation_folds_df[fold]
         if len(fold_df.test.columns[0][0]) > 1:  # remove empty index when combining data across sessions
@@ -264,54 +265,36 @@ def _get_decoding_accurary(activity_df, validation_folds_df):
             training_ys.append(y)
         training_X = np.vstack(training_Xs)  # [n_training_sets x n_goals, n_session_clusters, n_timepoints]
         training_y = np.hstack(training_ys)  # [n_training_sets x n_goals]
-        # run logistic regression decoding at each timepoint
-        # logreg = LogisticRegression(penalty="l2", C=0.1, max_iter=10000)
-        logreg = LogisticRegression(penalty=None, max_iter=10000)
-        # logreg = MLPClassifier(hidden_layer_sizes=(100,), max_iter=10000)
+
+        # set up decoder based on speified inputs
+        if classifier == "logreg":
+            if decoder_kwargs["alpha"] is None:
+                decoder = LogisticRegression(penalty=None, max_iter=10000)
+            else:
+                decoder = LogisticRegression(
+                    penalty="l2",
+                    solver="lbfgs’",
+                    C=decoder_kwargs["inv_alpha"],
+                    max_iter=10000,
+                )
+        elif classifier == "mlp":
+            decoder = MLPClassifier(
+                hidden_layer_sizes=decoder_kwargs["Nhid"],
+                alpha=decoder_kwargs["alpha"],
+                max_iter=10000,
+            )
+        else:
+            raise NotImplementedError
+
+        # run decoding at each timepoint
         for i in range(len(timepoints)):
             test_activity = test_X[:, :, i]  # [n_goals, n_session_clusters]
             training_activity = training_X[:, :, i]  # [n_training_sets x n_goals, n_session_clusters]
-            logreg.fit(training_activity, training_y)
-            test_predictions = logreg.predict(test_activity)
+            decoder.fit(training_activity, training_y)
+            test_predictions = decoder.predict(test_activity)
             test_accuracy = (test_predictions == test_y).mean()
             results_df.loc[timepoints[i], fold] = test_accuracy
     return results_df
-
-
-def _get_decoding_accurary2(activity_df, validation_folds_df):
-    """"""
-    timepoints = activity_df.firing_rate.columns
-    folds = validation_folds_df.columns.get_level_values(0).unique()
-    fold_results = np.full((len(folds), len(timepoints), len(timepoints)), np.nan)
-    for n, fold in enumerate(folds):
-        print(fold)
-        # get test, train data for logistic regression
-        fold_df = validation_folds_df[fold]
-        test_df = fold_df.test.droplevel(0, axis=1)
-        test_X, test_y = get_synthetic_activity_matrix(
-            activity_df, test_df
-        )  # [n_goals, n_session_clusters, n_timepoints], [n_goals]
-        training_df = fold_df.training
-        training_Xs, training_ys = [], []
-        for training_set in training_df.columns.get_level_values(0).unique():
-            training_set_df = training_df[training_set]
-            X, y = get_synthetic_activity_matrix(activity_df, training_set_df)
-            training_Xs.append(X)
-            training_ys.append(y)
-        training_X = np.vstack(training_Xs)  # [n_training_sets x n_goals, n_session_clusters, n_timepoints]
-        training_y = np.hstack(training_ys)  # [n_training_sets x n_goals]
-        # run logistic regression decoding test train at every timepoint combo
-        logreg = LogisticRegression(penalty=None, max_iter=10000)
-        for i in range(len(timepoints)):  # train at time
-            print(i)
-            training_activity = training_X[:, :, i]  # [n_training_sets x n_goals, n_session_clusters]
-            logreg.fit(training_activity, training_y)
-            for j in range(len(timepoints)):  # test at time
-                test_activity = test_X[:, :, j]  # [n_goals, n_session_clusters]
-                test_predictions = logreg.predict(test_activity)
-                test_accuracy = (test_predictions == test_y).mean()
-                fold_results[n, i, j] = test_accuracy
-    return fold_results
 
 
 def get_synthetic_activity_matrix(activity_df, test_df):
@@ -524,6 +507,37 @@ def _check_no_test_train_contamination(validation_folds_df):
 # %% Test regularisation param
 
 
+def test(maze_name="maze_1", goal_subset="subset_1"):
+    sessions = get_sessions_for_analysis(
+        subject_IDs="all",
+        maze_name=maze_name,
+        goal_subset=goal_subset,
+        alignment="event",
+    )
+    activity_df = get_activity_df(sessions, alignment="event", include_multi_units=True, window_size=0.5, smooth_SD=4)
+    # filter activity df to only include the window at reward where decoding is best
+    _df = activity_df.firing_rate.reward_aligned
+    reward_time = _df.columns[np.abs(_df.columns).argmin()]
+    activity_df = activity_df[
+        [c for c in activity_df.columns if c[0] != "firing_rate" or (c[1] == "reward_aligned" and c[2] == reward_time)]
+    ]
+    validation_folds_df = get_validation_folds_df(sessions, n_training_trial_sets=100, alignment="event")
+    # linear decoder hyperparameter search
+    hp_search_results = []
+    for alpha in [None, 1e-3, 1e-2, 1e-1, 1]:
+        for smooth_SD in [False, 2, 4, 6]:
+            for window_size in [0.1, 0.2, 0.5]:
+                results_df = _get_decoding_accurary(activity_df, validation_folds_df)
+                hp_result = {
+                    "alpha": alpha,
+                    "smooth_SD": smooth_SD,
+                    "window_size": window_size,
+                    "mean_acc": results_df.mean(axis=1).mean(),
+                }
+                hp_search_results.append(hp_result)
+    return hp_search_results
+
+
 def _test_regularisation(activity_df, validation_folds_df, i_fold=0, inv_alphas=[None, 1e-3, 1e-2, 1e-1, 1]):
     """Returns decoding accuracy for each timepoint and fold"""
     timepoints = activity_df.firing_rate.columns
@@ -555,7 +569,7 @@ def _test_regularisation(activity_df, validation_folds_df, i_fold=0, inv_alphas=
         if inv_alpha is None:
             logreg = LogisticRegression(penalty=None, max_iter=10000)
         else:
-            logreg = LogisticRegression(penalty="l1", solver="saga", C=inv_alpha, max_iter=10000)
+            logreg = LogisticRegression(penalty="l2", solver="saga", C=inv_alpha, max_iter=10000)
         train_perf = []
         test_perf = []
         for i in range(len(timepoints)):
