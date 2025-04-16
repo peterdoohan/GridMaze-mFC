@@ -27,15 +27,16 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 with open(ANALYSIS_INFO_PATH / "intra_trial_interval_times.json", "r") as f:
     INTRA_TRIAL_INTERVAL_TIMES = json.load(f)
 
-ALLOCENTRIC_GOAL_DECODING = RESULTS_PATH / "allocentric_goal_decoding"
+RESULTS_DIR = RESULTS_PATH / "goal_coding"
 
 # %% Plotting results
 
 
 def plot_trial_aligned_decoding_results(results_df, ax=None, sem=True, chance=1 / 12):
     """ """
-    # if ax is None:
-    f, ax = plt.subplots(1, 1, figsize=(5, 3), clear=True)
+    df = results_df.xs("test", level=2, axis=0)
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(5, 3), clear=True)
     ax.spines["right"].set_visible(False)
     ax.spines["top"].set_visible(False)
     ax.set_ylabel("Acc.")
@@ -48,29 +49,30 @@ def plot_trial_aligned_decoding_results(results_df, ax=None, sem=True, chance=1 
         ax.axvline(time, color="black", linestyle="--", alpha=0.5)
     ax.axhline(chance, color="black", linestyle="--", alpha=0.5)
     # plot results
-    mean_acc = results_df.mean(axis=1)  # across folds
+    mean_acc = df.mean(axis=1)  # across folds
     time = mean_acc.index.values.astype(float)
     av = mean_acc.values.astype(float)
     ax.plot(time, av, color="deepskyblue")
     if sem:
-        sem = results_df.sem(axis=1).values.astype(float)
+        sem = df.sem(axis=1).values.astype(float)
         ax.fill_between(time, av - sem, av + sem, color="deepskyblue", alpha=0.3)
 
 
 def plot_event_aligned_decoding_results(results_df, axes=None, chance=1 / 12):
     """ """
-    # if ax is None:
-    f, axes = plt.subplots(1, 2, figsize=(6, 3), clear=True, sharey=True)
+    df = results_df.xs("test", level=2, axis=0)
+    if axes is None:
+        f, axes = plt.subplots(1, 2, figsize=(6, 3), clear=True, sharey=True)
     for ax, label in zip(axes, ["Cue", "Reward"]):
         ax.spines[["top", "right"]].set_visible(False)
         ax.set_ylabel("Acc.")
         ax.set_xlabel(label)
         ax.set_ylim(0, 1)
-        ax.set_xlim(-15, 15)
+        ax.set_xlim(-10, 10)
         ax.axhline(chance, color="black", linestyle="--", alpha=0.5)
         ax.axvline(0, color="black", linestyle="--", alpha=0.5)
     # plot results
-    mean_acc = results_df.mean(axis=1)  # across folds
+    mean_acc = df.mean(axis=1)  # across folds
     for ax, ind in zip(axes, ["cue_aligned", "reward_aligned"]):
         time = mean_acc[ind].index.values.astype(float)
         av = mean_acc[ind].values.astype(float)
@@ -83,7 +85,7 @@ def plot_event_aligned_decoding_results(results_df, axes=None, chance=1 / 12):
 def run_bootstrapped_allocentric_goal_deocding(maze_name, goal_subset, alignment="trial", n_permutations=8, n_jobs=4):
     """ """
     # set up somewhere to save results bc. this is going to take a while
-    save_dir = ALLOCENTRIC_GOAL_DECODING / "permutation_results" / maze_name / goal_subset / alignment
+    save_dir = RESULTS_DIR / "permutation_results" / alignment / maze_name / goal_subset
     save_dir.mkdir(parents=True, exist_ok=True)
     # load sessions once
     subject2sessions = {}
@@ -239,14 +241,19 @@ def get_activity_df(sessions, alignment="event", include_multi_units=True, windo
     return activity_df
 
 
-def _get_decoding_accurary(activity_df, validation_folds_df, classifier="logreg", decoder_kwargs={"inv_alpha": None}):
+def _get_decoding_accurary(
+    activity_df, validation_folds_df, classifier="logreg", decoder_kwargs={"inv_alpha": None}, verbose=False
+):
     """Returns decoding accuracy for each timepoint and fold"""
     timepoints = activity_df.firing_rate.columns
     folds = validation_folds_df.columns.get_level_values(0).unique()
-    results_df = pd.DataFrame(index=timepoints, columns=folds)
+    results_df = pd.DataFrame(
+        index=pd.MultiIndex.from_tuples([(*col, new_level) for col in timepoints for new_level in ["test", "train"]]),
+        columns=folds,
+    )
     for fold in folds:
-        print(fold)
-
+        if verbose:
+            print(fold)
         # get test, train data for logistic regression
         fold_df = validation_folds_df[fold]
         if len(fold_df.test.columns[0][0]) > 1:  # remove empty index when combining data across sessions
@@ -268,7 +275,7 @@ def _get_decoding_accurary(activity_df, validation_folds_df, classifier="logreg"
 
         # set up decoder based on speified inputs
         if classifier == "logreg":
-            if decoder_kwargs["alpha"] is None:
+            if decoder_kwargs["inv_alpha"] is None:
                 decoder = LogisticRegression(penalty=None, max_iter=10000)
             else:
                 decoder = LogisticRegression(
@@ -293,7 +300,10 @@ def _get_decoding_accurary(activity_df, validation_folds_df, classifier="logreg"
             decoder.fit(training_activity, training_y)
             test_predictions = decoder.predict(test_activity)
             test_accuracy = (test_predictions == test_y).mean()
-            results_df.loc[timepoints[i], fold] = test_accuracy
+            train_predictions = decoder.predict(training_activity)
+            train_accuracy = (train_predictions == training_y).mean()
+            results_df.loc[(*timepoints[i], "test"), fold] = test_accuracy
+            results_df.loc[(*timepoints[i], "train"), fold] = train_accuracy
     return results_df
 
 
@@ -507,34 +517,53 @@ def _check_no_test_train_contamination(validation_folds_df):
 # %% Test regularisation param
 
 
-def test(maze_name="maze_1", goal_subset="subset_1"):
+def run_hyperparameter_search(maze_name="maze_1", goal_subset="subset_1"):
     sessions = get_sessions_for_analysis(
         subject_IDs="all",
         maze_name=maze_name,
         goal_subset=goal_subset,
         alignment="event",
     )
-    activity_df = get_activity_df(sessions, alignment="event", include_multi_units=True, window_size=0.5, smooth_SD=4)
-    # filter activity df to only include the window at reward where decoding is best
-    _df = activity_df.firing_rate.reward_aligned
-    reward_time = _df.columns[np.abs(_df.columns).argmin()]
-    activity_df = activity_df[
-        [c for c in activity_df.columns if c[0] != "firing_rate" or (c[1] == "reward_aligned" and c[2] == reward_time)]
-    ]
     validation_folds_df = get_validation_folds_df(sessions, n_training_trial_sets=100, alignment="event")
-    # linear decoder hyperparameter search
-    hp_search_results = []
-    for alpha in [None, 1e-3, 1e-2, 1e-1, 1]:
+    for window_size in [0.1, 0.2, 0.5]:
         for smooth_SD in [False, 2, 4, 6]:
-            for window_size in [0.1, 0.2, 0.5]:
-                results_df = _get_decoding_accurary(activity_df, validation_folds_df)
+            activity_df = get_activity_df(
+                sessions, alignment="event", include_multi_units=True, window_size=window_size, smooth_SD=smooth_SD
+            )
+            # filter activity df to only include the window at reward where decoding is best
+            _df = activity_df.firing_rate.reward_aligned
+            reward_time = _df.columns[np.abs(_df.columns).argmin()]
+            activity_df = activity_df[
+                [
+                    c
+                    for c in activity_df.columns
+                    if c[0] != "firing_rate" or (c[1] == "reward_aligned" and c[2] == reward_time)
+                ]
+            ]
+            # linear decoder hyperparameter search
+            hp_search_results = []
+            for alpha in [None, 1e-6, 1e-4, 1e-2, 1, 1e2]:
+                results_df = _get_decoding_accurary(
+                    activity_df,
+                    validation_folds_df,
+                    classifier="logreg",
+                    decoder_kwargs={"inv_alpha": alpha},
+                )
+                mean_acc = results_df.droplevel([0, 1]).mean(axis=1)
                 hp_result = {
                     "alpha": alpha,
                     "smooth_SD": smooth_SD,
                     "window_size": window_size,
-                    "mean_acc": results_df.mean(axis=1).mean(),
+                    "test_acc": mean_acc.test,
+                    "train_acc": mean_acc.train,
                 }
+                print(hp_result)
                 hp_search_results.append(hp_result)
+    linear_hp_search_results = pd.DataFrame(hp_search_results)
+    save_path = RESULTS_DIR / "hyperparameter_search" / maze_name / goal_subset / "logreg.csv"
+    if not save_path.parent.exists():
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+    linear_hp_search_results.to_csv(save_path, index=False)
     return hp_search_results
 
 
