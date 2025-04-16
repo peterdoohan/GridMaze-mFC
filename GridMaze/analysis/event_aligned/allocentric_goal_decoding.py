@@ -517,7 +517,7 @@ def _check_no_test_train_contamination(validation_folds_df):
 # %% Test regularisation param
 
 
-def run_hyperparameter_search(maze_name="maze_1", goal_subset="subset_1"):
+def run_hyperparameter_search(maze_name="maze_1", goal_subset="subset_1", classifiers=["logreg", "mlp"], save=True):
     sessions = get_sessions_for_analysis(
         subject_IDs="all",
         maze_name=maze_name,
@@ -525,8 +525,8 @@ def run_hyperparameter_search(maze_name="maze_1", goal_subset="subset_1"):
         alignment="event",
     )
     validation_folds_df = get_validation_folds_df(sessions, n_training_trial_sets=100, alignment="event")
-    for window_size in [0.1, 0.2, 0.5]:
-        for smooth_SD in [False, 2, 4, 6]:
+    for window_size in [0.5]:  # [0.1, 0.2, 0.5]:
+        for smooth_SD in [4]:  # [False, 2, 4, 6]:
             activity_df = get_activity_df(
                 sessions, alignment="event", include_multi_units=True, window_size=window_size, smooth_SD=smooth_SD
             )
@@ -540,28 +540,67 @@ def run_hyperparameter_search(maze_name="maze_1", goal_subset="subset_1"):
                     if c[0] != "firing_rate" or (c[1] == "reward_aligned" and c[2] == reward_time)
                 ]
             ]
-            # linear decoder hyperparameter search
-            hp_search_results = []
-            for alpha in [None, 1e-6, 1e-4, 1e-2, 1, 1e2]:
-                results_df = _get_decoding_accurary(
-                    activity_df,
-                    validation_folds_df,
-                    classifier="logreg",
-                    decoder_kwargs={"inv_alpha": alpha},
-                )
-                mean_acc = results_df.droplevel([0, 1]).mean(axis=1)
-                hp_result = {
-                    "alpha": alpha,
-                    "smooth_SD": smooth_SD,
-                    "window_size": window_size,
-                    "test_acc": mean_acc.test,
-                    "train_acc": mean_acc.train,
-                }
-                print(hp_result)
-                hp_search_results.append(hp_result)
-    linear_hp_search_results = pd.DataFrame(hp_search_results)
-    save_path = RESULTS_DIR / "hyperparameter_search" / maze_name / goal_subset / "logreg.csv"
-    if not save_path.parent.exists():
-        save_path.parent.mkdir(parents=True, exist_ok=True)
-    linear_hp_search_results.to_csv(save_path, index=False)
-    return hp_search_results
+
+            # logreg hyperparameter search
+            if "logreg" in classifiers:
+                logreg_hp_search_results = []
+                for inv_alpha in [None]:  # [None, 1e-6, 1e-4, 1e-2, 1, 1e2]:
+                    results_df = _get_decoding_accurary(
+                        activity_df,
+                        validation_folds_df,
+                        classifier="logreg",
+                        decoder_kwargs={"inv_alpha": inv_alpha},
+                    )
+                    mean_acc = results_df.droplevel([0, 1]).mean(axis=1)
+                    hp_result = {
+                        "decoder": "logreg",
+                        "maze_name": maze_name,
+                        "goal_subset": goal_subset,
+                        "inv_alpha": inv_alpha,
+                        "smooth_SD": smooth_SD,
+                        "window_size": window_size,
+                        "test_acc": mean_acc.test,
+                        "train_acc": mean_acc.train,
+                    }
+                    print(hp_result)
+                    logreg_hp_search_results.append(hp_result)
+                logreg_hp_search_results = pd.DataFrame(logreg_hp_search_results)
+                logreg_save_path = RESULTS_DIR / "hyperparameter_search" / maze_name / goal_subset / "logreg.csv"
+                if save:
+                    if not logreg_save_path.parent.exists():
+                        logreg_save_path.parent.mkdir(parents=True, exist_ok=True)
+                    logreg_hp_search_results.to_csv(logreg_save_path, index=False)
+
+            # mlp hyperparameter search
+            if "mlp" in classifiers:
+                mlp_hp_search_results = []
+                for alpha in [1e-4]:  # [1e-6, 1e-4, 1e-2, 1, 1e2]:
+                    for Nhid in [(100,)]:  # [(50,), (100,), (100, 50), (200, 100)]:
+                        results_df = _get_decoding_accurary(
+                            activity_df,
+                            validation_folds_df,
+                            classifier="mlp",
+                            decoder_kwargs={"alpha": alpha, "Nhid": Nhid},
+                        )
+                        mean_acc = results_df.droplevel([0, 1]).mean(axis=1)
+                        hp_result = {
+                            "decoder": "mlp",
+                            "maze_name": maze_name,
+                            "goal_subset": goal_subset,
+                            "alpha": alpha,
+                            "Nhid": Nhid,
+                            "smooth_SD": smooth_SD,
+                            "window_size": window_size,
+                            "test_acc": mean_acc.test,
+                            "train_acc": mean_acc.train,
+                        }
+                        print(hp_result)
+                        mlp_hp_search_results.append(hp_result)
+                mlp_hp_search_results = pd.DataFrame(mlp_hp_search_results)
+                mlp_save_path = RESULTS_DIR / "hyperparameter_search" / maze_name / goal_subset / "mlp.csv"
+                if save:
+                    if not mlp_save_path.parent.exists():
+                        mlp_save_path.parent.mkdir(parents=True, exist_ok=True)
+                    mlp_hp_search_results.to_csv(mlp_save_path, index=False)
+
+    return logreg_hp_search_results, mlp_hp_search_results
