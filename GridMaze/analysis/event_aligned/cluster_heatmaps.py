@@ -128,12 +128,12 @@ def get_trial_aligned_activity_heatmap(
 
 
 # %%
-def get_sessions_for_analysis():
+def get_sessions_for_analysis(aligned_to="trial"):
     sessions = gs.get_maze_sessions(
         subject_IDs="all",
         maze_names="all",
         days_on_maze="late",
-        with_data=["trial_aligned_rates_df", "cluster_metrics"],
+        with_data=[f"{aligned_to}_aligned_rates_df", "cluster_metrics"],
     )
     return sessions
 
@@ -177,8 +177,9 @@ def plot_trial_aligned_heatmap(norm_aligned_rates_df, normalisation_method, ax):
 # %% Event aligned heatmap versions
 
 
-def test(
+def get_event_aligned_rates(
     sessions,
+    with_rates_for_ordering=True,
     smooth_SD=5,
     normalisation="zscore",
 ):
@@ -227,23 +228,31 @@ def test(
 
     else:
         raise NotImplementedError
-    return rates_df, rates_for_ordering_df
+
+    # return results
+    if with_rates_for_ordering:
+        return rates_df, rates_for_ordering_df
+    else:
+        return rates_df
 
 
 def plot_event_aligned_rates(
     aligned_rates_df,
     rates_for_ordering_df,
-    xlims={"cue": (-2, 2), "reward": (-5, 5), "end_reward_consumption": (-2, 2)},
+    xlims={"cue": (-5, 5), "reward": (-5, 5), "end_reward_consumption": (-5, 5)},
     vmin=-2.5,
     vmax=7.5,
     axes=None,
 ):
     """ """
     if axes is None:
-        f, axes = plt.subplots(1, 3, figsize=(15, 5), clear=True)
-    for event, ax in zip(["cue", "reward"], axes):
-        df = aligned_rates_df.xs(f"{event}_aligned", axis=1, level=0)
-        ordering_df = rates_for_ordering_df.xs(f"{event}_aligned", axis=1, level=0)
+        f, axes = plt.subplots(1, 3, figsize=(6, 5), clear=True, width_ratios=[1, 1, 1.15])
+    for event, ax in zip(["cue", "reward", "end_reward_consumption"], axes):
+        key = (
+            f"{event}_aligned" if event != "end_reward_consumption" else f"{event}"
+        )  # HACK need to fix label in analysis data df
+        df = aligned_rates_df.xs(key, axis=1, level=0)
+        ordering_df = rates_for_ordering_df.xs(key, axis=1, level=0)
         # filter response within window
         df = df.loc[:, (df.columns >= xlims[event][0]) & (df.columns <= xlims[event][1])]
         ordering_df = ordering_df.loc[
@@ -253,7 +262,7 @@ def plot_event_aligned_rates(
         order = np.argmax(ordering_df.to_numpy(), axis=1).argsort()
         df = df.iloc[order]
         # plot heatmap
-        cbar = True if event == "reward" else False
+        cbar = True if event == "end_reward_consumption" else False
         sns.heatmap(
             df,
             cmap="coolwarm",
@@ -263,9 +272,15 @@ def plot_event_aligned_rates(
             rasterized=True,
             cbar=cbar,
             cbar_kws={"shrink": 0.5, "label": "Firing Rate (z-scored)"},
+            zorder=0,
         )
-        ax.axvline(0, color="white", linewidth=1, ls="--", zorder=3)
+        times = df.columns.values.astype(float)
+        zero_point = np.argmin(np.abs(times))
+        ax.axvline(zero_point, color="white", linewidth=1, ls="--", zorder=3)
         ax.set_yticks([])
-        ax.set_xticks([])
+        tick_labels = [-4, -2, 0, 2, 4]
+        tick_positions = [np.argmin(np.abs(times - tick)) for tick in tick_labels]
+        ax.set_xticks(tick_positions)
+        ax.set_xticklabels(tick_labels, rotation=0)
         ax.set_xlabel("Time (s)")
-        ax.set_ylabel("Single Units")
+        ax.set_ylabel(f"Single Units ({event} aligned ordering)")

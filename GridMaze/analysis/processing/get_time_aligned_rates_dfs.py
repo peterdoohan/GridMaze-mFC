@@ -237,7 +237,7 @@ def get_trial_aligned_activity(processed_data_path):
     }
 
 
-def get_event_aligned_activity(processed_data_path, event, window_size=15, fs_out=25, smooth_SD="default"):
+def get_event_aligned_activity(processed_data_path, event, window_size=10, fs_out=25, smooth_SD="default"):
     """aligns firing rates on each trial to a particular event (eg, cue or reward).
     INPUTS:
         - processed_data_path: processed data folder for the session containing: trials.tsv, spike_clusters.npy, spike_times.npy
