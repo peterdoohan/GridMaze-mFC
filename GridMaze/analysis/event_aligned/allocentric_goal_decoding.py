@@ -42,7 +42,7 @@ SMOOTH_SD = 4
 
 def plot_trial_aligned_decoding_results(results_df, ax=None, sem=True, chance=1 / 12):
     """ """
-    df = results_df.xs("test", level=2, axis=0)
+    df = results_df.xs("test", level=1, axis=0)
     if ax is None:
         f, ax = plt.subplots(1, 1, figsize=(5, 3), clear=True)
     ax.spines["right"].set_visible(False)
@@ -111,6 +111,7 @@ def run_bootstrapped_allocentric_goal_deocding(
     session_perms = [
         [session for subject in subjects for session in subject2sessions[subject]] for subjects in subject_perms
     ]
+    return session_perms
     # get save paths for each permutation
     save_paths = [save_dir / f"perm_{i}.csv" for i in range(n_permutations)]
     Parallel(n_jobs=n_jobs)(
@@ -147,7 +148,7 @@ def _run_allocentric_goal_decoding(
         verbose=True,
     )
     if save_path is not None:
-        results_df.to_csv(save_path)
+        results_df.to_csv(save_path, index=False)
     else:
         return results_df
 
@@ -334,7 +335,7 @@ def _get_decoding_accurary(
             rtest_loc = (*timepoints[i], "test") if isinstance(timepoints[i], tuple) else (timepoints[i], "test")
             rtrain_loc = (*timepoints[i], "train") if isinstance(timepoints[i], tuple) else (timepoints[i], "train")
             results_df.loc[rtest_loc, fold] = test_accuracy
-            results_df.loc[(rtrain_loc, "train"), fold] = train_accuracy
+            results_df.loc[rtrain_loc, fold] = train_accuracy
     return results_df
 
 
