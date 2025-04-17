@@ -32,6 +32,7 @@ RESULTS_DIR = RESULTS_PATH / "goal_coding"
 DECODER2KWARGS = {
     "logreg": {"inv_alpha": 0.01},  # hyperparameters optimsed with fn: run_hyperparameter_search
     "mlp": {"alpha": 1, "Nhid": (50,), "solver": "adam"},
+    "mlp_torch": {"alpha": 1e-6, "Nhid": (100, 50)},  # hyperparameters optimsed with fn: run_hyperparameter_search
 }
 
 WINDOW_SIZE = 0.2  # from HP search
@@ -163,15 +164,14 @@ def run_allocentric_goal_decoding(
     include_multi_units=True,
     decoder="logreg",  # or "mlp"
     decoder_kwargs={"inv_alpha": 0.01},  # {"alpha": 1, "Nhid": (50,), "solver": "adam"} for mlp
-    window_size=0.2,
-    smooth_SD=4,
+    window_size=0.5,
+    smooth_SD=False,
     plot=True,
 ):
     """ """
     sessions = get_sessions_for_analysis(subject_IDs, maze_name, goal_subset, alignment)
     activity_df = get_activity_df(sessions, alignment, include_multi_units, window_size, smooth_SD)
     validation_fold_df = get_validation_folds_df(sessions, n_training_trial_sets=100, alignment=alignment)
-    return activity_df, validation_fold_df
     results_df = _get_decoding_accurary(activity_df, validation_fold_df, decoder, decoder_kwargs, verbose=True)
     if plot:
         if alignment == "event":
@@ -321,18 +321,18 @@ def _get_decoding_accurary(
                 hidden_layer_sizes=decoder_kwargs["Nhid"],
                 alpha=decoder_kwargs["alpha"],
                 solver=decoder_kwargs["solver"],
-                max_iter=50000,
+                max_iter=500,
                 verbose=False,
-                tol=1e-6,
+                tol=1e-4,
             )
 
         elif classifier == "mlp_torch":
             decoder = mu.MLPtorchClassifier(
                 hidden_layer_sizes=decoder_kwargs["Nhid"],
                 alpha=decoder_kwargs["alpha"],
-                max_epochs=1_000,
-                verbose=True,
-                tol=1e-6,
+                max_epochs=500,
+                verbose=False,
+                tol=1e-4,
             )
         else:
             raise NotImplementedError
@@ -580,8 +580,8 @@ def run_hyperparameter_search(maze_name="maze_1", goal_subset="subset_1", classi
     )
     validation_folds_df = get_validation_folds_df(sessions, n_training_trial_sets=100, alignment="event")
     return_data = []
-    for window_size in [0.2]:  # [0.1, 0.2, 0.5]:
-        for smooth_SD in [4]:  # [False, 4, 8]:
+    for window_size in [0.5]:  # [0.1, 0.2, 0.5]:
+        for smooth_SD in [False]:  # [False, 4, 8]:
             activity_df = get_activity_df(
                 sessions, alignment="event", include_multi_units=True, window_size=window_size, smooth_SD=smooth_SD
             )
@@ -631,7 +631,7 @@ def run_hyperparameter_search(maze_name="maze_1", goal_subset="subset_1", classi
             if "mlp" in classifiers:
                 mlp_hp_search_results = []
                 for solver in ["adam"]:
-                    for alpha in [1, 10]:  # [1, 10, 100]:
+                    for alpha in [1e-4]:  # [1, 10, 100]:
                         for Nhid in [(100,)]:  # [(50,), (50, 50)]:
                             results_df = _get_decoding_accurary(
                                 activity_df,
@@ -664,8 +664,13 @@ def run_hyperparameter_search(maze_name="maze_1", goal_subset="subset_1", classi
 
             if "mlp_torch" in classifiers:
                 mlp_torch_hp_search_results = []
-                for alpha in [1e-4, 1e-2, 0]:
-                    for Nhid in [(50,), (100,), (100, 50)]:
+                for alpha in [1e-6]:
+                    for Nhid in [
+                        (
+                            100,
+                            50,
+                        )
+                    ]:
                         results_df = _get_decoding_accurary(
                             activity_df,
                             validation_folds_df,

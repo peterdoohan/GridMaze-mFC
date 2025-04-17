@@ -114,7 +114,7 @@ class MLPtorchClassifier:
         self,
         hidden_layer_sizes=(100,),
         activation="relu",
-        batch_size=64,
+        batch_size=256,
         lr=1e-3,
         max_epochs=500,
         alpha=0.0,

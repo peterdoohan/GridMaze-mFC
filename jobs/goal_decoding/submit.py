@@ -38,7 +38,7 @@ def get_SLURM_script(maze_name, goal_set, aligned_to, decoder, n_permutations=50
 #SBATCH --error=jobs/goal_decoding/err/{exp_name}.err
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=12
-#SBATCH --mem=32GB
+#SBATCH --mem=128GB
 #SBATCH --time=72:00:00
 
 module load miniconda
