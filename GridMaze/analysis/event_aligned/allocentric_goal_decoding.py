@@ -207,16 +207,15 @@ def get_sessions_for_analysis(subject_IDs, maze_name, goal_subset, alignment):
 
 def get_activity_df(sessions, alignment="event", include_multi_units=True, window_size=0.2, smooth_SD=4):
     """"""
+    data_struc = "event_aligned_rates_df" if alignment == "event" else "trial_aligned_rates_df"
     # combine data across sessions w/ select units
-    if alignment == "event":
-        data_struc = "event_aligned_rates_df"
-    elif alignment == "trial":
-        data_struc = "trial_aligned_rates_df"
-    else:
-        raise ValueError("alignment must be 'event' or 'trial'")
-
+    session_count = {
+        session.name: 0 for session in sessions
+    }  # how many times has this session been added to activity df (relevant when bootstrap resampling)
     aligned_rates_dfs = []
     for session in sessions:
+        session_name = session.name
+        count = session_count[session_name]
         event_aligned_rates_df = getattr(session, data_struc)
         keep_clusters = gc.filter_clusters(
             session.cluster_metrics,
@@ -225,16 +224,22 @@ def get_activity_df(sessions, alignment="event", include_multi_units=True, windo
             single_units=True,
             multi_units=include_multi_units,
         )
-        aligned_rates_dfs.append(event_aligned_rates_df[event_aligned_rates_df.cluster_unique_ID.isin(keep_clusters)])
+        session_df = event_aligned_rates_df[event_aligned_rates_df.cluster_unique_ID.isin(keep_clusters)].copy()
+        # update cluster_unique_IDs with session counts (avoid non-uniquenss when boostrap resampling)
+        cuID_loc = ("cluster_unique_ID", "", "") if alignment == "event" else ("cluster_unique_ID", "")
+        session_df.loc[:, cuID_loc] = session_df.cluster_unique_ID.apply(lambda x: f"{x}_c{count}")
+        # add trial_unique_ID column (with guarantees for uniqueness when bootstrap resampling)
+        tuID_loc = ("trial_unique_ID", "", "") if alignment == "event" else ("trial_unique_ID", "")
+        session_df.loc[:, tuID_loc] = (
+            session_df[["subject_ID", "maze_name", "day_on_maze", "trial"]]
+            .astype(str)
+            .agg("_".join, axis=1)
+            .apply(lambda x: f"{x}_c{count}")  # same IDs as in validation folds df
+        )
+        aligned_rates_dfs.append(session_df)
+        session_count[session_name] += 1
     aligned_rates_df = pd.concat(aligned_rates_dfs, axis=0)
-    # and add trial_unique_IDs
-    if alignment == "event":
-        col = ("trial_unique_ID", "", "")
-    elif alignment == "trial":
-        col = ("trial_unique_ID", "")
-    aligned_rates_df.loc[:, col] = (
-        aligned_rates_df[["subject_ID", "maze_name", "day_on_maze", "trial"]].astype(str).agg("_".join, axis=1)
-    )
+
     # reduce resolution to specified window length
     window_length = int(window_size / RATES_SAMPLE_RATE)
     if alignment == "event":
@@ -374,15 +379,23 @@ def get_validation_folds_df(sessions, n_training_trial_sets, alignment="event"):
     """ """
     exp_max_trials_per_goal = get_max_trials_per_goal(sessions, alignment)
     session_fold_dfs = []
+    session_counts = {session.name: 0 for session in sessions}
     for session in sessions:
+        session_name = session.name
+        count = session_counts[session_name]
         session_fold_df = get_session_validation_folds_df(
-            session, exp_max_trials_per_goal, n_training_trial_sets, alignment
+            session,
+            exp_max_trials_per_goal,
+            n_training_trial_sets,
+            alignment,
+            count,
         )
         # turn from trial float value to trial_unique_ID string
         session_fold_df = session_fold_df.map(
-            lambda x: f"{session.subject_ID}_{session.maze_name}_{session.day_on_maze}_{int(x)}"
+            lambda x: f"{session.subject_ID}_{session.maze_name}_{session.day_on_maze}_{int(x)}_c{count}",
         )
         session_fold_dfs.append(session_fold_df)
+        session_counts[session_name] += 1
     validation_folds_df = pd.concat(session_fold_dfs, axis=1).sort_index(axis=1)
     return validation_folds_df
 
@@ -408,9 +421,9 @@ def get_trials_per_goal(session, alignment):
     return trials_per_goal
 
 
-def get_session_validation_folds_df(session, exp_max_trials_per_goal, n_training_trial_sets, alignment):
+def get_session_validation_folds_df(session, exp_max_trials_per_goal, n_training_trial_sets, alignment, count):
     """"""
-    session_name = session.name
+    session_name = f"{session.name}_c{count}"
     if alignment == "event":  # has all trials even if very short etc.
         df = session.event_aligned_rates_df
     elif alignment == "trial":  # note some trials are missing in trial_aligned_rates_df bc/ erc after ITI
