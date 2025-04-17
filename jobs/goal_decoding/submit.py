@@ -11,22 +11,21 @@ MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
 
 GOAL_SETS = ["subset_1", "subset_2", "all"]
 
-DECODERS = ["logreg", "mlp"]
+DECODERS = ["logreg"]  # mlp currently too slow ...
 
 ALIGNMENTS = ["trial", "event"]
 
 # %% Functions
 
 
-def submit_all_jobs():
+def submit_all_jobs(decoder="logreg"):
     """ """
     for maze_name in MAZE_NAMES:
         for goal_set in GOAL_SETS:
-            for decoder in DECODERS:
-                for aligned_to in ALIGNMENTS:
-                    script_path = get_SLURM_script(maze_name, goal_set, aligned_to, decoder)
-                    os.system(f"chmod +x {script_path}")
-                    os.system(f"sbatch {script_path}")
+            for aligned_to in ALIGNMENTS:
+                script_path = get_SLURM_script(maze_name, goal_set, aligned_to, decoder)
+                os.system(f"chmod +x {script_path}")
+                os.system(f"sbatch {script_path}")
     return print(f"Submitted all allocentric goal decoding jobs to HPC.")
 
 
@@ -48,9 +47,9 @@ conda deactivate
 conda deactivate
 conda deactivate
 conda activate goalNav_mEC
-python -c \"from GridMaze.analysis.event_aligned import allocentric_goal_decoding as agd; agd.run_bootstrapped_allocentric_goal_deocding('{maze_name}', '{goal_set}', '{aligned_to}', '{decoder}', '{n_permutations}', '{n_jobs}')\"
+python -c \"from GridMaze.analysis.event_aligned import allocentric_goal_decoding as agd; agd.run_bootstrapped_allocentric_goal_deocding('{maze_name}', '{goal_set}', '{aligned_to}', '{decoder}', {n_permutations}, {n_jobs})\"
 """
-    script_path = f"jobs/embedding_model/slurm/{exp_name}.sh"
+    script_path = f"jobs/goal_decoding/slurm/{exp_name}.sh"
     with open(script_path, "w") as f:
         f.write(script)
     return script_path

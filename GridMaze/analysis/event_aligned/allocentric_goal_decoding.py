@@ -3,7 +3,6 @@
 # %% Imports
 import json
 import random
-from tqdm import tqdm
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -11,6 +10,7 @@ from sklearn.linear_model import LogisticRegression
 from scipy.ndimage import gaussian_filter1d
 from joblib import Parallel, delayed
 from sklearn.neural_network import MLPClassifier
+from GridMaze.analysis.event_aligned import mlp_utils as mu
 
 from ..core import get_sessions as gs
 from ..core import get_clusters as gc
@@ -111,7 +111,6 @@ def run_bootstrapped_allocentric_goal_deocding(
     session_perms = [
         [session for subject in subjects for session in subject2sessions[subject]] for subjects in subject_perms
     ]
-    return session_perms
     # get save paths for each permutation
     save_paths = [save_dir / f"perm_{i}.csv" for i in range(n_permutations)]
     Parallel(n_jobs=n_jobs)(
@@ -148,7 +147,7 @@ def _run_allocentric_goal_decoding(
         verbose=True,
     )
     if save_path is not None:
-        results_df.to_csv(save_path, index=False)
+        results_df.to_csv(save_path)
     else:
         return results_df
 
@@ -172,6 +171,7 @@ def run_allocentric_goal_decoding(
     sessions = get_sessions_for_analysis(subject_IDs, maze_name, goal_subset, alignment)
     activity_df = get_activity_df(sessions, alignment, include_multi_units, window_size, smooth_SD)
     validation_fold_df = get_validation_folds_df(sessions, n_training_trial_sets=100, alignment=alignment)
+    return activity_df, validation_fold_df
     results_df = _get_decoding_accurary(activity_df, validation_fold_df, decoder, decoder_kwargs, verbose=True)
     if plot:
         if alignment == "event":
@@ -323,6 +323,15 @@ def _get_decoding_accurary(
                 solver=decoder_kwargs["solver"],
                 max_iter=50000,
                 verbose=False,
+                tol=1e-6,
+            )
+
+        elif classifier == "mlp_torch":
+            decoder = mu.MLPtorchClassifier(
+                hidden_layer_sizes=decoder_kwargs["Nhid"],
+                alpha=decoder_kwargs["alpha"],
+                max_epochs=1_000,
+                verbose=True,
                 tol=1e-6,
             )
         else:
@@ -562,7 +571,7 @@ def _check_no_test_train_contamination(validation_folds_df):
 # %% Test regularisation param
 
 
-def run_hyperparameter_search(maze_name="maze_1", goal_subset="subset_1", classifiers=["logreg", "mlp"], save=True):
+def run_hyperparameter_search(maze_name="maze_1", goal_subset="subset_1", classifiers=["mlp_torch"], save=True):
     sessions = get_sessions_for_analysis(
         subject_IDs="all",
         maze_name=maze_name,
@@ -652,5 +661,37 @@ def run_hyperparameter_search(maze_name="maze_1", goal_subset="subset_1", classi
                     if not mlp_save_path.parent.exists():
                         mlp_save_path.parent.mkdir(parents=True, exist_ok=True)
                     mlp_hp_search_results.to_csv(mlp_save_path, index=False)
+
+            if "mlp_torch" in classifiers:
+                mlp_torch_hp_search_results = []
+                for alpha in [1e-4, 1e-2, 0]:
+                    for Nhid in [(50,), (100,), (100, 50)]:
+                        results_df = _get_decoding_accurary(
+                            activity_df,
+                            validation_folds_df,
+                            classifier="mlp_torch",
+                            decoder_kwargs={"alpha": alpha, "Nhid": Nhid},
+                        )
+                        mean_acc = results_df.droplevel([0, 1]).mean(axis=1)
+                        hp_result = {
+                            "decoder": "mlp_torch",
+                            "maze_name": maze_name,
+                            "goal_subset": goal_subset,
+                            "alpha": alpha,
+                            "Nhid": Nhid,
+                            "smooth_SD": smooth_SD,
+                            "window_size": window_size,
+                            "test_acc": mean_acc.test,
+                            "train_acc": mean_acc.train,
+                        }
+                        print(hp_result)
+                        mlp_torch_hp_search_results.append(hp_result)
+                mlp_torch_hp_search_results = pd.DataFrame(mlp_torch_hp_search_results)
+                return_data.append(mlp_torch_hp_search_results)
+                mlp_torch_save_path = RESULTS_DIR / "hyperparameter_search" / maze_name / goal_subset / "mlp_torch.csv"
+                if save:
+                    if not mlp_torch_save_path.parent.exists():
+                        mlp_torch_save_path.parent.mkdir(parents=True, exist_ok=True)
+                    mlp_torch_hp_search_results.to_csv(mlp_torch_save_path, index=False)
 
     return tuple(return_data) if len(return_data) > 1 else return_data[0]
