@@ -331,7 +331,7 @@ def _get_decoding_accurary(
                 hidden_layer_sizes=decoder_kwargs["Nhid"],
                 alpha=decoder_kwargs["alpha"],
                 max_epochs=500,
-                verbose=False,
+                verbose=True,
                 tol=1e-4,
             )
         else:
