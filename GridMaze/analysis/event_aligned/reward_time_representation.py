@@ -16,7 +16,9 @@ import seaborn as sns
 from matplotlib import pyplot as plt
 
 # %% Global Variables
-from GridMaze.paths import EXPERIMENT_INFO_PATH
+from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
+
+RESULTS_DIR = RESULTS_PATH / "event_aligned" / "reward_time_repres"
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
@@ -41,8 +43,13 @@ def plot_RDM_comparisons(comparisons_df, ax=None):
     sns.pointplot(data=df, x="condition", y="corr", hue="subject_1", ax=ax)
 
 
-def get_within_across_maze_RDM_comparison(plot=True):
+def get_within_across_maze_RDM_comparison(plot=True, save=False, verbose=False):
     """ """
+    # check if already run and load
+    save_path = RESULTS_DIR / "within_across_maze_RDM_comparisons.csv"
+    if not save and save_path.exists():
+        comparisons_df = pd.read_csv(save_path, index_col=0)
+        return comparisons_df
 
     def _corr_RDMs(RDM1, RDM2):
         # make sure RDMs are the same size
@@ -56,13 +63,17 @@ def get_within_across_maze_RDM_comparison(plot=True):
     comparisons = []
     # get RDMs for each subject and maze
     for goal_subset in ["subset_1", "subset_2", "all"]:
-        for maze in MAZE_NAMES:
-            other_mazes = [m for m in MAZE_NAMES if m != maze]
-            for subject in SUBJECT_IDS:
+        if verbose:
+            print(f"Getting RDMs for goal subset: {goal_subset}")
+        for subject in SUBJECT_IDS:
+            if verbose:
+                print(subject)
+            other_subjects = [s for s in SUBJECT_IDS if s != subject]
+            for maze in MAZE_NAMES:
+                other_mazes = [m for m in MAZE_NAMES if m != maze]
                 # within maze comparisons
-                other_subjects = [s for s in SUBJECT_IDS if s != subject]
                 rdm_subject_maze = get_RDM([subject], maze, goal_subset, return_as="matrix")
-                rdm_other_subjects = get_RDM(other_subjects, maze, goal_subset, return_as="matrix")
+                rdm_other_subjects_same_maze = get_RDM(other_subjects, maze, goal_subset, return_as="matrix")
                 comparisons.append(
                     {
                         "goal_subset": goal_subset,
@@ -70,12 +81,12 @@ def get_within_across_maze_RDM_comparison(plot=True):
                         "subject": subject,
                         "condition": "within",
                         "other_maze": None,
-                        "corr": _corr_RDMs(rdm_subject_maze, rdm_other_subjects),
+                        "corr": _corr_RDMs(rdm_subject_maze, rdm_other_subjects_same_maze),
                     }
                 )
                 # across maze comparisons
                 for other_maze in other_mazes:
-                    rdm_other_mazes = get_RDM(other_subjects, other_maze, goal_subset, return_as="matrix")
+                    rdm_other_subject_other_maze = get_RDM(other_subjects, other_maze, goal_subset, return_as="matrix")
                     comparisons.append(
                         {
                             "goal_subset": goal_subset,
@@ -83,10 +94,13 @@ def get_within_across_maze_RDM_comparison(plot=True):
                             "subject": subject,
                             "condition": "across",
                             "other_maze": other_maze,
-                            "corr": _corr_RDMs(rdm_subject_maze, rdm_other_mazes),
+                            "corr": _corr_RDMs(rdm_subject_maze, rdm_other_subject_other_maze),
                         }
                     )
     comparisons_df = pd.DataFrame(comparisons)
+    if save:
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        comparisons_df.to_csv(save_path)
     if plot:
         plot_RDM_comparisons(comparisons_df)
     return comparisons_df
