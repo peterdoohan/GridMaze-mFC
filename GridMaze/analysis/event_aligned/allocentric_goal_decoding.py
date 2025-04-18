@@ -144,56 +144,6 @@ def plot_event_aligned_decoding_acc(perm_df, axes=None, chance=1 / 12):
             ax.scatter(sig_timepoints, np.ones(len(sig_timepoints)) * 0.98, marker="s", color="purple", s=5)
 
 
-# %% Non bootstrapped plotting functions
-
-
-def plot_trial_aligned_decoding_results(results_df, ax=None, sem=True, chance=1 / 12):
-    """ """
-    df = results_df.xs("test", level=1, axis=0)
-    if ax is None:
-        f, ax = plt.subplots(1, 1, figsize=(5, 3), clear=True)
-    ax.spines["right"].set_visible(False)
-    ax.spines["top"].set_visible(False)
-    ax.set_ylabel("Acc.")
-    ax.set_xlabel("Time (s)")
-    ax.set_ylim(0, 1.0)
-    ax.set_xlim(-5, INTRA_TRIAL_INTERVAL_TIMES["ITI_end"] + 0.5)
-    ax.set_xticks(list(INTRA_TRIAL_INTERVAL_TIMES.values()))
-    ax.set_xticklabels(["cue", "reward", "erc", "end"])
-    for time in INTRA_TRIAL_INTERVAL_TIMES.values():
-        ax.axvline(time, color="black", linestyle="--", alpha=0.5)
-    ax.axhline(chance, color="black", linestyle="--", alpha=0.5)
-    # plot results
-    mean_acc = df.mean(axis=1)  # across folds
-    time = mean_acc.index.values.astype(float)
-    av = mean_acc.values.astype(float)
-    ax.plot(time, av, color="deepskyblue")
-    if sem:
-        sem = df.sem(axis=1).values.astype(float)
-        ax.fill_between(time, av - sem, av + sem, color="deepskyblue", alpha=0.3)
-
-
-def plot_event_aligned_decoding_results(results_df, axes=None, chance=1 / 12):
-    """ """
-    df = results_df.xs("test", level=2, axis=0)
-    if axes is None:
-        f, axes = plt.subplots(1, 2, figsize=(6, 3), clear=True, sharey=True)
-    for ax, label in zip(axes, ["Cue", "Reward"]):
-        ax.spines[["top", "right"]].set_visible(False)
-        ax.set_ylabel("Acc.")
-        ax.set_xlabel(label)
-        ax.set_ylim(0, 1)
-        ax.set_xlim(-10, 10)
-        ax.axhline(chance, color="black", linestyle="--", alpha=0.5)
-        ax.axvline(0, color="black", linestyle="--", alpha=0.5)
-    # plot results
-    mean_acc = df.mean(axis=1)  # across folds
-    for ax, ind in zip(axes, ["cue_aligned", "reward_aligned"]):
-        time = mean_acc[ind].index.values.astype(float)
-        av = mean_acc[ind].values.astype(float)
-        ax.plot(time, av, color="deepskyblue")
-
-
 # %% run bootstrapped permutation tests
 
 
@@ -204,6 +154,10 @@ def run_bootstrapped_allocentric_goal_deocding(
     # set up somewhere to save results bc. this is going to take a while
     save_dir = RESULTS_DIR / "permutation_results" / alignment / decoder / maze_name / goal_subset
     save_dir.mkdir(parents=True, exist_ok=True)
+    # check how many permutations have already been run
+    existing_files = list(save_dir.glob("*.csv"))
+    completed_permutations = len(existing_files)
+    remaining_permutations = (n_permutations - completed_permutations) - 1
     # load sessions once
     subject2sessions = {}
     for subject in SUBJECT_IDS:
@@ -212,14 +166,14 @@ def run_bootstrapped_allocentric_goal_deocding(
     rng = np.random.default_rng()
     subject_perms = rng.choice(
         SUBJECT_IDS,
-        size=(n_permutations, len(SUBJECT_IDS)),
+        size=(remaining_permutations, len(SUBJECT_IDS)),
         replace=True,
     )
     session_perms = [
         [session for subject in subjects for session in subject2sessions[subject]] for subjects in subject_perms
     ]
     # get save paths for each permutation
-    save_paths = [save_dir / f"perm_{i}.csv" for i in range(n_permutations)]
+    save_paths = [save_dir / f"perm_{i}.csv" for i in range(completed_permutations, remaining_permutations)]
     Parallel(n_jobs=n_jobs)(
         delayed(_run_allocentric_goal_decoding)(
             session_perms[i],
@@ -803,3 +757,54 @@ def run_hyperparameter_search(maze_name="maze_1", goal_subset="subset_1", classi
                     mlp_torch_hp_search_results.to_csv(mlp_torch_save_path, index=False)
 
     return tuple(return_data) if len(return_data) > 1 else return_data[0]
+
+
+# %%
+# %% Non bootstrapped plotting functions
+
+
+def plot_trial_aligned_decoding_results(results_df, ax=None, sem=True, chance=1 / 12):
+    """ """
+    df = results_df.xs("test", level=1, axis=0)
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(5, 3), clear=True)
+    ax.spines["right"].set_visible(False)
+    ax.spines["top"].set_visible(False)
+    ax.set_ylabel("Acc.")
+    ax.set_xlabel("Time (s)")
+    ax.set_ylim(0, 1.0)
+    ax.set_xlim(-5, INTRA_TRIAL_INTERVAL_TIMES["ITI_end"] + 0.5)
+    ax.set_xticks(list(INTRA_TRIAL_INTERVAL_TIMES.values()))
+    ax.set_xticklabels(["cue", "reward", "erc", "end"])
+    for time in INTRA_TRIAL_INTERVAL_TIMES.values():
+        ax.axvline(time, color="black", linestyle="--", alpha=0.5)
+    ax.axhline(chance, color="black", linestyle="--", alpha=0.5)
+    # plot results
+    mean_acc = df.mean(axis=1)  # across folds
+    time = mean_acc.index.values.astype(float)
+    av = mean_acc.values.astype(float)
+    ax.plot(time, av, color="deepskyblue")
+    if sem:
+        sem = df.sem(axis=1).values.astype(float)
+        ax.fill_between(time, av - sem, av + sem, color="deepskyblue", alpha=0.3)
+
+
+def plot_event_aligned_decoding_results(results_df, axes=None, chance=1 / 12):
+    """ """
+    df = results_df.xs("test", level=2, axis=0)
+    if axes is None:
+        f, axes = plt.subplots(1, 2, figsize=(6, 3), clear=True, sharey=True)
+    for ax, label in zip(axes, ["Cue", "Reward"]):
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.set_ylabel("Acc.")
+        ax.set_xlabel(label)
+        ax.set_ylim(0, 1)
+        ax.set_xlim(-10, 10)
+        ax.axhline(chance, color="black", linestyle="--", alpha=0.5)
+        ax.axvline(0, color="black", linestyle="--", alpha=0.5)
+    # plot results
+    mean_acc = df.mean(axis=1)  # across folds
+    for ax, ind in zip(axes, ["cue_aligned", "reward_aligned"]):
+        time = mean_acc[ind].index.values.astype(float)
+        av = mean_acc[ind].values.astype(float)
+        ax.plot(time, av, color="deepskyblue")
