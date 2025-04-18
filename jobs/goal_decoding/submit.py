@@ -18,7 +18,7 @@ ALIGNMENTS = ["trial", "event"]
 # %% Functions
 
 
-def submit_all_jobs(decoder="logreg"):
+def submit_all_jobs(decoder="mlp_torch"):
     """ """
     for maze_name in MAZE_NAMES:
         for goal_set in GOAL_SETS:
@@ -29,8 +29,10 @@ def submit_all_jobs(decoder="logreg"):
     return print(f"Submitted all allocentric goal decoding jobs to HPC.")
 
 
-def get_SLURM_script(maze_name, goal_set, aligned_to, decoder, n_permutations=500, n_jobs=10):
-    """"""
+def get_SLURM_script(maze_name, goal_set, aligned_to, decoder, n_permutations=500, n_jobs=8):
+    """
+    Note can remove GPU if decoder!="mlp_torch"
+    """
     exp_name = f"{decoder}_{maze_name}_{goal_set}_{aligned_to}"
     script = f"""#!/bin/bash
 #SBATCH --job-name={exp_name}
@@ -38,6 +40,8 @@ def get_SLURM_script(maze_name, goal_set, aligned_to, decoder, n_permutations=50
 #SBATCH --error=jobs/goal_decoding/err/{exp_name}.err
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=12
+#SBATCH -p gpu
+#SBATCH --gres=gpu:1 
 #SBATCH --mem=128GB
 #SBATCH --time=72:00:00
 
