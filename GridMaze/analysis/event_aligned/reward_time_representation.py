@@ -56,61 +56,48 @@ def get_within_across_maze_RDM_comparison(plot=True):
     comparisons = []
     # get RDMs for each subject and maze
     for goal_subset in ["subset_1", "subset_2", "all"]:
-        subject2maze2RDM = {}
-        for subject_ID in SUBJECT_IDS:
-            maze2RDM = {}
-            for maze_name in MAZE_NAMES:
-                maze2RDM[maze_name] = get_RDM(subject_ID, maze_name, goal_subset, return_as="matrix")
-            subject2maze2RDM[subject_ID] = maze2RDM
-
-        # within maze comparisons
         for maze in MAZE_NAMES:
+            other_mazes = [m for m in MAZE_NAMES if m != maze]
             for subject in SUBJECT_IDS:
-                for other_subject in SUBJECT_IDS:
-                    if subject != other_subject:
-                        rdm1 = subject2maze2RDM[subject][maze]
-                        rdm2 = subject2maze2RDM[other_subject][maze]
-                        comparisons.append(
-                            {
-                                "goal_subset": goal_subset,
-                                "maze_1": maze,
-                                "maze_2": None,
-                                "subject_1": subject,
-                                "subject_2": other_subject,
-                                "condition": "within",
-                                "corr": _corr_RDMs(rdm1, rdm2),
-                            }
-                        )
-        # across maze comparisons
-        for maze1 in MAZE_NAMES:
-            for maze2 in MAZE_NAMES:
-                if maze1 != maze2:
-                    for subject in SUBJECT_IDS:
-                        rdm1 = subject2maze2RDM[subject][maze1]
-                        rdm2 = subject2maze2RDM[subject][maze2]
-                        comparisons.append(
-                            {
-                                "goal_subset": goal_subset,
-                                "maze_1": maze1,
-                                "maze_2": maze2,
-                                "subject_1": subject,
-                                "subject_2": None,
-                                "condition": "across",
-                                "corr": _corr_RDMs(rdm1, rdm2),
-                            }
-                        )
+                # within maze comparisons
+                other_subjects = [s for s in SUBJECT_IDS if s != subject]
+                rdm_subject_maze = get_RDM([subject], maze, goal_subset, return_as="matrix")
+                rdm_other_subjects = get_RDM(other_subjects, maze, goal_subset, return_as="matrix")
+                comparisons.append(
+                    {
+                        "goal_subset": goal_subset,
+                        "maze": maze,
+                        "subject": subject,
+                        "condition": "within",
+                        "other_maze": None,
+                        "corr": _corr_RDMs(rdm_subject_maze, rdm_other_subjects),
+                    }
+                )
+                # across maze comparisons
+                for other_maze in other_mazes:
+                    rdm_other_mazes = get_RDM(other_subjects, other_maze, goal_subset, return_as="matrix")
+                    comparisons.append(
+                        {
+                            "goal_subset": goal_subset,
+                            "maze": maze,
+                            "subject": subject,
+                            "condition": "across",
+                            "other_maze": other_maze,
+                            "corr": _corr_RDMs(rdm_subject_maze, rdm_other_mazes),
+                        }
+                    )
     comparisons_df = pd.DataFrame(comparisons)
     if plot:
         plot_RDM_comparisons(comparisons_df)
     return comparisons_df
 
 
-def get_RDM(subject, maze_name, goal_subset, return_as="df"):
+def get_RDM(subjects, maze_names, goal_subset, return_as="df"):
     """ """
-    sessions = get_sessions_for_analysis(subject, maze_name, goal_subset)
+    sessions = get_sessions_for_analysis(subjects, maze_names, goal_subset)
     sessions = [sessions] if not isinstance(sessions, list) else sessions
     reward_rates_df = pd.concat(
-        [get_reward_rates_df(s, window=(0, 0.5), include_multi_units=True) for s in sessions], axis=0
+        [get_reward_rates_df(s, window=(-0.5, 0.5), include_multi_units=False) for s in sessions], axis=0
     )  # [n_neuron-sessions, n_goals]
     RDM = reward_rates_df.corr(method="pearson")
     if return_as == "matrix":
@@ -143,10 +130,10 @@ def get_reward_rates_df(session, window=(0, 0.5), include_multi_units=True):
     return goal_rates_df  # [n_neurons, n_goals]
 
 
-def get_sessions_for_analysis(subject, maze_name, goal_subset):
+def get_sessions_for_analysis(subjects, maze_name, goal_subset):
     days_on_maze = "late" if goal_subset == "all" else "all"
     return gs.get_maze_sessions(
-        subject_IDs=[subject],
+        subject_IDs=subjects,
         maze_names=[maze_name],
         days_on_maze=days_on_maze,
         goal_subsets=[goal_subset],
