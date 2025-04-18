@@ -8,7 +8,6 @@ mazes, to highlight that maze structure dramatically effects neural representati
 import json
 import pandas as pd
 import numpy as np
-from . import allocentric_goal_decoding as agd
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import get_clusters as gc
 
