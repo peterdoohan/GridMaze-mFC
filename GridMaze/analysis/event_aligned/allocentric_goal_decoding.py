@@ -11,6 +11,7 @@ from scipy.ndimage import gaussian_filter1d
 from joblib import Parallel, delayed
 from sklearn.neural_network import MLPClassifier
 from GridMaze.analysis.event_aligned import mlp_utils as mu
+from statsmodels.stats.multitest import multipletests
 
 from ..core import get_sessions as gs
 from ..core import get_clusters as gc
@@ -32,13 +33,118 @@ RESULTS_DIR = RESULTS_PATH / "goal_coding"
 DECODER2KWARGS = {
     "logreg": {"inv_alpha": 0.01},  # hyperparameters optimsed with fn: run_hyperparameter_search
     "mlp": {"alpha": 1, "Nhid": (50,), "solver": "adam"},
-    "mlp_torch": {"alpha": 1e-6, "Nhid": (100, 50)},  # hyperparameters optimsed with fn: run_hyperparameter_search
+    "mlp_torch": {"alpha": 1e-2, "Nhid": (25, 25)},  # hyperparameters optimsed with fn: run_hyperparameter_search
 }
 
 WINDOW_SIZE = 0.2  # from HP search
 SMOOTH_SD = 4
 
-# %% Plotting results
+# %% Load permutation results
+
+
+def _load_permuted_results(
+    decoder="logreg",
+    maze_name="maze_1",
+    goal_subset="subset_1",
+    alignment="trial",
+    expected_permutations=500,
+):
+    """ """
+    perm_dir = RESULTS_DIR / "permutation_results" / alignment / decoder / maze_name / goal_subset
+    perm_files = list(perm_dir.glob("*.csv"))
+    # check that expected n permutations matches (i.e job has finished running)
+    if len(perm_files) != expected_permutations:
+        raise FileNotFoundError(f"Expected {expected_permutations} permutations, found {len(perm_files)}")
+    # load all permutations into df
+    accs = []
+    for i, f in enumerate(perm_files):
+        if alignment == "trial":
+            df = pd.read_csv(f, index_col=[0, 1])
+        else:
+            df = pd.read_csv(f, index_col=[0, 1, 2])
+        # ignore training accuracies
+        df = df.xs("test", level=-1, axis=0)
+        # mean acc across folds
+        accs.append(df.mean(1))
+    perm_df = pd.concat(accs, axis=1).T
+    return perm_df
+
+
+# %% Plotting functions
+
+
+def plot_trial_aligned_decoding_acc(perm_df, ax=None, chance=1 / 12):
+    """
+    perm_df: pd.DataFrame, shape =[n_permutations, n_timepoints]
+    """
+    # set up fig
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(5, 3), clear=True)
+    ax.spines["right"].set_visible(False)
+    ax.spines["top"].set_visible(False)
+    ax.set_ylabel("Acc.")
+    ax.set_xlabel("Time (s)")
+    ax.set_ylim(0, 1.0)
+    ax.set_xlim(-5, INTRA_TRIAL_INTERVAL_TIMES["ITI_end"] + 0.5)
+    ax.set_xticks(list(INTRA_TRIAL_INTERVAL_TIMES.values()))
+    ax.set_xticklabels(["cue", "reward", "erc", "end"])
+    for time in INTRA_TRIAL_INTERVAL_TIMES.values():
+        ax.axvline(time, color="black", linestyle="--", alpha=0.5)
+    ax.axhline(chance, color="black", linestyle="--", alpha=0.9)
+    # plot acc
+    time = perm_df.columns.values.astype(float)
+    mean_acc = perm_df.mean(axis=0)
+    ax.plot(time, mean_acc, color="purple", lw=2)
+    # plot error as 95% CIs
+    CIs = perm_df.quantile([0.025, 0.975], axis=0)
+    lower, upper = CIs.iloc[0].values, CIs.iloc[1].values
+    # smooth lower and upper for visualsiation
+    lower, upper = gaussian_filter1d(lower, 2), gaussian_filter1d(upper, 2)
+    ax.fill_between(time, lower, upper, color="purple", alpha=0.2)
+    # plot significance
+    timepoint_pvalues = 1 - perm_df.gt(chance).mean(0)
+    reject, pvals_corrected, _, _ = multipletests(timepoint_pvalues, alpha=0.05, method="hs", maxiter=1)
+    sig_timepoints = time[reject]
+    if len(sig_timepoints) > 1:
+        ax.scatter(sig_timepoints, np.ones(len(sig_timepoints)) * 0.98, marker="s", color="purple", s=5)
+
+
+def plot_event_aligned_decoding_acc(perm_df, axes=None, chance=1 / 12):
+    """ """
+    # set up fig
+    if axes is None:
+        f, axes = plt.subplots(1, 2, figsize=(6, 3), clear=True)
+    for ax, label in zip(axes, ["Cue", "Reward"]):
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.set_xlabel(label)
+        ax.set_ylim(0, 1)
+        ax.set_xlim(-10, 10)
+        ax.axhline(chance, color="black", linestyle="--", alpha=0.5)
+        ax.axvline(0, color="black", linestyle="--", alpha=0.5)
+    axes[0].set_ylabel("Decoding Acc.")
+    axes[1].spines["left"].set_visible(False)
+    axes[1].set_yticks([])
+    # plot acc
+    mean_acc = perm_df.mean(axis=0)
+    for ax, event in zip(axes, ["cue_aligned", "reward_aligned"]):
+        event_acc = mean_acc.loc[event]
+        event_time = event_acc.index.values.astype(float)
+        ax.plot(event_time, event_acc.values, color="purple", lw=2)
+        # plot error as 95% CIs
+        CIs = perm_df[event].quantile([0.025, 0.975], axis=0)
+        lower, upper = CIs.iloc[0].values, CIs.iloc[1].values
+        # smooth lower and upper for visualsiation
+        lower, upper = gaussian_filter1d(lower, 2), gaussian_filter1d(upper, 2)
+        ax.fill_between(event_time, lower, upper, color="purple", alpha=0.2)
+        # plot significance
+        timepoint_pvalues = 1 - perm_df[event].gt(chance).mean(0)
+        reject, pvals_corrected, _, _ = multipletests(timepoint_pvalues, alpha=0.05, method="hs", maxiter=1)
+        sig_timepoints = event_time[reject]
+        if len(sig_timepoints) > 1:
+            ax.scatter(sig_timepoints, np.ones(len(sig_timepoints)) * 0.98, marker="s", color="purple", s=5)
+
+
+# %% Non bootstrapped plotting functions
 
 
 def plot_trial_aligned_decoding_results(results_df, ax=None, sem=True, chance=1 / 12):
@@ -92,7 +198,7 @@ def plot_event_aligned_decoding_results(results_df, axes=None, chance=1 / 12):
 
 
 def run_bootstrapped_allocentric_goal_deocding(
-    maze_name, goal_subset, alignment="trial", decoder="logreg", n_permutations=8, n_jobs=4
+    maze_name, goal_subset, alignment="trial", decoder="mlp_torch", n_permutations=4, n_jobs=4
 ):
     """ """
     # set up somewhere to save results bc. this is going to take a while
@@ -164,8 +270,8 @@ def run_allocentric_goal_decoding(
     include_multi_units=True,
     decoder="logreg",  # or "mlp"
     decoder_kwargs={"inv_alpha": 0.01},  # {"alpha": 1, "Nhid": (50,), "solver": "adam"} for mlp
-    window_size=0.5,
-    smooth_SD=False,
+    window_size=0.2,
+    smooth_SD=4,
     plot=True,
 ):
     """ """
@@ -331,7 +437,7 @@ def _get_decoding_accurary(
                 hidden_layer_sizes=decoder_kwargs["Nhid"],
                 alpha=decoder_kwargs["alpha"],
                 max_epochs=500,
-                verbose=True,
+                verbose=False,
                 tol=1e-4,
             )
         else:
@@ -580,8 +686,8 @@ def run_hyperparameter_search(maze_name="maze_1", goal_subset="subset_1", classi
     )
     validation_folds_df = get_validation_folds_df(sessions, n_training_trial_sets=100, alignment="event")
     return_data = []
-    for window_size in [0.5]:  # [0.1, 0.2, 0.5]:
-        for smooth_SD in [False]:  # [False, 4, 8]:
+    for window_size in [0.2]:  # [0.1, 0.2, 0.5]:
+        for smooth_SD in [4]:  # [False, 4, 8]:
             activity_df = get_activity_df(
                 sessions, alignment="event", include_multi_units=True, window_size=window_size, smooth_SD=smooth_SD
             )
@@ -664,12 +770,9 @@ def run_hyperparameter_search(maze_name="maze_1", goal_subset="subset_1", classi
 
             if "mlp_torch" in classifiers:
                 mlp_torch_hp_search_results = []
-                for alpha in [1e-6]:
+                for alpha in [1e-2]:
                     for Nhid in [
-                        (
-                            100,
-                            50,
-                        )
+                        (25, 25),
                     ]:
                         results_df = _get_decoding_accurary(
                             activity_df,
