@@ -7,26 +7,35 @@ import os
 
 # %% Global Variables
 
+from GridMaze.paths import RESULTS_PATH
+
+PERMUTATIONS_DIR = RESULTS_PATH / "goal_coding" / "permutation_results"
+
 MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
 
-GOAL_SETS = ["subset_1", "subset_2", "all"]
-
-DECODERS = ["logreg"]  # mlp currently too slow ...
+GOAL_SETS = ["subset_1", "subset_2"]  # "all" (too slow to run over many permutations for now...)
 
 ALIGNMENTS = ["trial", "event"]
 
 # %% Functions
 
 
-def submit_all_jobs(decoder="mlp_torch"):
+def submit_all_jobs(decoder="logreg"):
     """ """
     for maze_name in MAZE_NAMES:
         for goal_set in GOAL_SETS:
             for aligned_to in ALIGNMENTS:
+                # check if all permutations have been run
+                if _permutations_complete(aligned_to, decoder, maze_name, goal_set):
+                    print(f"All permutations already run for {maze_name}_{goal_set}_{aligned_to}-{decoder}.")
+                    continue
+                else:
+                    print(f"Submitting {maze_name}_{goal_set}_{aligned_to}-{decoder} to cluster.")
+                # create slurm script
                 script_path = get_SLURM_script(maze_name, goal_set, aligned_to, decoder)
                 os.system(f"chmod +x {script_path}")
                 os.system(f"sbatch {script_path}")
-    return print(f"Submitted all allocentric goal decoding jobs to HPC.")
+    return
 
 
 def get_SLURM_script(maze_name, goal_set, aligned_to, decoder, n_permutations=500, n_jobs=8):
@@ -42,8 +51,8 @@ def get_SLURM_script(maze_name, goal_set, aligned_to, decoder, n_permutations=50
 #SBATCH --cpus-per-task=12
 #SBATCH -p gpu
 #SBATCH --gres=gpu:1 
-#SBATCH --mem=128GB
-#SBATCH --time=72:00:00
+#SBATCH --mem=64GB
+#SBATCH --time=48:00:00
 
 module load miniconda
 conda deactivate
@@ -57,3 +66,13 @@ python -c \"from GridMaze.analysis.event_aligned import allocentric_goal_decodin
     with open(script_path, "w") as f:
         f.write(script)
     return script_path
+
+
+def _permutations_complete(aligned_to, decoder, maze_name, goal_set, n_permutations=500):
+    """Check if all permutations have been run: retrun True, else False"""
+    results_dir = PERMUTATIONS_DIR / aligned_to / decoder / maze_name / goal_set
+    perm_files = list(results_dir.glob("*.csv"))
+    if len(perm_files) >= n_permutations:
+        return True
+    else:
+        return False

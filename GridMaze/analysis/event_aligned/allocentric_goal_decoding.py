@@ -30,6 +30,10 @@ with open(ANALYSIS_INFO_PATH / "intra_trial_interval_times.json", "r") as f:
 
 RESULTS_DIR = RESULTS_PATH / "goal_coding"
 
+MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
+
+GOAL_SETS = ["subset_1", "subset_2", "all"]
+
 DECODER2KWARGS = {
     "logreg": {"inv_alpha": 0.01},  # hyperparameters optimsed with fn: run_hyperparameter_search
     "mlp": {"alpha": 1, "Nhid": (50,), "solver": "adam"},
@@ -157,7 +161,7 @@ def run_bootstrapped_allocentric_goal_deocding(
     # check how many permutations have already been run
     existing_files = list(save_dir.glob("*.csv"))
     completed_permutations = len(existing_files)
-    remaining_permutations = (n_permutations - completed_permutations) - 1
+    remaining_permutations = n_permutations - completed_permutations
     # load sessions once
     subject2sessions = {}
     for subject in SUBJECT_IDS:
@@ -173,7 +177,7 @@ def run_bootstrapped_allocentric_goal_deocding(
         [session for subject in subjects for session in subject2sessions[subject]] for subjects in subject_perms
     ]
     # get save paths for each permutation
-    save_paths = [save_dir / f"perm_{i}.csv" for i in range(completed_permutations, remaining_permutations)]
+    save_paths = [save_dir / f"perm_{i}.csv" for i in range(completed_permutations, n_permutations)]
     Parallel(n_jobs=n_jobs)(
         delayed(_run_allocentric_goal_decoding)(
             session_perms[i],
@@ -184,7 +188,7 @@ def run_bootstrapped_allocentric_goal_deocding(
             smooth_SD=SMOOTH_SD,
             save_path=save_paths[i],
         )
-        for i in range(n_permutations)
+        for i in range(remaining_permutations)
     )
 
 
@@ -217,9 +221,9 @@ def _run_allocentric_goal_decoding(
 
 
 def run_allocentric_goal_decoding(
-    subject_IDs="all",
+    subject_IDs=["m2"],
     maze_name="maze_1",
-    goal_subset="subset_1",
+    goal_subset="all",
     alignment="trial",
     include_multi_units=True,
     decoder="logreg",  # or "mlp"
@@ -231,7 +235,7 @@ def run_allocentric_goal_decoding(
     """ """
     sessions = get_sessions_for_analysis(subject_IDs, maze_name, goal_subset, alignment)
     activity_df = get_activity_df(sessions, alignment, include_multi_units, window_size, smooth_SD)
-    validation_fold_df = get_validation_folds_df(sessions, n_training_trial_sets=100, alignment=alignment)
+    validation_fold_df = get_validation_folds_df(sessions, n_training_trial_sets=50, alignment=alignment)
     results_df = _get_decoding_accurary(activity_df, validation_fold_df, decoder, decoder_kwargs, verbose=True)
     if plot:
         if alignment == "event":
@@ -241,28 +245,33 @@ def run_allocentric_goal_decoding(
     return results_df
 
 
-def get_sessions_for_analysis(subject_IDs, maze_name, goal_subset, alignment):
+def get_sessions_for_analysis(subject_IDs, maze_name, goal_subset, alignment, verbose=False):
     """ """
     subject_IDs = SUBJECT_IDS if subject_IDs == "all" else subject_IDs
     data = ["event_aligned_rates_df", "trial_aligned_rates_df", "cluster_metrics"]
     sessions = []  # loop over subjects so we can add the same session twice when running bootstrapped permutation tests
+    days_on_maze = "late" if goal_subset == "all" else "all"
     for subject in subject_IDs:
         s = gs.get_maze_sessions(
             subject_IDs=[subject],
             maze_names=[maze_name],
-            days_on_maze="all",
+            days_on_maze=days_on_maze,
             goal_subsets=[goal_subset],
             with_data=data,
         )
         s = [s] if isinstance(s, gs.MazeSession) == 1 else s
         sessions.extend(s)
     # check sessions have enough trials (>=2) per goal for test-train split (cannot combine data across sessions)
+    keep_sessions = []
     for session in sessions:
         trials_per_goal = get_trials_per_goal(session, alignment)
         if trials_per_goal.apply(len).lt(2).any():
-            print(f"{session} has some goals have less than 2 valid trials")
-            sessions.remove(session)
-    return sessions
+            if verbose:
+                print(f"{session} has some goals have less than 2 valid trials")
+            continue
+        else:
+            keep_sessions.append(session)
+    return keep_sessions
 
 
 def get_activity_df(sessions, alignment="event", include_multi_units=True, window_size=0.2, smooth_SD=4):
@@ -497,11 +506,12 @@ def get_session_validation_folds_df(session, exp_max_trials_per_goal, n_training
         df = session.event_aligned_rates_df
     elif alignment == "trial":  # note some trials are missing in trial_aligned_rates_df bc/ erc after ITI
         df = session.trial_aligned_rates_df
-    trials2goal_df = df.loc[:, (df.columns.get_level_values(0).isin(["trial", "goal"]))]
-    trials_per_goal = trials2goal_df.dropna().groupby("goal")["trial"].apply(lambda x: np.unique(x))
+    # trials2goal_df = df.loc[:, (df.columns.get_level_values(0).isin(["trial", "goal"]))]
+    # trials_per_goal = trials2goal_df.dropna().groupby("goal")["trial"].apply(lambda x: np.unique(x))
+    trials_per_goal = get_trials_per_goal(session, alignment)
     max_trials_per_goal = np.max([len(t) for t in trials_per_goal])
     # goals must have 2 or more valid trials (enough for test_train split)
-    if trials_per_goal.apply(len).le(2).any():
+    if trials_per_goal.apply(len).lt(2).any():
         raise ValueError(f"{session} has some goals have less than 2 valid trials")
     # test-train splits
     fold_dfs = []
@@ -808,3 +818,44 @@ def plot_event_aligned_decoding_results(results_df, axes=None, chance=1 / 12):
         time = mean_acc[ind].index.values.astype(float)
         av = mean_acc[ind].values.astype(float)
         ax.plot(time, av, color="deepskyblue")
+
+
+# %% run subset=="all" seperately per subject
+
+
+def run_single_subject_decoding():
+    """
+    Run with GPU if running mlp_torch decoder
+    """
+    for alignment in ["trial", "event"]:
+        for decoder in ["logreg", "mlp_torch"]:
+            for maze in MAZE_NAMES:
+                for goal_set in GOAL_SETS:
+                    for subject in SUBJECT_IDS:
+                        save_path = (
+                            RESULTS_DIR
+                            / "single_subject_decoding"
+                            / alignment
+                            / decoder
+                            / maze
+                            / goal_set
+                            / f"{subject}.csv"
+                        )
+                        save_path.parent.mkdir(parents=True, exist_ok=True)
+                        if save_path.exists():
+                            continue
+                        print(f"Running {subject} {maze} {goal_set} {alignment} {decoder}")
+                        results_df = run_allocentric_goal_decoding(
+                            subject_IDs=[subject],
+                            maze_name=maze,
+                            goal_subset=goal_set,
+                            alignment=alignment,
+                            include_multi_units=True,
+                            decoder=decoder,
+                            decoder_kwargs=DECODER2KWARGS[decoder],
+                            window_size=WINDOW_SIZE,
+                            smooth_SD=SMOOTH_SD,
+                            plot=False,
+                        )
+                        results_df.to_csv(save_path)
+    return

@@ -22,7 +22,7 @@ session = gs.get_maze_sessions(
 cluster_unique_ID = "m2.2022-07-17.maze_cluster141"
 # %%
 
-# srun --nodes=1 --ntasks-per-node=1 --cpus-per-task=8 -p gpu --gres=gpu:1 --time=12:00:00 --mem=32G --pty bash -i
+# srun --nodes=1 --ntasks-per-node=1 --cpus-per-task=8 -p gpu --gres=gpu:1 --time=48:00:00 --mem=64G --pty bash -i
 # srun --nodes=1 --ntasks-per-node=1 --cpus-per-task=8  --time=48:00:00 --mem=64G --pty bash -i
 
 # might have to load modules first
