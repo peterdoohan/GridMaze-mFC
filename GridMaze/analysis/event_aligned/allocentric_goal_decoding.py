@@ -1,6 +1,7 @@
 """This module contains funtions to decoding navigational goals from time-aligned population activity"""
 
 # %% Imports
+from ensurepip import bootstrap
 import json
 import random
 from types import NotImplementedType
@@ -13,6 +14,7 @@ from joblib import Parallel, delayed
 from sklearn.neural_network import MLPClassifier
 from GridMaze.analysis.event_aligned import mlp_utils as mu
 from statsmodels.stats.multitest import multipletests
+import seaborn as sns
 
 from ..core import get_sessions as gs
 from ..core import get_clusters as gc
@@ -44,7 +46,113 @@ DECODER2KWARGS = {
 WINDOW_SIZE = 0.2  # from HP search
 SMOOTH_SD = 4
 
-# %% top level results plotting functions
+# %% Decoding heatmap summary plot
+
+
+def plot_goal_decoding_heatmap_summary(alignment="trial", decoder="logreg", ax=None, cmap="Greens"):
+    """ """
+    decoding_accs, sig_df, columns = [], [], []
+    for goal_subset in GOAL_SETS:
+        for maze_name in MAZE_NAMES:
+            # load results
+            try:
+                if goal_subset == "all":
+                    chance = 1 / 24
+                    df = _load_single_subject_results(decoder, maze_name, goal_subset, alignment)
+                else:  # subset_1 and subset_2
+                    chance = 1 / 12
+                    df = _load_permuted_results(decoder, maze_name, goal_subset, alignment)
+                # keep mean decoding acc
+                decoding_accs.append(df.mean(axis=0))
+                # keep timepoints significantly above chance
+                timepoint_pvalues = 1 - df.gt(chance).mean(0)
+                reject, pvals_corrected, _, _ = multipletests(timepoint_pvalues, alpha=0.05, method="hs", maxiter=1)
+                sig_df.append(pd.Series(reject, index=df.columns))
+                columns.append((goal_subset, maze_name))
+            except Exception:
+                print(f"Error loading results for: {goal_subset}, {maze_name}, {alignment}, {decoder}")
+    summary_df = pd.concat(decoding_accs, axis=1).T
+    summary_df.index = pd.MultiIndex.from_tuples(columns)
+    above_chance_df = pd.concat(sig_df, axis=1).T
+    above_chance_df.index = pd.MultiIndex.from_tuples(columns)
+    # plotting
+    if alignment == "trial":
+        _plot_trial_aligned_heatmap_summary(summary_df, above_chance_df, ax, cmap)
+    elif alignment == "event":
+        _plot_event_aligned_heatmap_summary(summary_df, above_chance_df, ax, cmap)
+
+
+def _plot_trial_aligned_heatmap_summary(summary_df, above_chance_df, ax=None, cmap="Greens"):
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(4, 2), clear=True)
+    sns.heatmap(
+        summary_df,
+        cmap=cmap,
+        vmin=0,
+        vmax=1,
+        ax=ax,
+        rasterized=True,
+        cbar_kws={"label": "Decoding Acc."},
+        mask=~above_chance_df,
+    )
+    event_times = list(INTRA_TRIAL_INTERVAL_TIMES.values())[:-1]
+    timepoints = [float(col) for col in summary_df.columns]
+    event_inds = [np.argmin(np.abs(np.array(timepoints) - time)) for time in event_times]
+    for ind in event_inds:
+        ax.axvline(ind, color="k", ls="--", alpha=0.5)
+    ax.set_xticks(event_inds)
+    ax.set_xticklabels(["Cue", "Reward", "ITI"], rotation=0)
+    for spine in ax.spines.values():
+        spine.set_visible(True)
+        spine.set_edgecolor("black")
+        spine.set_linewidth(0.5)
+    ax.set_ylabel("Dataset")
+
+
+def _plot_event_aligned_heatmap_summary(summary_df, above_chance_df, axes=None, cmap="Greens"):
+    """ """
+    if axes is None:
+        f, axes = plt.subplots(1, 2, figsize=(4, 2), clear=True, width_ratios=[0.8, 1])
+    for ax, event in zip(axes, ["cue_aligned", "reward_aligned"]):
+        df = summary_df[event]
+        mask = ~above_chance_df[event]
+        cbar = True if event == "reward_aligned" else False
+        sns.heatmap(
+            df,
+            cmap=cmap,
+            vmin=0,
+            vmax=1,
+            ax=ax,
+            rasterized=True,
+            cbar=cbar,
+            cbar_kws={"label": "Decoding Acc."},
+            mask=mask,
+        )
+        times = df.columns.values.astype(float)
+        zero_point = np.argmin(np.abs(times))
+        ax.axvline(zero_point, color="k", ls="--", alpha=0.5)
+        tick_labels = [-5, 0, 5]
+        tick_positions = [np.argmin(np.abs(times - tick)) for tick in tick_labels]
+        ax.set_xticks(tick_positions)
+        ax.set_xticklabels(tick_labels, rotation=0)
+        ax.set_xlabel(f"{event} time (s)")
+        if event == "reward_aligned":
+            ax.set_yticks([])
+            ax.set_yticklabels([])
+            ax.set_ylabel("")
+            for spine in ax.spines.values():
+                spine.set_visible(True)
+                spine.set_edgecolor("black")
+                spine.set_linewidth(0.5)
+        else:
+            ax.set_ylabel("Dataset")
+            for spine in ax.spines.values():
+                spine.set_visible(True)
+                spine.set_edgecolor("black")
+                spine.set_linewidth(0.5)
+
+
+#  %% top level results plotting functions
 
 
 def plot_goal_decoding(
