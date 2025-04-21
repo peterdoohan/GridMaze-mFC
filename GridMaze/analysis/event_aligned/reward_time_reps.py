@@ -35,18 +35,40 @@ with open(ANALYSIS_INFO_PATH / "intra_trial_interval_times.json", "r") as f:
 
 
 def plot_RDM_comparisons(comparisons_df, ax=None):
-    """ """
     if ax is None:
-        fig, ax = plt.subplots(figsize=(4, 3))
+        fig, ax = plt.subplots(figsize=(2, 2))
     ax.spines[["top", "right"]].set_visible(False)
-    ax.set_xlabel("RDM comparison")
-    ax.set_ylabel("Correlation")
-    ax.set_ylim(0, 0.6)
+    ax.set_xlabel("Mazes")
+    ax.set_ylabel("Rep. Similarity Corr.")
+    ax.set_ylim(-0.1, 0.6)
+    ax.axhline(0, color="k", linestyle="--", lw=0.5)
     df = comparisons_df.groupby(["subject", "condition"])["corr"].mean().reset_index()
-    sns.pointplot(data=df, x="condition", y="corr", hue="subject", ax=ax)
+    for _, grp in df.groupby("subject"):
+        # we know each subject has exactly two rows, one 'within' and one 'across'
+        y = grp.set_index("condition").loc[["within", "across"], "corr"].values
+        ax.plot(
+            ["within", "across"],
+            y,
+            color="grey",
+            linewidth=2,
+            zorder=1,
+            alpha=0.5,
+        )
+    sns.scatterplot(
+        data=df,
+        x="condition",
+        y="corr",
+        ax=ax,
+        hue="condition",
+        palette={"within": "purple", "across": "grey"},
+        legend=False,
+        zorder=2,
+        s=100,
+    )
+    ax.margins(x=0.4)
 
 
-def get_within_across_maze_RDM_comparison(
+def get_within_across_maze_RSM_comparison(
     maze_names=["maze_1", "maze_2"],  # rooms_maze
     alignment="event",
     window=(-0.25, 0.25),
@@ -58,7 +80,7 @@ def get_within_across_maze_RDM_comparison(
     Main analysis function
     """
 
-    def _corr_RDMs(RDM1, RDM2):
+    def _corr_RSMs(RDM1, RDM2):
         """Assumes array inputs"""
         # make sure RDMs are the same size
         assert RDM1.shape == RDM2.shape
@@ -108,13 +130,13 @@ def get_within_across_maze_RDM_comparison(
                 for maze in maze_names:
                     other_mazes = [m for m in maze_names if m != maze]
                     # within maze comparisons
-                    rdm_subject_maze = get_RDM(
+                    rdm_subject_maze = get_RSM(
                         _combine_sessions(preloaded_sessions, [subject], maze, goal_subset),
                         alignment,
                         window,
                         return_as="matrix",
                     )
-                    rdm_other_subjects_same_maze = get_RDM(
+                    rdm_other_subjects_same_maze = get_RSM(
                         _combine_sessions(preloaded_sessions, other_subjects, maze, goal_subset),
                         alignment,
                         window,
@@ -127,12 +149,12 @@ def get_within_across_maze_RDM_comparison(
                             "subject": subject,
                             "condition": "within",
                             "other_maze": None,
-                            "corr": _corr_RDMs(rdm_subject_maze, rdm_other_subjects_same_maze),
+                            "corr": _corr_RSMs(rdm_subject_maze, rdm_other_subjects_same_maze),
                         }
                     )
                     # across maze comparisons
                     for other_maze in other_mazes:
-                        rdm_other_subjects_other_maze = get_RDM(
+                        rdm_other_subjects_other_maze = get_RSM(
                             _combine_sessions(preloaded_sessions, other_subjects, other_maze, goal_subset),
                             return_as="matrix",
                         )
@@ -143,7 +165,7 @@ def get_within_across_maze_RDM_comparison(
                                 "subject": subject,
                                 "condition": "across",
                                 "other_maze": other_maze,
-                                "corr": _corr_RDMs(rdm_subject_maze, rdm_other_subjects_other_maze),
+                                "corr": _corr_RSMs(rdm_subject_maze, rdm_other_subjects_other_maze),
                             }
                         )
         comparisons_df = pd.DataFrame(comparisons)
@@ -155,7 +177,7 @@ def get_within_across_maze_RDM_comparison(
     return comparisons_df
 
 
-def get_RDM(sessions, alignment="event", window=(-0.25, 0.25), return_as="matrix"):
+def get_RSM(sessions, alignment="event", window=(-0.25, 0.25), return_as="matrix"):
     """
     Note input session should be of the same maze and goal subset
     """

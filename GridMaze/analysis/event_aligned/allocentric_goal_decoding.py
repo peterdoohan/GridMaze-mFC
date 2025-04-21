@@ -163,7 +163,7 @@ def _plot_trial_aligned_decoding_acc(
     ax=None,
     chance=1 / 12,
     color="purple",
-    sig_color="silver",
+    sig_color="orchid",
 ):
     """
     perm_df: pd.DataFrame, shape =[n_permutations, n_timepoints]
@@ -195,10 +195,16 @@ def _plot_trial_aligned_decoding_acc(
     reject, pvals_corrected, _, _ = multipletests(timepoint_pvalues, alpha=0.05, method="hs", maxiter=1)
     sig_timepoints = time[reject]
     if len(sig_timepoints) > 1:
-        ax.scatter(sig_timepoints, np.ones(len(sig_timepoints)) * 0.98, marker="s", color=sig_color, s=5)
+        ax.scatter(sig_timepoints, np.ones(len(sig_timepoints)) * 1.00, marker="s", color=sig_color, s=5)
 
 
-def _plot_event_aligned_decoding_acc(perm_df, axes=None, chance=1 / 12, color="purple", sig_color="silver"):
+def _plot_event_aligned_decoding_acc(
+    perm_df,
+    axes=None,
+    chance=1 / 12,
+    color="purple",
+    sig_color="orchid",
+):
     """ """
     # set up fig
     if axes is None:
@@ -228,7 +234,7 @@ def _plot_event_aligned_decoding_acc(perm_df, axes=None, chance=1 / 12, color="p
         reject, pvals_corrected, _, _ = multipletests(timepoint_pvalues, alpha=0.05, method="hs", maxiter=1)
         sig_timepoints = event_time[reject]
         if len(sig_timepoints) > 1:
-            ax.scatter(sig_timepoints, np.ones(len(sig_timepoints)) * 0.98, marker="s", color=sig_color, s=5)
+            ax.scatter(sig_timepoints, np.ones(len(sig_timepoints)) * 1.00, marker="s", color=sig_color, s=5)
 
 
 # %% run bootstrapped permutation tests
@@ -313,7 +319,7 @@ def run_allocentric_goal_decoding(
     decoder_kwargs={"inv_alpha": 0.01},  # {"alpha": 1, "Nhid": (50,), "solver": "adam"} for mlp
     window_size=0.2,
     smooth_SD=4,
-    plot=True,
+    plot=False,
 ):
     """ """
     sessions = get_sessions_for_analysis(subject_IDs, maze_name, goal_subset, alignment)
