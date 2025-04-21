@@ -234,6 +234,8 @@ def run_allocentric_goal_decoding(
 ):
     """ """
     sessions = get_sessions_for_analysis(subject_IDs, maze_name, goal_subset, alignment)
+    if len(sessions) == 0:
+        return print(f"No valid sessions found for specified input: {subject_IDs}, {maze_name}, {goal_subset}")
     activity_df = get_activity_df(sessions, alignment, include_multi_units, window_size, smooth_SD)
     validation_fold_df = get_validation_folds_df(sessions, n_training_trial_sets=50, alignment=alignment)
     results_df = _get_decoding_accurary(activity_df, validation_fold_df, decoder, decoder_kwargs, verbose=True)
@@ -823,39 +825,41 @@ def plot_event_aligned_decoding_results(results_df, axes=None, chance=1 / 12):
 # %% run subset=="all" seperately per subject
 
 
-def run_single_subject_decoding():
+def run_single_subject_decoding(decoder="logreg"):
     """
     Run with GPU if running mlp_torch decoder
     """
     for alignment in ["trial", "event"]:
-        for decoder in ["logreg", "mlp_torch"]:
-            for maze in MAZE_NAMES:
-                for goal_set in GOAL_SETS:
-                    for subject in SUBJECT_IDS:
-                        save_path = (
-                            RESULTS_DIR
-                            / "single_subject_decoding"
-                            / alignment
-                            / decoder
-                            / maze
-                            / goal_set
-                            / f"{subject}.csv"
-                        )
-                        save_path.parent.mkdir(parents=True, exist_ok=True)
-                        if save_path.exists():
-                            continue
-                        print(f"Running {subject} {maze} {goal_set} {alignment} {decoder}")
-                        results_df = run_allocentric_goal_decoding(
-                            subject_IDs=[subject],
-                            maze_name=maze,
-                            goal_subset=goal_set,
-                            alignment=alignment,
-                            include_multi_units=True,
-                            decoder=decoder,
-                            decoder_kwargs=DECODER2KWARGS[decoder],
-                            window_size=WINDOW_SIZE,
-                            smooth_SD=SMOOTH_SD,
-                            plot=False,
-                        )
+        for maze in MAZE_NAMES:
+            for goal_set in GOAL_SETS:
+                for subject in SUBJECT_IDS:
+                    save_path = (
+                        RESULTS_DIR
+                        / "single_subject_decoding"
+                        / alignment
+                        / decoder
+                        / maze
+                        / goal_set
+                        / f"{subject}.csv"
+                    )
+                    save_path.parent.mkdir(parents=True, exist_ok=True)
+                    if save_path.exists():
+                        continue
+                    print(f"Running {subject} {maze} {goal_set} {alignment} {decoder}")
+                    results_df = run_allocentric_goal_decoding(
+                        subject_IDs=[subject],
+                        maze_name=maze,
+                        goal_subset=goal_set,
+                        alignment=alignment,
+                        include_multi_units=True,
+                        decoder=decoder,
+                        decoder_kwargs=DECODER2KWARGS[decoder],
+                        window_size=WINDOW_SIZE,
+                        smooth_SD=SMOOTH_SD,
+                        plot=False,
+                    )
+                    if results_df is None:
+                        continue  # no valid sessions fn returns None
+                    else:
                         results_df.to_csv(save_path)
     return
