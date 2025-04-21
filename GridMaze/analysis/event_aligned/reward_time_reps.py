@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib import pyplot as plt
+import statsmodels.stats.weightstats as smw
 
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import get_clusters as gc
@@ -34,14 +35,14 @@ with open(ANALYSIS_INFO_PATH / "intra_trial_interval_times.json", "r") as f:
 # %% Functions
 
 
-def plot_RDM_comparisons(comparisons_df, ax=None):
+def plot_RDM_comparisons(comparisons_df, ax=None, color="purple", ymax=0.6, print_stats=False):
     if ax is None:
         fig, ax = plt.subplots(figsize=(2, 2))
     ax.spines[["top", "right"]].set_visible(False)
     ax.set_xlabel("Mazes")
     ax.set_ylabel("Rep. Similarity Corr.")
-    ax.set_ylim(-0.1, 0.6)
-    ax.axhline(0, color="k", linestyle="--", lw=0.5)
+    ax.set_ylim(-0.1, ymax)
+    ax.axhline(0, color="k", linestyle="--", alpha=0.5)
     df = comparisons_df.groupby(["subject", "condition"])["corr"].mean().reset_index()
     for _, grp in df.groupby("subject"):
         # we know each subject has exactly two rows, one 'within' and one 'across'
@@ -60,12 +61,22 @@ def plot_RDM_comparisons(comparisons_df, ax=None):
         y="corr",
         ax=ax,
         hue="condition",
-        palette={"within": "purple", "across": "grey"},
+        palette={"within": color, "across": "grey"},
         legend=False,
         zorder=2,
-        s=100,
+        s=150,
     )
     ax.margins(x=0.4)
+    # print stats
+    if print_stats:
+        pivot_df = df.pivot(index="subject", columns="condition", values="corr")
+        diff = pivot_df["within"] - pivot_df["across"]
+        # Perform a one-sample t-test on the differences
+        descr = smw.DescrStatsW(diff)
+        t_stat, p_value, dfree = descr.ttest_mean(0)
+        print(f"T-statistic: {t_stat:.4f}")
+        print(f"P-value: {p_value:.4f}")
+        print(f"Degrees of freedom: {int(dfree)}")
 
 
 def get_within_across_maze_RSM_comparison(
@@ -156,6 +167,8 @@ def get_within_across_maze_RSM_comparison(
                     for other_maze in other_mazes:
                         rdm_other_subjects_other_maze = get_RSM(
                             _combine_sessions(preloaded_sessions, other_subjects, other_maze, goal_subset),
+                            alignment,
+                            window,
                             return_as="matrix",
                         )
                         comparisons.append(
@@ -211,6 +224,7 @@ def get_reward_rates_df(session, alignment="event", window=(-0.25, 0.25)):
         windowed_rates = _rates[_rates.columns[(_rates.columns >= window[0]) & (_rates.columns <= window[1])]]
         df = aligned_rates_df.drop(columns="firing_rate", level=0).droplevel([1, 2], axis=1)
     else:  # alignment = "trial"
+        _rates = aligned_rates_df.firing_rate
         r_time = INTRA_TRIAL_INTERVAL_TIMES["reward"]
         windowed_rates = _rates[  # get rates over just reward consumption period
             _rates.columns[(_rates.columns >= r_time + window[0]) & (_rates.columns <= (r_time + window[1]))]

@@ -136,28 +136,33 @@ def get_delta_dtg_df(window_length=5, smooth_SD=5):
 
 
 def plot_cross_subject_rate_of_change_of_distance_to_goal(
-    ax=None, plot_single_subjects=False, window_length=5, smooth_SD=5
+    ax=None,
+    plot_single_subjects=False,
+    window_length=5,
+    smooth_SD=5,
+    color="rosybrown",
 ):
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(5, 5), clear=True)
+    ax.spines[["top", "right"]].set_visible(False)
+
     ddtg_df = get_delta_dtg_df(window_length=window_length, smooth_SD=smooth_SD)
     av_dD_dt = ddtg_df.mean(axis=0)
     sem_dD_dt = ddtg_df.sem(axis=0)
     time = ddtg_df.columns.values.astype(float)
     # plot figure
-    if ax is None:
-        f, ax = plt.subplots(1, 1, figsize=(5, 5), clear=True)
     if plot_single_subjects:
         for s in SUBJECT_IDS:
             d = ddtg_df.loc[s].values
-            ax.plot(time, d, color="yellowgreen", lw=0.5, alpha=0.5)
-    ax.plot(time, av_dD_dt, color="darkolivegreen", lw=2)
+            ax.plot(time, d, color=color, lw=0.5, alpha=0.5)
+    ax.plot(time, av_dD_dt, color=color, lw=2)
     ax.fill_between(
         time,
         av_dD_dt - sem_dD_dt,
         av_dD_dt + sem_dD_dt,
-        color="darkolivegreen",
+        color=color,
         alpha=0.3,
     )
-    ax.axvline(0, color="silver", linestyle="--")
-    ax.set_xlabel("Cue-aligned Time (s)")
-    ax.set_ylabel("Rate of Change of Geodesic Distance to Goal (m/s)")
-    f.tight_layout()
+    ax.axvline(0, color="black", linestyle="--", alpha=0.5)
+    ax.set_xlabel("Cue (s)")
+    ax.set_ylabel("Δ Dist. to goal \n (m/s)")

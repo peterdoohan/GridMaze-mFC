@@ -48,7 +48,14 @@ SMOOTH_SD = 4
 
 
 def plot_goal_decoding(
-    datasets=[("maze_1", "subset_1")], alignment="trial", decoder="logreg", bootstrap_method="input", ax=None
+    datasets=[("maze_1", "subset_1")],
+    alignment="trial",
+    decoder="logreg",
+    bootstrap_method="input",
+    color="purple",
+    sig_color="orchid",
+    sig_pos=1.0,
+    ax=None,
 ):
     """
     Plots allocentric goal decoding results
@@ -77,9 +84,13 @@ def plot_goal_decoding(
     # plot results
     chance = 1 / 24 if goal_subset == "all" else 1 / 12
     if alignment == "trial":
-        _plot_trial_aligned_decoding_acc(perm_dfs, ax=ax, chance=chance)
+        _plot_trial_aligned_decoding_acc(
+            perm_dfs, ax=ax, chance=chance, color=color, sig_color=sig_color, sig_pos=sig_pos
+        )
     elif alignment == "event":
-        _plot_event_aligned_decoding_acc(perm_dfs, axes=ax, chance=chance)
+        _plot_event_aligned_decoding_acc(
+            perm_dfs, axes=ax, chance=chance, color=color, sig_color=sig_color, sig_pos=sig_pos
+        )
 
 
 def _load_permuted_results(
@@ -87,7 +98,7 @@ def _load_permuted_results(
     maze_name,
     goal_subset,
     alignment,
-    expected_permutations=500,
+    min_permutations=490,
 ):
     """
     Can take a bit to load all permutations from disk
@@ -95,8 +106,8 @@ def _load_permuted_results(
     perm_dir = RESULTS_DIR / "permutation_results" / alignment / decoder / maze_name / goal_subset
     perm_files = list(perm_dir.glob("*.csv"))
     # check that expected n permutations matches (i.e job has finished running)
-    if len(perm_files) != expected_permutations:
-        raise FileNotFoundError(f"Expected {expected_permutations} permutations, found {len(perm_files)}")
+    if len(perm_files) < min_permutations:
+        raise FileNotFoundError(f"Expected {min_permutations} permutations, found {len(perm_files)}")
     # load all permutations into df
     accs = []
     for i, f in enumerate(perm_files):
@@ -164,6 +175,7 @@ def _plot_trial_aligned_decoding_acc(
     chance=1 / 12,
     color="purple",
     sig_color="orchid",
+    sig_pos=1.00,
 ):
     """
     perm_df: pd.DataFrame, shape =[n_permutations, n_timepoints]
@@ -181,7 +193,7 @@ def _plot_trial_aligned_decoding_acc(
     ax.set_xticklabels(["cue", "reward", "erc", "end"])
     for time in INTRA_TRIAL_INTERVAL_TIMES.values():
         ax.axvline(time, color="black", linestyle="--", alpha=0.5)
-    ax.axhline(chance, color="black", linestyle="--", alpha=0.9)
+    ax.axhline(chance, color="black", linestyle="--", alpha=0.5)
     # plot acc
     time = perm_df.columns.values.astype(float)
     mean_acc = perm_df.mean(axis=0)
@@ -195,7 +207,7 @@ def _plot_trial_aligned_decoding_acc(
     reject, pvals_corrected, _, _ = multipletests(timepoint_pvalues, alpha=0.05, method="hs", maxiter=1)
     sig_timepoints = time[reject]
     if len(sig_timepoints) > 1:
-        ax.scatter(sig_timepoints, np.ones(len(sig_timepoints)) * 1.00, marker="s", color=sig_color, s=5)
+        ax.scatter(sig_timepoints, np.ones(len(sig_timepoints)) * sig_pos, marker="s", color=sig_color, s=5)
 
 
 def _plot_event_aligned_decoding_acc(
@@ -204,6 +216,7 @@ def _plot_event_aligned_decoding_acc(
     chance=1 / 12,
     color="purple",
     sig_color="orchid",
+    sig_pos=1.00,
 ):
     """ """
     # set up fig
@@ -234,7 +247,7 @@ def _plot_event_aligned_decoding_acc(
         reject, pvals_corrected, _, _ = multipletests(timepoint_pvalues, alpha=0.05, method="hs", maxiter=1)
         sig_timepoints = event_time[reject]
         if len(sig_timepoints) > 1:
-            ax.scatter(sig_timepoints, np.ones(len(sig_timepoints)) * 1.00, marker="s", color=sig_color, s=5)
+            ax.scatter(sig_timepoints, np.ones(len(sig_timepoints)) * sig_pos, marker="s", color=sig_color, s=5)
 
 
 # %% run bootstrapped permutation tests

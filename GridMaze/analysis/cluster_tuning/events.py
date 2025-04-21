@@ -49,7 +49,7 @@ def plot_trial_aligned_rates(trial_aligned_rates, goal_stratified=False, smooth_
     ax.set_xticks(list(INTRA_TRIAL_INTERVAL_TIMES.values()))
     ax.set_xticklabels(["cue", "reward", "erc", "end"])
     for time in list(INTRA_TRIAL_INTERVAL_TIMES.values())[:-1]:
-        ax.axvline(time, color="black", linestyle="--", alpha=0.2)
+        ax.axvline(time, color="black", linestyle="--", alpha=0.5)
     if not goal_stratified:
         aligned_rates_mean = trial_aligned_rates.firing_rate.mean(axis=0)
         aligned_rates_sem = trial_aligned_rates.firing_rate.sem(axis=0)
@@ -80,7 +80,7 @@ def _plot_trial_aligned_rates(mean, sem, time, ax, color):
         ax.plot(time, mean, color=color)
         ax.fill_between(time, mean - sem, mean + sem, color=color, alpha=0.2)
     else:
-        ax.plot(time, mean, color=color, alpha=0.8, lw=2)
+        ax.plot(time, mean, color=color, alpha=0.8, lw=1.5)
     return
 
 
