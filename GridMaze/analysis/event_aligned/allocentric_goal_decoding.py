@@ -3,6 +3,7 @@
 # %% Imports
 import json
 import random
+from types import NotImplementedType
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -20,7 +21,7 @@ from ..core import get_clusters as gc
 
 RATES_SAMPLE_RATE = 0.04
 
-from ...paths import EXPERIMENT_INFO_PATH, ANALYSIS_INFO_PATH, RESULTS_PATH
+from GridMaze.paths import EXPERIMENT_INFO_PATH, ANALYSIS_INFO_PATH, RESULTS_PATH
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
@@ -43,17 +44,54 @@ DECODER2KWARGS = {
 WINDOW_SIZE = 0.2  # from HP search
 SMOOTH_SD = 4
 
-# %% Load permutation results
+# %% top level results plotting functions
+
+
+def plot_goal_decoding(
+    datasets=[("maze_1", "subset_1")], alignment="trial", decoder="logreg", bootstrap_method="input", ax=None
+):
+    """
+    Plots allocentric goal decoding results
+    Inputs:
+        datasets: list of tuples, each tuple contains maze_name and goal_subset.
+                  if multiple maze-goal pairs are provided, results will be averaged across datasets
+        alignment: str, either "trial" or "event"
+        decoder: str, either "logreg" or "mlp"
+        bootstrap_method: str, either "input" or "output"
+                if "input", bootstraps over subjects input to the full analysis (loaded from permtuted results)
+                if "output", bootstraps over the output of the analysis (loaded from single subject results)
+    """
+    perm_dfs = []
+    for dataset in datasets:
+        maze_name, goal_subset = dataset
+        if goal_subset == "all":
+            assert bootstrap_method == "output", "results for goal_set 'all' only generated for single subject decoding"
+        if bootstrap_method == "input":
+            perm_dfs.append(_load_permuted_results(decoder, maze_name, goal_subset, alignment))
+        elif bootstrap_method == "output":
+            perm_dfs.append(_load_single_subject_results(decoder, maze_name, goal_subset, alignment))
+        else:
+            NotImplementedError
+    # combine data across datasets
+    perm_dfs = pd.concat(perm_dfs, axis=0).reset_index(drop=True)
+    # plot results
+    chance = 1 / 24 if goal_subset == "all" else 1 / 12
+    if alignment == "trial":
+        _plot_trial_aligned_decoding_acc(perm_dfs, ax=ax, chance=chance)
+    elif alignment == "event":
+        _plot_event_aligned_decoding_acc(perm_dfs, axes=ax, chance=chance)
 
 
 def _load_permuted_results(
-    decoder="logreg",
-    maze_name="maze_1",
-    goal_subset="subset_1",
-    alignment="trial",
+    decoder,
+    maze_name,
+    goal_subset,
+    alignment,
     expected_permutations=500,
 ):
-    """ """
+    """
+    Can take a bit to load all permutations from disk
+    """
     perm_dir = RESULTS_DIR / "permutation_results" / alignment / decoder / maze_name / goal_subset
     perm_files = list(perm_dir.glob("*.csv"))
     # check that expected n permutations matches (i.e job has finished running)
@@ -74,10 +112,59 @@ def _load_permuted_results(
     return perm_df
 
 
-# %% Plotting functions
+def _load_single_subject_results(
+    decoder,
+    maze_name,
+    goal_subset,
+    alignment,
+    verbose=True,
+    n_bootstraps=1000,
+):
+    """
+    Loads the results of all single subject decoding across folds, averages across folds and
+    bootstraps over subjects to get a distribution of accuracies for each timepoint.
+    """
+    subject_IDs = SUBJECT_IDS
+    results_dir = RESULTS_DIR / "single_subject_decoding" / alignment / decoder / maze_name / goal_subset
+    results_files = list(results_dir.glob("*.csv"))
+    if verbose:  # missing results for a few subjects in some instances where no valid sessions
+        subjects = set([r.name.split(".")[0] for r in results_files])
+        if subjects != set(SUBJECT_IDS):
+            print(f"Missing results for some subjects: {set(SUBJECT_IDS) - subjects}")
+            subject_IDs = list(subjects)
+    subject2acc = {}
+    for f in results_files:
+        subject = f.name.split(".")[0]
+        if alignment == "trial":
+            df = pd.read_csv(f, index_col=[0, 1])
+        else:
+            df = pd.read_csv(f, index_col=[0, 1, 2])
+        # ignore training accuracies
+        df = df.xs("test", level=-1, axis=0)
+        # mean acc across folds
+        subject2acc[subject] = df.mean(1)
+    # bootstrap resample av subject accuracies
+    rng = np.random.default_rng()
+    subject_perms = rng.choice(
+        subject_IDs,
+        size=(n_bootstraps, len(subject_IDs)),
+        replace=True,
+    )
+    accs = []
+    for i in subject_perms:
+        resampled_accs = pd.concat([subject2acc[subject] for subject in i], axis=1)
+        accs.append(resampled_accs.mean(axis=1))
+    acc_df = pd.concat(accs, axis=1).T
+    return acc_df
 
 
-def plot_trial_aligned_decoding_acc(perm_df, ax=None, chance=1 / 12):
+def _plot_trial_aligned_decoding_acc(
+    perm_df,
+    ax=None,
+    chance=1 / 12,
+    color="purple",
+    sig_color="silver",
+):
     """
     perm_df: pd.DataFrame, shape =[n_permutations, n_timepoints]
     """
@@ -98,22 +185,20 @@ def plot_trial_aligned_decoding_acc(perm_df, ax=None, chance=1 / 12):
     # plot acc
     time = perm_df.columns.values.astype(float)
     mean_acc = perm_df.mean(axis=0)
-    ax.plot(time, mean_acc, color="purple", lw=2)
+    ax.plot(time, mean_acc, color=color, lw=2)
     # plot error as 95% CIs
     CIs = perm_df.quantile([0.025, 0.975], axis=0)
     lower, upper = CIs.iloc[0].values, CIs.iloc[1].values
-    # smooth lower and upper for visualsiation
-    lower, upper = gaussian_filter1d(lower, 2), gaussian_filter1d(upper, 2)
-    ax.fill_between(time, lower, upper, color="purple", alpha=0.2)
+    ax.fill_between(time, lower, upper, color=color, alpha=0.2)
     # plot significance
     timepoint_pvalues = 1 - perm_df.gt(chance).mean(0)
     reject, pvals_corrected, _, _ = multipletests(timepoint_pvalues, alpha=0.05, method="hs", maxiter=1)
     sig_timepoints = time[reject]
     if len(sig_timepoints) > 1:
-        ax.scatter(sig_timepoints, np.ones(len(sig_timepoints)) * 0.98, marker="s", color="purple", s=5)
+        ax.scatter(sig_timepoints, np.ones(len(sig_timepoints)) * 0.98, marker="s", color=sig_color, s=5)
 
 
-def plot_event_aligned_decoding_acc(perm_df, axes=None, chance=1 / 12):
+def _plot_event_aligned_decoding_acc(perm_df, axes=None, chance=1 / 12, color="purple", sig_color="silver"):
     """ """
     # set up fig
     if axes is None:
@@ -133,19 +218,17 @@ def plot_event_aligned_decoding_acc(perm_df, axes=None, chance=1 / 12):
     for ax, event in zip(axes, ["cue_aligned", "reward_aligned"]):
         event_acc = mean_acc.loc[event]
         event_time = event_acc.index.values.astype(float)
-        ax.plot(event_time, event_acc.values, color="purple", lw=2)
+        ax.plot(event_time, event_acc.values, color=color, lw=2)
         # plot error as 95% CIs
         CIs = perm_df[event].quantile([0.025, 0.975], axis=0)
         lower, upper = CIs.iloc[0].values, CIs.iloc[1].values
-        # smooth lower and upper for visualsiation
-        lower, upper = gaussian_filter1d(lower, 2), gaussian_filter1d(upper, 2)
-        ax.fill_between(event_time, lower, upper, color="purple", alpha=0.2)
+        ax.fill_between(event_time, lower, upper, color=color, alpha=0.2)
         # plot significance
         timepoint_pvalues = 1 - perm_df[event].gt(chance).mean(0)
         reject, pvals_corrected, _, _ = multipletests(timepoint_pvalues, alpha=0.05, method="hs", maxiter=1)
         sig_timepoints = event_time[reject]
         if len(sig_timepoints) > 1:
-            ax.scatter(sig_timepoints, np.ones(len(sig_timepoints)) * 0.98, marker="s", color="purple", s=5)
+            ax.scatter(sig_timepoints, np.ones(len(sig_timepoints)) * 0.98, marker="s", color=sig_color, s=5)
 
 
 # %% run bootstrapped permutation tests
