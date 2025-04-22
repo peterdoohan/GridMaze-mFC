@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from matplotlib import pyplot as plt
+from statsmodels.stats.multitest import multipletests
 
 
 from GridMaze.analysis.core import get_sessions as gs
@@ -29,7 +30,9 @@ FRAME_RATE = 60
 # %% Functions
 
 
-def plot_distance_aligned_decoding(results_df, ax=None, color="rosybrown"):
+def plot_distance_aligned_decoding(
+    results_df, ax=None, color="rosybrown", n_bootstraps=1000, ymax=0.45, plot_sig=False
+):
     """
     Plot chance substracted accuracy
     """
@@ -40,22 +43,49 @@ def plot_distance_aligned_decoding(results_df, ax=None, color="rosybrown"):
     ax.set_xlabel("Steps to goal")
     ax.set_ylabel("Decoding Acc. \n (chance subtracted)")
     ax.axhline(y=0, color="k", linestyle="--", alpha=0.5)
-    ax.set_ylim(-0.02, 0.4)
+    ax.set_ylim(-0.02, ymax)
     # normalise decoding acc to chance level on each session-step-fold
     results_df["norm_acc"] = results_df.test_acc - results_df.chance
     # get average decoding acc over steps_to_goal across subjects
-    df = results_df.groupby(["steps_to_goal", "subject_ID"]).norm_acc.mean().unstack().T
-    steps = df.columns.values
-    mean = df.mean(axis=0)
-    sem = df.sem(axis=0)
-    # plot
-    ax.plot(steps, mean, color=color, lw=2)
-    ax.fill_between(steps, mean - sem, mean + sem, color=color, alpha=0.2)
+    if n_bootstraps:
+        rng = np.random.default_rng()
+        subject_perms = rng.choice(
+            SUBJECT_IDS,
+            size=(n_bootstraps, len(SUBJECT_IDS)),
+            replace=True,
+        )
+        perm_accs = []
+        for i, p in enumerate(subject_perms):
+            df = pd.concat([results_df[results_df.subject_ID == s] for s in p], axis=0).reset_index(drop=True)
+            perm_accs.append(df.groupby("steps_to_goal").norm_acc.mean())
+        perm_df = pd.concat(perm_accs, axis=1).T.reset_index(drop=True)
+        lower_bound = perm_df.quantile(0.025, axis=0)
+        upper_bound = perm_df.quantile(0.975, axis=0)
+        mean = perm_df.mean(axis=0)
+        steps = perm_df.columns.values
+        # plot decoding acc with var
+        ax.plot(steps, mean, color=color, lw=2)
+        ax.fill_between(steps, lower_bound, upper_bound, color=color, alpha=0.2)
+        # calc above chance timepoints
+        if plot_sig:
+            step_pvalues = 1 - perm_df.gt(0).mean(0)
+            reject, pvals_corrected, _, _ = multipletests(step_pvalues, alpha=0.05, method="hs", maxiter=1)
+            sig_steps = steps[reject]
+            if len(sig_steps) > 1:
+                ax.scatter(sig_steps, np.ones(len(sig_steps)) * ymax, marker="s", color=color, s=5)
+
+    else:  # plot mean and sem across subjects
+        df = results_df.groupby(["steps_to_goal", "subject_ID"]).norm_acc.mean().unstack().T
+        steps = df.columns.values
+        mean = df.mean(axis=0)
+        sem = df.sem(axis=0)
+        # plot
+        ax.plot(steps, mean, color=color, lw=2)
+        ax.fill_between(steps, mean - sem, mean + sem, color=color, alpha=0.2)
     ax.set_xlim(0, steps.max())
-    return
 
 
-def test(maze_names=["maze_1", "maze_2"], goal_sets=["subset_1", "subset_2"], verbose=True):
+def distance_aligned_goal_decoding(maze_names=["maze_1", "maze_2"], goal_sets=["subset_1", "subset_2"], verbose=True):
     """"""
     results_dfs = []
     for subject_ID in SUBJECT_IDS:
@@ -65,7 +95,7 @@ def test(maze_names=["maze_1", "maze_2"], goal_sets=["subset_1", "subset_2"], ve
         for session in sessions:
             if verbose:
                 print(f"Decoding: {session.name}")
-            results_df = distance_aligned_goal_decoding(session)
+            results_df = get_session_distance_aligned_goal_decoding(session)
             results_df["subject_ID"] = subject_ID
             results_df["maze_name"] = session.maze_name
             results_df["goal_subset"] = session.goal_subset
@@ -97,7 +127,7 @@ def get_sessions_for_analysis(subject_IDs, maze_names, goal_subsets):
     return keep_sessions
 
 
-def distance_aligned_goal_decoding(session, max_steps_from_goal=30):
+def get_session_distance_aligned_goal_decoding(session, max_steps_from_goal=30):
     """ """
     input_df = get_session_input_data(
         session, resolution=0.2, include_multi_units=True, max_steps_to_goal=max_steps_from_goal
