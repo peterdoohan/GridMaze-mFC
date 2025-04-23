@@ -138,7 +138,7 @@ def get_session_distance_aligned_goal_decoding(session, max_steps_from_goal=30):
         valid_trials = steps_df.trial.unique()
         folds_df, chance = get_folds_df(session, valid_trials, return_chance=True)
         if folds_df.shape[0] < 2:
-            # only on valid goal, cannot run classifer
+            # only one valid goal, cannot run classifer
             continue
         folds = folds_df.columns.levels[0].unique()
         for fold in folds:
