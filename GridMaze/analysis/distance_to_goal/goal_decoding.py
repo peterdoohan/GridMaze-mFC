@@ -8,10 +8,11 @@ Eg, build separate decoders for neural activity 1, step from goal, 2 steps from 
 import json
 import numpy as np
 import pandas as pd
+import networkx as nx
 from sklearn.linear_model import LogisticRegression
 from matplotlib import pyplot as plt
+from scipy.stats import ttest_1samp
 from statsmodels.stats.multitest import multipletests
-import networkx as nx
 
 
 from GridMaze.analysis.core import get_sessions as gs
@@ -28,15 +29,13 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
 
 FRAME_RATE = 60
-# %% Functions
 
 
-def plot_distance_aligned_decoding(
-    results_df, ax=None, color="rosybrown", n_bootstraps=1000, ymax=0.45, plot_sig=False
-):
-    """
-    Plot chance substracted accuracy
-    """
+# %% results plotting functions
+
+
+def plot_distance_aligned_results(results_df, ax=None, color="rosybrown", sig_color="slategrey", ymax=0.45):
+    """ """
     # set up plot
     if ax is None:
         f, ax = plt.subplots(1, 1, figsize=(4, 3), clear=True)
@@ -45,49 +44,69 @@ def plot_distance_aligned_decoding(
     ax.set_ylabel("Decoding Acc. \n (chance subtracted)")
     ax.axhline(y=0, color="k", linestyle="--", alpha=0.5)
     ax.set_ylim(-0.02, ymax)
-    # normalise decoding acc to chance level on each session-step-fold
-    results_df["norm_acc"] = results_df.test_acc - results_df.chance
-    # get average decoding acc over steps_to_goal across subjects
-    if n_bootstraps:
-        rng = np.random.default_rng()
-        subject_perms = rng.choice(
-            SUBJECT_IDS,
-            size=(n_bootstraps, len(SUBJECT_IDS)),
-            replace=True,
-        )
-        perm_accs = []
-        for i, p in enumerate(subject_perms):
-            df = pd.concat([results_df[results_df.subject_ID == s] for s in p], axis=0).reset_index(drop=True)
-            perm_accs.append(df.groupby("steps_to_goal").norm_acc.mean())
-        perm_df = pd.concat(perm_accs, axis=1).T.reset_index(drop=True)
-        lower_bound = perm_df.quantile(0.025, axis=0)
-        upper_bound = perm_df.quantile(0.975, axis=0)
-        mean = perm_df.mean(axis=0)
-        steps = perm_df.columns.values
-        # plot decoding acc with var
-        ax.plot(steps, mean, color=color, lw=2)
-        ax.fill_between(steps, lower_bound, upper_bound, color=color, alpha=0.2)
-        # calc above chance timepoints
-        if plot_sig:
-            step_pvalues = 1 - perm_df.gt(0).mean(0)
-            reject, pvals_corrected, _, _ = multipletests(step_pvalues, alpha=0.05, method="hs", maxiter=1)
-            sig_steps = steps[reject]
-            if len(sig_steps) > 1:
-                ax.scatter(sig_steps, np.ones(len(sig_steps)) * ymax, marker="s", color=color, s=5)
-
-    else:  # plot mean and sem across subjects
-        df = results_df.groupby(["steps_to_goal", "subject_ID"]).norm_acc.mean().unstack().T
-        steps = df.columns.values
-        mean = df.mean(axis=0)
-        sem = df.sem(axis=0)
-        # plot
-        ax.plot(steps, mean, color=color, lw=2)
-        ax.fill_between(steps, mean - sem, mean + sem, color=color, alpha=0.2)
+    # average chance subtracted decoding acc over steps_to_goal across subjects
+    df = results_df.groupby(["steps_to_goal", "subject_ID"]).norm_acc.mean().unstack().T
+    steps = df.columns.values
+    mean = df.mean(axis=0)
+    sem = df.sem(axis=0)
+    # plot
+    ax.plot(steps, mean, color=color, lw=2)
+    ax.fill_between(steps, mean - sem, mean + sem, color=color, alpha=0.2)
     ax.set_xlim(0, steps.max())
+    # run stats
+    _plot_p_values(ax, df, ymax, sig_color)
 
 
-def distance_aligned_goal_decoding(maze_names=["maze_1", "maze_2"], goal_sets=["subset_1", "subset_2"], verbose=True):
+def plot_event_aligned_results(results_df, event, ax=None, color="rosybrown", sig_color="slategrey", ymax=0.55):
+    """ """
+    # set up plot
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(4, 3), clear=True)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_xlabel(f"{event} (s)")
+    ax.set_ylabel("Decoding Acc. \n (chance subtracted)")
+    ax.axhline(y=0, color="k", linestyle="--", alpha=0.5)
+    ax.axvline(x=0, color="k", linestyle="--", alpha=0.5)
+    ax.set_ylim(-0.02, ymax)
+    # average chance subtracted decoding acc over steps_to_goal across subjects
+    df = results_df.groupby(["timepoint", "subject_ID"]).norm_acc.mean().unstack().T
+    timepoints = df.columns.values
+    mean = df.mean(axis=0)
+    sem = df.sem(axis=0)
+    # plot
+    ax.plot(timepoints, mean, color=color, lw=2)
+    ax.fill_between(timepoints, mean - sem, mean + sem, color=color, alpha=0.2)
+    ax.set_xlim(timepoints.min(), timepoints.max())
+    _plot_p_values(ax, df, ymax, sig_color)
+    return
+
+
+def _plot_p_values(ax, df, height, color):
     """"""
+    p_values = []
+    x = df.columns
+    for i in x:
+        t_stat, p_val = ttest_1samp(df[i], popmean=0)
+        p_values.append(p_val)
+    reject, pvals_corrected, _, _ = multipletests(p_values, alpha=0.05, method="fdr_bh")
+    # indicate significant timepoints with line
+    sig_idx = np.where(reject)[0]
+    runs = np.split(sig_idx, np.where(np.diff(sig_idx) != 1)[0] + 1)
+    for run in runs:
+        if run.size > 0:
+            x_run = x[run]
+            y_run = np.full_like(x_run, height - 0.04, dtype=float)
+            ax.plot(x_run, y_run, color=color, linewidth=2)
+
+
+# %% Single reference frame exp average decoding
+
+
+def get_aligned_decoding(
+    reference="distance", maze_names=["maze_1", "maze_2"], goal_sets=["subset_1", "subset_2"], verbose=True
+):
+    """ """
+    # run separately for all sessions for each subject
     results_dfs = []
     for subject_ID in SUBJECT_IDS:
         if verbose:
@@ -96,7 +115,12 @@ def distance_aligned_goal_decoding(maze_names=["maze_1", "maze_2"], goal_sets=["
         for session in sessions:
             if verbose:
                 print(f"Decoding: {session.name}")
-            results_df = get_session_distance_aligned_goal_decoding(session)
+            if reference == "distance":
+                results_df = get_session_distance_aligned_decoding(session)
+            elif reference in ["cue", "reward"]:
+                results_df = get_session_event_aligned_decoding(session, event=reference)
+            else:
+                NotImplementedError
             results_df["subject_ID"] = subject_ID
             results_df["maze_name"] = session.maze_name
             results_df["goal_subset"] = session.goal_subset
@@ -128,53 +152,17 @@ def get_sessions_for_analysis(subject_IDs, maze_names, goal_subsets):
     return keep_sessions
 
 
-def get_session_distance_aligned_goal_decoding(session, max_steps_from_goal=30):
-    """ """
-    input_df = get_session_input_data(
-        session, resolution=0.2, include_multi_units=True, max_steps_to_goal=max_steps_from_goal
-    )
-    results_df = []
-    for steps in range(max_steps_from_goal + 1):
-        steps_df = input_df[input_df.steps_to_goal.future == steps]
-        valid_trials = steps_df.trial.unique()
-        folds_df, chance = get_folds_df(session, valid_trials, return_chance=True)
-        if folds_df.shape[0] < 2:
-            # only one valid goal, cannot run classifer
-            continue
-        folds = folds_df.columns.levels[0].unique()
-        for fold in folds:
-            # get test and train data
-            fold_df = folds_df[fold]
-            test_trials = fold_df.test.unstack().dropna().values
-            train_trials = fold_df.train.unstack().dropna().values
-            test_df = steps_df[steps_df.trial_unique_ID.isin(test_trials)]
-            test_X, test_y = test_df.spike_count.values, test_df.goal.values
-            train_df = steps_df[steps_df.trial_unique_ID.isin(train_trials)]
-            train_X, train_y = train_df.spike_count.values, train_df.goal.values
-            # fit model
-            decoder = LogisticRegression(penalty=None, max_iter=10000)
-            decoder.fit(train_X, train_y)
-            # test decoder
-            test_pred = decoder.predict(test_X)
-            test_acc = np.mean(test_pred == test_y)
-            train_pred = decoder.predict(train_X)
-            train_acc = np.mean(train_pred == train_y)
-            results_df.append(
-                {
-                    "steps_to_goal": steps,
-                    "fold": fold,
-                    "train_acc": train_acc,
-                    "test_acc": test_acc,
-                    "chance": chance,
-                }
-            )
-    return pd.DataFrame(results_df)
+# %% Cross reference frame decoding
 
 
-# %% single reference frame deocoding
+def get_session_cross_referenced_decoding(session, train_decoder="distance", test_decoder="cue"):
+    return
 
 
-def distance_aligned_decoding(
+# %% single reference frame deocoding (session level)
+
+
+def get_session_distance_aligned_decoding(
     session,
     resolution=0.2,
     max_steps_from_goal=20,
@@ -226,7 +214,7 @@ def distance_aligned_decoding(
     return results_df
 
 
-def event_aligned_decoding(
+def get_session_event_aligned_decoding(
     session,
     event="cue",
     resolution=0.5,
@@ -241,7 +229,6 @@ def event_aligned_decoding(
     folds_df = get_folds_df(session, goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials)
     results_df = []
     for fold in folds_df.columns.levels[0].unique():
-        print(fold)
         fold_df = folds_df[fold]
         test_trials = fold_df.test.unstack().dropna().values
         train_trials = fold_df.train.unstack().dropna().values
@@ -250,8 +237,10 @@ def event_aligned_decoding(
         decoder = LogisticRegression(penalty=None, max_iter=10000, random_state=0)
         for t in timepoints:
             _train_df = train_df[train_df.event_aligned_time[event] == t]
-            X_train, y_train = _train_df.spike_count.values, _train_df.goal.values
             _test_df = test_df[test_df.event_aligned_time[event] == t]
+            if _train_df.empty or _test_df.empty:
+                continue  # rare cases when no trials for that timepoint (eg, end of session trial)
+            X_train, y_train = _train_df.spike_count.values, _train_df.goal.values
             X_test, y_test = _test_df.spike_count.values, _test_df.goal.values
             # fit model
             decoder.fit(X_train, y_train)
@@ -347,7 +336,11 @@ def get_event_aligned_input_data(session, event="cue", resolution=0.2, window=(-
         # downsample to speficied resolution
         ds_nav_aligned_df, ds_spikes_aligned_df = _downsample_data(nav_aligned_df, spikes_aligned_df, resolution)
         # add event aligned time info
-        ds_nav_aligned_df[("event_aligned_time", event)] = np.arange(window[0], window[1], resolution)
+        timepoints = np.arange(window[0], window[1], resolution)
+        if len(timepoints) > ds_nav_aligned_df.shape[0]:
+            # can happen for last trial in session (no more frames)
+            timepoints = timepoints[: ds_nav_aligned_df.shape[0]]
+        ds_nav_aligned_df[("event_aligned_time", event)] = timepoints
         # update distnace outside navigation where they are not defined (use shortest path
         # upcoming goal (event=cue) or shortest path to just visted goal (event=reward))
         ds_nav_aligned_df[("goal", "")] = trial2goal[trial]
