@@ -138,7 +138,7 @@ def get_sessions_for_analysis(subject_IDs, maze_names, goal_subsets):
         days_on_maze=days_on_maze,
         goal_subsets=goal_subsets,
         with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
-        must_have_data=False,
+        must_have_data=True,
     )
     sessions = [sessions] if isinstance(sessions, gs.MazeSession) else sessions
     # check sessions have at least 2 trials per goal
