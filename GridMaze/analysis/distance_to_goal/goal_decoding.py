@@ -174,18 +174,106 @@ def get_session_distance_aligned_goal_decoding(session, max_steps_from_goal=30):
 # %% single reference frame deocoding
 
 
-def distance_aligned_decoding(session, resolution=0.2, max_steps_from_goal=30, include_multi_units=True):
+def distance_aligned_decoding(
+    session,
+    resolution=0.2,
+    max_steps_from_goal=20,
+    goal_stratified_validation=True,
+    n_test_trials=None,
+    include_multi_units=True,
+):
     """ """
     input_data = get_distance_aligned_input_data(session, resolution, include_multi_units, max_steps_from_goal)
+    results_df = []
     for steps in range(max_steps_from_goal + 1):
         steps_df = input_data[input_data.steps_to_goal.future == steps]
         valid_trials = steps_df.trial.unique()
-        folds_df, chance = get_folds_df(session, valid_trials, return_chance=True)
+        folds_df = get_folds_df(
+            session, goal_stratified_validation, valid_trials, return_unique_IDs=True, n_test_trials=n_test_trials
+        )
         if folds_df.shape[0] < 2:
             continue  # only one valid goal, cannot run classifer
         folds = folds_df.columns.levels[0].unique()
+        for fold in folds:
+            # get test and train data
+            fold_df = folds_df[fold]
+            test_trials = fold_df.test.unstack().dropna().values
+            train_trials = fold_df.train.unstack().dropna().values
+            test_df = steps_df[steps_df.trial_unique_ID.isin(test_trials)]
+            test_X, test_y = test_df.spike_count.values, test_df.goal.values
+            train_df = steps_df[steps_df.trial_unique_ID.isin(train_trials)]
+            train_X, train_y = train_df.spike_count.values, train_df.goal.values
+            # fit model
+            decoder = LogisticRegression(penalty=None, max_iter=10000)
+            decoder.fit(train_X, train_y)
+            chance = 1 / len(decoder.classes_)
+            # test decoder
+            test_pred = decoder.predict(test_X)
+            for y, yhat, trial in zip(test_y, test_pred, test_trials):
+                results_df.append(
+                    {
+                        "steps_to_goal": steps,
+                        "fold": fold,
+                        "trial": trial,
+                        "goal": y,
+                        "predicted_goal": yhat,
+                        "test_acc": int(y == yhat),
+                        "chance": chance,
+                    }
+                )
+    results_df = pd.DataFrame(results_df)
+    results_df["norm_acc"] = results_df.test_acc - results_df.chance
+    return results_df
 
-    return
+
+def event_aligned_decoding(
+    session,
+    event="cue",
+    resolution=0.5,
+    window=(-10, 10),
+    goal_stratified_validation=True,
+    n_test_trials=None,
+    include_multi_units=True,
+):
+    """ """
+    input_data = get_event_aligned_input_data(session, event, resolution, window, include_multi_units)
+    timepoints = sorted(input_data.event_aligned_time[event].unique())
+    folds_df = get_folds_df(session, goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials)
+    results_df = []
+    for fold in folds_df.columns.levels[0].unique():
+        print(fold)
+        fold_df = folds_df[fold]
+        test_trials = fold_df.test.unstack().dropna().values
+        train_trials = fold_df.train.unstack().dropna().values
+        train_df = input_data[input_data.trial_unique_ID.isin(train_trials)]
+        test_df = input_data[input_data.trial_unique_ID.isin(test_trials)]
+        decoder = LogisticRegression(penalty=None, max_iter=10000, random_state=0)
+        for t in timepoints:
+            _train_df = train_df[train_df.event_aligned_time[event] == t]
+            X_train, y_train = _train_df.spike_count.values, _train_df.goal.values
+            _test_df = test_df[test_df.event_aligned_time[event] == t]
+            X_test, y_test = _test_df.spike_count.values, _test_df.goal.values
+            # fit model
+            decoder.fit(X_train, y_train)
+            chance = 1 / len(decoder.classes_)
+            # test decoder
+            test_pred = decoder.predict(X_test)
+            for y, yhat, trial in zip(y_test, test_pred, _test_df.trial_unique_ID.values):
+                results_df.append(
+                    {
+                        "event": event,
+                        "timepoint": t,
+                        "fold": fold,
+                        "trial": trial,
+                        "goal": y,
+                        "predicted_goal": yhat,
+                        "test_acc": int(y == yhat),
+                        "chance": chance,
+                    }
+                )
+    results_df = pd.DataFrame(results_df)
+    results_df["norm_acc"] = results_df.test_acc - results_df.chance
+    return results_df
 
 
 # %% input data functions (dist aligned and time rel-event aligned)
@@ -322,23 +410,6 @@ def _get_event_aligned_times(nav_info, trials_df, event):
 # %% Cross valdiation functions
 
 
-def get_goals_df(session, valid_trials=None, return_unique_IDs=True):
-    """
-    returns df with goals in index and corresponding session trials in columns
-    """
-    trials_df = session.trials_df
-    if valid_trials is not None:
-        trials_df = trials_df[trials_df.trial.isin(valid_trials)].reset_index(drop=True)
-    goal2trials = {}
-    for goal in session.goals:
-        goal2trials[goal] = trials_df[trials_df.goal == goal].trial.to_list()
-    goals_df = pd.DataFrame.from_dict(goal2trials, orient="index")
-    if return_unique_IDs:
-        session_info = session.session_info
-        goals_df = goals_df.apply(lambda x: convert.trial2trial_unique_ID(session_info, x))
-    return goals_df
-
-
 def get_folds_df(session, goal_stratified=True, valid_trials=None, return_unique_IDs=True, n_test_trials=None):
     """ """
     if goal_stratified:
@@ -370,6 +441,23 @@ def _get_folds_goal_stratified(session, valid_trials=None, return_unique_IDs=Tru
     # return as df
     folds_df = pd.concat(fold_dfs, axis=1)
     return folds_df
+
+
+def get_goals_df(session, valid_trials=None, return_unique_IDs=True):
+    """
+    returns df with goals in index and corresponding session trials in columns
+    """
+    trials_df = session.trials_df
+    if valid_trials is not None:
+        trials_df = trials_df[trials_df.trial.isin(valid_trials)].reset_index(drop=True)
+    goal2trials = {}
+    for goal in session.goals:
+        goal2trials[goal] = trials_df[trials_df.goal == goal].trial.to_list()
+    goals_df = pd.DataFrame.from_dict(goal2trials, orient="index")
+    if return_unique_IDs:
+        session_info = session.session_info
+        goals_df = goals_df.apply(lambda x: convert.trial2trial_unique_ID(session_info, x))
+    return goals_df
 
 
 def _get_folds_non_stratified(
