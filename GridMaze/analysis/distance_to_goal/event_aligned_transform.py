@@ -48,6 +48,14 @@ def plot_steps_vs_time_curves(step_time_df, event="reward"):
     return
 
 
+def get_step_time_transformation(session, step_time_df, event):
+    """ """
+    df = step_time_df.query(
+        f"subject == '{session.subject_ID}' and goal_subset == '{session.goal_subset}' and maze == '{session.maze_name}' and event == '{event}'"
+    )
+    return df.set_index("event_aligned_time").steps_to_goal
+
+
 def get_step_time_transformation_df(overwrite=False):
     """ """
     save_path = RESULTS_DIR / "step_time_transformation_df.csv"

@@ -20,6 +20,7 @@ from GridMaze.analysis.core import get_clusters as gc
 from GridMaze.analysis.core import convert
 from GridMaze.maze import representations as mr
 
+from . import event_aligned_transform as et
 
 # %% Global Variables
 
@@ -29,6 +30,15 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
 
 FRAME_RATE = 60
+
+STEP_TIME_TRANSFORMATION_DF = et.get_step_time_transformation_df()
+
+# %% dev
+
+
+def test():
+    dist_results = get_aligned_decoding(reference="distance")
+    time_results = get_aligned_decoding(reference="reward")
 
 
 # %% results plotting functions
@@ -155,8 +165,8 @@ def get_sessions_for_analysis(subject_IDs, maze_names, goal_subsets):
 # %% Cross reference frame decoding
 
 
-def get_session_cross_referenced_decoding(session, train_decoder="distance", test_decoder="cue"):
-    return
+# def get_session_cross_referenced_decoding(session, train_decoder="distance", test_decoder="cue"):
+#     return
 
 
 # %% single reference frame deocoding (session level)
@@ -222,6 +232,7 @@ def get_session_event_aligned_decoding(
     goal_stratified_validation=True,
     n_test_trials=None,
     include_multi_units=True,
+    add_distance_transformation=True,
 ):
     """ """
     input_data = get_event_aligned_input_data(session, event, resolution, window, include_multi_units)
@@ -262,13 +273,16 @@ def get_session_event_aligned_decoding(
                 )
     results_df = pd.DataFrame(results_df)
     results_df["norm_acc"] = results_df.test_acc - results_df.chance
+    if add_distance_transformation:
+        window2steps = et.get_step_time_transformation(session, STEP_TIME_TRANSFORMATION_DF, event)
+        results_df["transformed_steps_to_goal"] = results_df.timepoint.map(window2steps)
     return results_df
 
 
 # %% input data functions (dist aligned and time rel-event aligned)
 
 
-def get_distance_aligned_input_data(session, resolution=0.2, include_multi_units=True, max_steps_to_goal=30):
+def get_distance_aligned_input_data(session, resolution=0.2, include_multi_units=True, max_steps_to_goal=25):
     """
     Returns a dataframe with spike counts aligned to future path-distance to goal over all trials in a session.
     """
