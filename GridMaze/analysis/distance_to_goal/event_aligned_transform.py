@@ -29,6 +29,25 @@ GOAL_SETS = ["subset_1", "subset_2", "all"]
 # %% Functions
 
 
+def plot_steps_vs_time_curves(step_time_df, event="reward"):
+    """ """
+    f, axes = plt.subplots(3, 3, figsize=(10, 10), sharex=True, sharey=True)
+    for i, goal_subset in enumerate(GOAL_SETS):
+        for j, maze_name in enumerate(MAZE_NAMES):
+            ax = axes[i, j]
+            df = step_time_df.query(f"goal_subset == '{goal_subset}' and maze == '{maze_name}' and event == '{event}'")
+            grouped_df = df.groupby("event_aligned_time").steps_to_goal
+            mean = grouped_df.mean()
+            sem = grouped_df.sem()
+            ax.plot(mean.index, mean)
+            ax.fill_between(mean.index, mean - sem, mean + sem, alpha=0.2)
+            ax.set_title(f"{goal_subset} {maze_name}")
+            ax.set_xlabel("Steps to goal")
+            ax.set_ylabel("Event-aligned time (s)")
+    f.tight_layout()
+    return
+
+
 def get_step_time_transformation_df(overwrite=False):
     """ """
     save_path = RESULTS_DIR / "step_time_transformation_df.csv"
