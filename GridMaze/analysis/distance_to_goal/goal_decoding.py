@@ -6,6 +6,8 @@ Eg, build separate decoders for neural activity 1, step from goal, 2 steps from 
 
 # %% Imports
 import json
+import bisect
+from cv2 import transform
 import numpy as np
 import pandas as pd
 import networkx as nx
@@ -42,6 +44,58 @@ def test():
 
 
 # %% results plotting functions
+
+
+def plot_transformed_reward_aligned_results(
+    reward_aligned_results, dist_aligned_results, ax=None, ymax=0.45, max_steps=14
+):
+    """ """
+    # set up plot
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(4, 3), clear=True)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_xlabel("Steps to goal")
+    ax.set_ylabel("Decoding Acc. \n (chance subtracted)")
+    ax.axhline(y=0, color="k", linestyle="--", alpha=0.5)
+    ax.set_ylim(-0.02, ymax)
+    # x
+    transformed_df = reward_aligned_results.copy()
+    transformed_df["transformed_steps_to_goal"] = transformed_df.transformed_steps_to_goal.astype(int)
+    dfs = []
+    for (
+        df,
+        key,
+        label,
+    ) in zip(
+        [dist_aligned_results, transformed_df],
+        ["steps_to_goal", "transformed_steps_to_goal"],
+        ["distance-aligned", "reward-aligned"],
+    ):
+        _df = df.groupby([key, "subject_ID"]).norm_acc.mean().unstack().T
+        dfs.append(_df)
+        steps = _df.columns.values
+        mean = _df.mean(axis=0)
+        sem = _df.sem(axis=0)
+        # plot
+        ax.plot(steps, mean, lw=2, label=label)
+        ax.fill_between(steps, mean - sem, mean + sem, alpha=0.2)
+    ax.set_xlim(0, max_steps)
+    ax.legend(loc="upper left", fontsize=8)
+    # run stats on residuals
+    residuals_df = dfs[0] - dfs[1]
+    residuals_df = residuals_df[residuals_df.columns[~residuals_df.isna().all(axis=0)]]
+    _plot_p_values(ax, residuals_df, ymax, color="slategrey", bar=False)
+    # run stats but on a session level residuals
+    # session_av_dfs = []
+    # for df, key in zip([dist_aligned_results, transformed_df], ["steps_to_goal", "transformed_steps_to_goal"]):
+    #     group_cols = ["subject_ID", "maze_name", "days_on_maze", key]
+    #     session_av_dfs.append(df.groupby(group_cols).norm_acc.mean())
+    # dist_av_df, transformed_av_df = session_av_dfs
+    # transformed_av_df.rename_axis(index={"transformed_steps_to_goal": "steps_to_goal"}, inplace=True)
+    # decoding_residuals = dist_av_df[transformed_av_df.index] - transformed_av_df
+    # av_decoding_residuals = decoding_residuals.groupby(["subject_ID", "steps_to_goal"]).mean().unstack()
+    # _plot_p_values(ax, av_decoding_residuals, ymax, color="slategrey", bar=False)
+    return
 
 
 def plot_distance_aligned_results(results_df, ax=None, color="rosybrown", sig_color="slategrey", ymax=0.45):
@@ -91,22 +145,25 @@ def plot_event_aligned_results(results_df, event, ax=None, color="rosybrown", si
     return
 
 
-def _plot_p_values(ax, df, height, color):
+def _plot_p_values(ax, df, height, color, bar=True):
     """"""
     p_values = []
     x = df.columns
     for i in x:
-        t_stat, p_val = ttest_1samp(df[i], popmean=0)
+        t_stat, p_val = ttest_1samp(df[i].dropna(), popmean=0)
         p_values.append(p_val)
     reject, pvals_corrected, _, _ = multipletests(p_values, alpha=0.05, method="fdr_bh")
     # indicate significant timepoints with line
     sig_idx = np.where(reject)[0]
-    runs = np.split(sig_idx, np.where(np.diff(sig_idx) != 1)[0] + 1)
-    for run in runs:
-        if run.size > 0:
-            x_run = x[run]
-            y_run = np.full_like(x_run, height - 0.04, dtype=float)
-            ax.plot(x_run, y_run, color=color, linewidth=2)
+    if bar:
+        runs = np.split(sig_idx, np.where(np.diff(sig_idx) != 1)[0] + 1)
+        for run in runs:
+            if run.size > 0:
+                x_run = x[run]
+                y_run = np.full_like(x_run, height - 0.04, dtype=float)
+                ax.plot(x_run, y_run, color=color, linewidth=2)
+    else:
+        ax.scatter(sig_idx, np.full_like(sig_idx, height - 0.04, dtype=float), color=color, s=50)
 
 
 # %% Single reference frame exp average decoding
@@ -165,8 +222,53 @@ def get_sessions_for_analysis(subject_IDs, maze_names, goal_subsets):
 # %% Cross reference frame decoding
 
 
-# def get_session_cross_referenced_decoding(session, train_decoder="distance", test_decoder="cue"):
-#     return
+def get_session_cross_referenced_decoding(session, event="reward"):
+    """
+    initially configured to decoder held out time aligned data from decoders trained on distance-aligned data.
+    """
+    # get input data
+    distance_input = get_distance_aligned_input_data(session)
+    event_input = get_event_aligned_input_data(session, event=event)
+    folds_df = get_folds_df(session, goal_stratified=True, return_unique_IDs=True)
+    for fold in folds_df.columns.levels[0].unique():
+        fold_df = folds_df[fold]
+        train_trials = fold_df.train.unstack().dropna().values
+        train_df = distance_input[distance_input.trial_unique_ID.isin(train_trials)]
+        # train separate decoders for different steps to goal
+        steps = sorted(train_df.steps_to_goal.future.unique())
+        step2decoder = {}
+        for step in steps:
+            step_df = train_df[train_df.steps_to_goal.future == step]
+            if step_df.empty:
+                step2decoder[int(step)] = None
+                continue
+            else:
+                decoder = LogisticRegression(penalty=None, max_iter=10000)
+                X_train, y_train = step_df.spike_count.values, step_df.goal.values
+                decoder.fit(X_train, y_train)
+                step2decoder[int(step)] = decoder
+        # test decoders on event aligned data
+        test_trials = fold_df.test.unstack().dropna().values
+        test_df = event_input[event_input.trial_unique_ID.isin(test_trials)]
+        test_steps = sorted(test_df.steps_to_goal.future.unique())
+        # timepoints = sorted(test_df.event_aligned_time[event].unique())
+        for t in test_steps:
+            t_df = test_df[test_df.event_aligned_time[event] == t]
+            # look up decoder (if not one for exact distance use the closest one)
+            try:
+                decoder = step2decoder[int(t)]
+            except KeyError:
+                keys = sorted(step2decoder.keys())
+                idx = bisect.bisect_right(keys, t) - 1
+                if idx >= 0:
+                    decoder = [keys[idx]]
+                else:
+                    raise KeyError(f"No decoder for {t} steps to goal")
+            test_X, test_y = t_df.spike_count.values, t_df.goal.values
+            test_pred = decoder.predict(test_X)
+            # add results to dict
+
+    return
 
 
 # %% single reference frame deocoding (session level)
