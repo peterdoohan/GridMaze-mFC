@@ -47,7 +47,7 @@ def test():
 
 
 def plot_transformed_reward_aligned_results(
-    reward_aligned_results, dist_aligned_results, ax=None, ymax=0.45, max_steps=14
+    reward_aligned_results, dist_aligned_results, ax=None, ymax=0.45, max_steps=16
 ):
     """ """
     # set up plot
@@ -102,7 +102,7 @@ def plot_distance_aligned_results(results_df, ax=None, color="rosybrown", sig_co
     """ """
     # set up plot
     if ax is None:
-        f, ax = plt.subplots(1, 1, figsize=(4, 3), clear=True)
+        f, ax = plt.subplots(1, 1, figsize=(3, 3), clear=True)
     ax.spines[["top", "right"]].set_visible(False)
     ax.set_xlabel("Steps to goal")
     ax.set_ylabel("Decoding Acc. \n (chance subtracted)")
@@ -125,7 +125,7 @@ def plot_event_aligned_results(results_df, event, ax=None, color="rosybrown", si
     """ """
     # set up plot
     if ax is None:
-        f, ax = plt.subplots(1, 1, figsize=(4, 3), clear=True)
+        f, ax = plt.subplots(1, 1, figsize=(3, 3), clear=True)
     ax.spines[["top", "right"]].set_visible(False)
     ax.set_xlabel(f"{event} (s)")
     ax.set_ylabel("Decoding Acc. \n (chance subtracted)")
@@ -196,6 +196,30 @@ def get_aligned_decoding(
     return pd.concat(results_dfs, axis=0)
 
 
+def get_cross_referenced_decoding(
+    event="cue", maze_names=["maze_1", "maze_2"], goal_sets=["subset_1", "subset_2"], verbose=True
+):
+    """
+    Only supports cross-referencing distance-aligned data to (->) event-aligned data.
+    for now.
+    """
+    results_dfs = []
+    for subject_ID in SUBJECT_IDS:
+        if verbose:
+            print(f"Loading {subject_ID} data...")
+        sessions = get_sessions_for_analysis([subject_ID], maze_names, goal_sets)
+        for session in sessions:
+            if verbose:
+                print(f"Decoding: {session.name}")
+            results_df = get_session_cross_referenced_decoding2(session, event=event)
+            results_df["subject_ID"] = subject_ID
+            results_df["maze_name"] = session.maze_name
+            results_df["goal_subset"] = session.goal_subset
+            results_df["days_on_maze"] = session.day_on_maze
+            results_dfs.append(results_df)
+    return pd.concat(results_dfs, axis=0)
+
+
 def get_sessions_for_analysis(subject_IDs, maze_names, goal_subsets):
     """ """
     days_on_maze = "late" if "all" in goal_subsets else "all"
@@ -222,14 +246,84 @@ def get_sessions_for_analysis(subject_IDs, maze_names, goal_subsets):
 # %% Cross reference frame decoding
 
 
+def get_session_cross_referenced_decoding2(session, event="reward"):
+    """
+    initially configured to decoder held out time aligned data from decoders trained on distance-aligned data.
+    """
+    # get input data
+    event_input = get_event_aligned_input_data(session, event=event)
+    folds_df = get_folds_df(session, goal_stratified=True, return_unique_IDs=True)
+    results = []
+    for fold in folds_df.columns.levels[0].unique():
+        fold_df = folds_df[fold]
+        train_trials = fold_df.train.unstack().dropna().values
+        train_df = event_input[event_input.trial_unique_ID.isin(train_trials)]
+        # train separate decoders for different steps to goal
+        steps = sorted(train_df.steps_to_goal.future.unique())
+        step2decoder = {}
+        for step in steps:
+            step_df = train_df[train_df.steps_to_goal.future == step]
+            if step_df.empty or len(step_df.goal.unique()) < 2:
+                continue
+            else:
+                decoder = LogisticRegression(penalty=None, max_iter=10000)
+                X_train, y_train = step_df.spike_count.values, step_df.goal.values
+                decoder.fit(X_train, y_train)
+                step2decoder[int(step)] = decoder
+        # test decoders on event aligned data
+        test_trials = fold_df.test.unstack().dropna().values
+        test_df = event_input[event_input.trial_unique_ID.isin(test_trials)]
+        test_steps = sorted(test_df.steps_to_goal.future.unique())
+        # timepoints = sorted(test_df.event_aligned_time[event].unique())
+        for s in test_steps:
+            t_df = test_df[test_df.steps_to_goal.future == s]
+            # look up decoder (if not one for exact distance use the closest one)
+            try:
+                _decoder = step2decoder[int(s)]
+            except KeyError:
+                keys = sorted(step2decoder.keys())
+                idx = bisect.bisect_right(keys, s) - 1
+                if idx >= 0:
+                    _decoder = step2decoder[keys[idx]]
+                else:
+                    raise KeyError(f"No decoder for {s} steps to goal")
+            chance = 1 / len(_decoder.classes_)
+            test_X, test_y = t_df.spike_count.values, t_df.goal.values
+            test_pred = _decoder.predict(test_X)
+            # add results to dict
+            for y, yhat, trial, t in zip(
+                test_y,
+                test_pred,
+                t_df.trial_unique_ID.values,
+                t_df.event_aligned_time[event].values,
+            ):
+                results.append(
+                    {
+                        "event": event,
+                        "timepoint": t,
+                        "steps_to_goal": s,
+                        "fold": fold,
+                        "trial": trial,
+                        "goal": y,
+                        "predicted_goal": yhat,
+                        "test_acc": int(y == yhat),
+                        "chance": chance,
+                    }
+                )
+    results_df = pd.DataFrame(results)
+    results_df["norm_acc"] = results_df.test_acc - results_df.chance
+    return results_df
+
+
 def get_session_cross_referenced_decoding(session, event="reward"):
     """
     initially configured to decoder held out time aligned data from decoders trained on distance-aligned data.
     """
     # get input data
-    distance_input = get_distance_aligned_input_data(session)
+    distance_input = get_distance_aligned_input_data(session, max_steps_to_goal=30)
     event_input = get_event_aligned_input_data(session, event=event)
     folds_df = get_folds_df(session, goal_stratified=True, return_unique_IDs=True)
+    results = []
     for fold in folds_df.columns.levels[0].unique():
         fold_df = folds_df[fold]
         train_trials = fold_df.train.unstack().dropna().values
@@ -252,23 +346,44 @@ def get_session_cross_referenced_decoding(session, event="reward"):
         test_df = event_input[event_input.trial_unique_ID.isin(test_trials)]
         test_steps = sorted(test_df.steps_to_goal.future.unique())
         # timepoints = sorted(test_df.event_aligned_time[event].unique())
-        for t in test_steps:
-            t_df = test_df[test_df.event_aligned_time[event] == t]
+        for s in test_steps:
+            t_df = test_df[test_df.steps_to_goal.future == s]
             # look up decoder (if not one for exact distance use the closest one)
             try:
-                decoder = step2decoder[int(t)]
+                _decoder = step2decoder[int(s)]
             except KeyError:
                 keys = sorted(step2decoder.keys())
-                idx = bisect.bisect_right(keys, t) - 1
+                idx = bisect.bisect_right(keys, s) - 1
                 if idx >= 0:
-                    decoder = [keys[idx]]
+                    _decoder = step2decoder[keys[idx]]
                 else:
-                    raise KeyError(f"No decoder for {t} steps to goal")
+                    raise KeyError(f"No decoder for {s} steps to goal")
+            chance = 1 / len(_decoder.classes_)
             test_X, test_y = t_df.spike_count.values, t_df.goal.values
-            test_pred = decoder.predict(test_X)
+            test_pred = _decoder.predict(test_X)
             # add results to dict
-
-    return
+            for y, yhat, trial, t in zip(
+                test_y,
+                test_pred,
+                t_df.trial_unique_ID.values,
+                t_df.event_aligned_time[event].values,
+            ):
+                results.append(
+                    {
+                        "event": event,
+                        "timepoint": t,
+                        "steps_to_goal": s,
+                        "fold": fold,
+                        "trial": trial,
+                        "goal": y,
+                        "predicted_goal": yhat,
+                        "test_acc": int(y == yhat),
+                        "chance": chance,
+                    }
+                )
+    results_df = pd.DataFrame(results)
+    results_df["norm_acc"] = results_df.test_acc - results_df.chance
+    return results_df
 
 
 # %% single reference frame deocoding (session level)
@@ -276,7 +391,7 @@ def get_session_cross_referenced_decoding(session, event="reward"):
 
 def get_session_distance_aligned_decoding(
     session,
-    resolution=0.2,
+    resolution=0.5,
     max_steps_from_goal=20,
     goal_stratified_validation=True,
     n_test_trials=None,
@@ -384,7 +499,7 @@ def get_session_event_aligned_decoding(
 # %% input data functions (dist aligned and time rel-event aligned)
 
 
-def get_distance_aligned_input_data(session, resolution=0.2, include_multi_units=True, max_steps_to_goal=25):
+def get_distance_aligned_input_data(session, resolution=0.5, include_multi_units=True, max_steps_to_goal=25):
     """
     Returns a dataframe with spike counts aligned to future path-distance to goal over all trials in a session.
     """
@@ -413,7 +528,7 @@ def get_distance_aligned_input_data(session, resolution=0.2, include_multi_units
     return ds_nav_rates_df
 
 
-def get_event_aligned_input_data(session, event="cue", resolution=0.2, window=(-10, 10), include_multi_units=True):
+def get_event_aligned_input_data(session, event="cue", resolution=0.5, window=(-10, 10), include_multi_units=True):
     """
     Returns a dataframe with spike counts aligned to event (cue & reward) times.
     """
