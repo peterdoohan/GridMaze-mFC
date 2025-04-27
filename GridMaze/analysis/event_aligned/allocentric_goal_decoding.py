@@ -65,7 +65,7 @@ def plot_goal_decoding_heatmap_summary(alignment="trial", decoder="logreg", ax=N
                 decoding_accs.append(df.mean(axis=0))
                 # keep timepoints significantly above chance
                 timepoint_pvalues = 1 - df.gt(chance).mean(0)
-                reject, pvals_corrected, _, _ = multipletests(timepoint_pvalues, alpha=0.05, method="hs", maxiter=1)
+                reject, pvals_corrected, _, _ = multipletests(timepoint_pvalues, alpha=0.05, method="fdr_bh", maxiter=1)
                 sig_df.append(pd.Series(reject, index=df.columns))
                 columns.append((goal_subset, maze_name))
             except Exception:
@@ -311,7 +311,7 @@ def _plot_trial_aligned_decoding_acc(
     ax.fill_between(time, lower, upper, color=color, alpha=0.2)
     # plot significance
     timepoint_pvalues = 1 - perm_df.gt(chance).mean(0)
-    reject, pvals_corrected, _, _ = multipletests(timepoint_pvalues, alpha=0.05, method="hs", maxiter=1)
+    reject, pvals_corrected, _, _ = multipletests(timepoint_pvalues, alpha=0.05, method="fdr_bh", maxiter=1)
     sig_timepoints = time[reject]
     if len(sig_timepoints) > 1:
         ax.scatter(sig_timepoints, np.ones(len(sig_timepoints)) * sig_pos, marker="s", color=sig_color, s=5)
@@ -351,7 +351,7 @@ def _plot_event_aligned_decoding_acc(
         ax.fill_between(event_time, lower, upper, color=color, alpha=0.2)
         # plot significance
         timepoint_pvalues = 1 - perm_df[event].gt(chance).mean(0)
-        reject, pvals_corrected, _, _ = multipletests(timepoint_pvalues, alpha=0.05, method="hs", maxiter=1)
+        reject, pvals_corrected, _, _ = multipletests(timepoint_pvalues, alpha=0.05, method="fdr_bh", maxiter=1)
         sig_timepoints = event_time[reject]
         if len(sig_timepoints) > 1:
             ax.scatter(sig_timepoints, np.ones(len(sig_timepoints)) * sig_pos, marker="s", color=sig_color, s=5)

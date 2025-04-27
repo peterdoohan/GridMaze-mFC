@@ -11,9 +11,11 @@ import pandas as pd
 import networkx as nx
 from sklearn.linear_model import LogisticRegression
 from matplotlib import pyplot as plt
+import seaborn as sns
 from scipy.stats import ttest_1samp
 from statsmodels.stats.multitest import multipletests
 from sklearn.preprocessing import StandardScaler
+from webcolors import names
 
 
 from GridMaze.analysis.core import get_sessions as gs
@@ -72,7 +74,9 @@ def plot_distance_aligned_results(results_df, ax=None, color="rosybrown", sig_co
     _plot_p_values(ax, df, ymax, sig_color)
 
 
-def plot_event_aligned_results(results_df, event, ax=None, color="rosybrown", sig_color="slategrey", ymax=0.55):
+def plot_event_aligned_results(
+    results_df, event, ax=None, chance=1 / 12, color="darkorange", sig_color="sandybrown", ymax=0.55
+):
     """ """
     # set up plot
     if ax is None:
@@ -80,11 +84,11 @@ def plot_event_aligned_results(results_df, event, ax=None, color="rosybrown", si
     ax.spines[["top", "right"]].set_visible(False)
     ax.set_xlabel(f"{event} (s)")
     ax.set_ylabel("Decoding Acc. \n (chance subtracted)")
-    ax.axhline(y=0, color="k", linestyle="--", alpha=0.5)
+    ax.axhline(y=chance, color="k", linestyle="--", alpha=0.5)
     ax.axvline(x=0, color="k", linestyle="--", alpha=0.5)
-    ax.set_ylim(-0.02, ymax)
+    ax.set_ylim(0, ymax)
     # average chance subtracted decoding acc over steps_to_goal across subjects
-    df = results_df.groupby(["timepoint", "subject_ID"]).norm_acc.mean().unstack().T
+    df = results_df.groupby(["timepoint", "subject_ID"]).test_acc.mean().unstack().T
     timepoints = df.columns.values
     mean = df.mean(axis=0)
     sem = df.sem(axis=0)
@@ -92,16 +96,17 @@ def plot_event_aligned_results(results_df, event, ax=None, color="rosybrown", si
     ax.plot(timepoints, mean, color=color, lw=2)
     ax.fill_between(timepoints, mean - sem, mean + sem, color=color, alpha=0.2)
     ax.set_xlim(timepoints.min(), timepoints.max())
-    _plot_p_values(ax, df, ymax, sig_color)
+    ax.set_xticks([-5, 0, 5])
+    _plot_p_values(ax, df, ymax, sig_color, chance=chance)
     return
 
 
-def _plot_p_values(ax, df, height, color):
+def _plot_p_values(ax, df, height, color, chance=0):
     """"""
     p_values = []
     x = df.columns
     for i in x:
-        t_stat, p_val = ttest_1samp(df[i], popmean=0)
+        t_stat, p_val = ttest_1samp(df[i], popmean=chance, alternative="greater")
         p_values.append(p_val)
     reject, pvals_corrected, _, _ = multipletests(p_values, alpha=0.05, method="fdr_bh")
     # indicate significant timepoints with line
@@ -114,13 +119,88 @@ def _plot_p_values(ax, df, height, color):
             ax.plot(x_run, y_run, color=color, linewidth=2)
 
 
+def plot_event_aligned_decoding_heatmap_summary(cue_results_df, reward_results_df, axes=None, cmap="Oranges", vmax=0.6):
+    """
+    Split decoding reusults by maze and goal subset to plot decoding acc summary of conditions
+    in a heatmap.
+    """
+    if axes is None:
+        f, axes = plt.subplots(1, 2, figsize=(8, 4), sharey=True)
+
+    (
+        cue_grouped_df,
+        reward_grouped_df,
+    ) = [
+        df.groupby(["goal_subset", "maze_name", "subject_ID", "timepoint"]).test_acc.mean().unstack()
+        for df in [cue_results_df, reward_results_df]
+    ]
+    cue_mean_df, reward_mean_df = [
+        df.groupby(["goal_subset", "maze_name"]).mean() for df in [cue_grouped_df, reward_grouped_df]
+    ]
+    # get complementary dfs that are True when value is sig above chance
+    cue_sig_df = pd.DataFrame(index=cue_mean_df.index, columns=cue_mean_df.columns)
+    reward_sig_df = pd.DataFrame(index=reward_mean_df.index, columns=reward_mean_df.columns)
+
+    for df, sig_df in zip([cue_grouped_df, reward_grouped_df], [cue_sig_df, reward_sig_df]):
+        times = df.columns
+        for maze in cue_grouped_df.index.get_level_values(1).unique():
+            for goal_subset in cue_grouped_df.index.get_level_values(0).unique():
+                chance = (1 / 24) if goal_subset == "all" else (1 / 12)
+                _df = df.loc[(goal_subset, maze)]
+                # get p-values for these trials
+                p_values = []
+                for t in times:
+                    t_stat, p_val = ttest_1samp(_df[t], popmean=chance, alternative="greater")
+                    p_values.append(p_val)
+                reject, pvals_corrected, _, _ = multipletests(p_values, alpha=0.05, method="fdr_bh")
+                sig_df.loc[(goal_subset, maze), times] = reject
+
+    # reorder goalset index
+    for df in [cue_mean_df, reward_mean_df, cue_sig_df, reward_sig_df]:
+        df.index = pd.MultiIndex.from_product(
+            [["subset_1", "subset_2", "all"], df.index.levels[1]], names=["goal_subset", "maze_name"]
+        )
+    for ax, mean_df, sig_df, event in zip(
+        axes, [cue_mean_df, reward_mean_df], [cue_sig_df, reward_sig_df], ["cue", "reward"]
+    ):
+        cbar = True if event == "reward" else False
+        sns.heatmap(
+            mean_df[sig_df],
+            cmap=cmap,
+            vmin=0,
+            vmax=vmax,
+            ax=ax,
+            rasterized=True,
+            cbar=cbar,
+            cbar_kws={"label": "Decoding Acc."},
+        )
+        times = mean_df.columns.values.astype(float)
+        zero_point = np.argmin(np.abs(times))
+        ax.axvline(zero_point, color="k", ls="--", alpha=0.5)
+        tick_labels = [-5, 0, 5]
+        tick_positions = [np.argmin(np.abs(times - tick)) for tick in tick_labels]
+        ax.set_xticks(tick_positions)
+        ax.set_xticklabels(tick_labels, rotation=0)
+        ax.set_xlabel(f"{event} time (s)")
+        if event == "reward":
+            ax.set_yticks([])
+            ax.set_yticklabels([])
+            ax.set_ylabel("")
+        for spine in ax.spines.values():
+            spine.set_visible(True)
+            spine.set_edgecolor("black")
+            spine.set_linewidth(0.5)
+
+    return
+
+
 # %% Single reference frame exp average decoding
 
 
-def get_aligned_decoding(
-    reference="distance", maze_names=["maze_1", "maze_2"], goal_sets=["subset_1", "subset_2"], verbose=True
-):
+def get_aligned_decoding(reference, maze_names="all", goal_sets="all", verbose=True):
     """ """
+    maze_names = MAZE_NAMES if maze_names == "all" else maze_names
+    goal_sets = GOAL_SETS if goal_sets == "all" else goal_sets
     # run separately for all sessions for each subject
     results_dfs = []
     for subject_ID in SUBJECT_IDS:
@@ -170,16 +250,12 @@ def get_sessions_for_analysis(subject_IDs, maze_names, goal_subsets):
 # %% Cross reference frame decoding
 
 
-# def get_session_cross_referenced_decoding(session, train_decoder="distance", test_decoder="cue"):
-#     return
-
-
 # %% single reference frame deocoding (session level)
 
 
 def get_session_distance_aligned_decoding(
     session,
-    inputs=["place", "spikes"],
+    inputs=["spikes"],
     resolution=0.5,
     max_steps_from_goal=20,
     goal_stratified_validation=True,
@@ -263,8 +339,8 @@ def get_session_event_aligned_decoding(
     results_df = []
     for fold in folds_df.columns.levels[0].unique():
         fold_df = folds_df[fold]
-        test_trials = fold_df.test.unstack().dropna().values
-        train_trials = fold_df.train.unstack().dropna().values
+        test_trials = [t for t in fold_df.test.values.flatten() if isinstance(t, str)]
+        train_trials = [t for t in fold_df.train.values.flatten() if isinstance(t, str)]
         train_df = input_data[input_data.trial_unique_ID.isin(train_trials)]
         test_df = input_data[input_data.trial_unique_ID.isin(test_trials)]
         decoder = LogisticRegression(penalty=None, max_iter=10000, random_state=0)
@@ -296,7 +372,7 @@ def get_session_event_aligned_decoding(
     results_df = pd.DataFrame(results_df)
     results_df["norm_acc"] = results_df.test_acc - results_df.chance
     if add_distance_transformation:
-        window2steps = et.get_step_time_transformation(session, STEP_TIME_TRANSFORMATION_DF, event)
+        window2steps = get_step_time_transformation(session, event)
         results_df["transformed_steps_to_goal"] = results_df.timepoint.map(window2steps)
     return results_df
 
@@ -369,7 +445,17 @@ def _get_place_onehots_df(session, nav_rates_df):
     return place_onehots_df
 
 
-def get_event_aligned_input_data(session, event="cue", resolution=0.2, window=(-10, 10), include_multi_units=True):
+def get_event_aligned_input_data(
+    session,
+    event="cue",
+    resolution=0.5,
+    window=(-10, 10),
+    include_multi_units=True,
+    binning_method="uniform",
+    n_bins=25,
+    max_steps_to_goal=25,
+    include_place_onehots=False,
+):
     """
     Returns a dataframe with spike counts aligned to event (cue & reward) times.
     """
@@ -427,10 +513,24 @@ def get_event_aligned_input_data(session, event="cue", resolution=0.2, window=(-
         ds_nav_aligned_df[("trial_unique_ID", "")] = convert.trial2trial_unique_ID(session_info, trial)
         nav_info_dfs.append(ds_nav_aligned_df)
         spike_count_dfs.append(ds_spikes_aligned_df)
+    # combine over trials
     nav_info_df = pd.concat(nav_info_dfs, axis=0).reset_index(drop=True)
     spike_count_df = pd.concat(spike_count_dfs, axis=0).reset_index(drop=True)
+    # add distance bins info
+    bins = convert._get_distance_bins(
+        binning_method=binning_method,
+        n_distance_bins=n_bins,
+        distance_metrics=("steps_to_goal", "future"),
+        max_distance=max_steps_to_goal,
+    )
+    nav_info_df[("steps_to_goal", "bin")] = pd.cut(nav_info_df.steps_to_goal.future, bins=bins)
+    nav_info_df[("steps_to_goal", "bin_mid")] = nav_info_df.steps_to_goal.bin.apply(lambda x: x.mid).astype(float)
     # combine nav_info and spike counts
     event_aligned_nav_rates_df = pd.concat([nav_info_df, spike_count_df], axis=1)
+    if include_place_onehots:
+        place_onehots_df = _get_place_onehots_df(session, event_aligned_nav_rates_df)
+        # combine with other data (nav_info and spike_counts)
+        event_aligned_nav_rates_df = pd.concat([event_aligned_nav_rates_df, place_onehots_df], axis=1)
     return event_aligned_nav_rates_df
 
 
@@ -581,8 +681,9 @@ def plot_steps_vs_time_curves(step_time_df, event="reward"):
     return
 
 
-def get_step_time_transformation(session, step_time_df, event):
+def get_step_time_transformation(session, event):
     """ """
+    step_time_df = get_step_time_transformation_df()
     df = step_time_df.query(
         f"subject == '{session.subject_ID}' and goal_subset == '{session.goal_subset}' and maze == '{session.maze_name}' and event == '{event}'"
     )
@@ -624,7 +725,3 @@ def get_steps_vs_time_curve(subject, maze, goal_subset, event, max_steps=30):
     step_time_df = pd.concat(dfs).reset_index(drop=True).droplevel(1, axis=1)
     step_time_curve = step_time_df.groupby("event_aligned_time").steps_to_goal.mean()
     return step_time_curve[step_time_curve.index <= max_steps + 1].reset_index()
-
-
-# %%
-STEP_TIME_TRANSFORMATION_DF = get_step_time_transformation_df()
