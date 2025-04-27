@@ -5,6 +5,7 @@ Eg, build separate decoders for neural activity 1, step from goal, 2 steps from 
 """
 
 # %% Imports
+from curses import window
 import json
 import numpy as np
 import pandas as pd
@@ -402,6 +403,7 @@ def get_distance_aligned_input_data(
     spike_counts_df = spike_counts_df[spike_counts_df.columns[spike_counts_df.spike_count.columns.isin(keep_clusters)]]
     # downsample data
     ds_nav_info, ds_spike_counts_df = _downsample_data(navigation_df, spike_counts_df, resolution)
+    return ds_nav_info
     # add distance bins info
     bins = convert._get_distance_bins(
         binning_method=binning_method,
@@ -417,16 +419,109 @@ def get_distance_aligned_input_data(
     ds_nav_info[("event_aligned_time", "reward")] = _get_event_aligned_times(ds_nav_info, trials_df, "reward")
     # combine and filter for navigation only and to max_steps_to_goal
     ds_nav_rates_df = pd.concat([ds_nav_info, ds_spike_counts_df], axis=1)
-    return ds_nav_rates_df
     ds_nav_rates_df = ds_nav_rates_df[ds_nav_rates_df.steps_to_goal.future.le(max_steps_to_goal)]
     ds_nav_rates_df[("trial", "")] = ds_nav_rates_df[("trial", "")].astype(int)
-    return ds_nav_rates_df
     # include position inputs for decoder (optional)
     if include_place_onehots:
         place_onehots_df = _get_place_onehots_df(session, ds_nav_rates_df)
         # combine with other data (nav_info and spike_counts)
         ds_nav_rates_df = pd.concat([ds_nav_rates_df, place_onehots_df], axis=1)
     return ds_nav_rates_df
+
+
+def _add_non_nav_distances(session, nav_info_df, ignore_last_n=2):
+    """
+    Fills in NaN distances to goal info for RC and ITI periods.
+    Distance in these instances is defined as the shortest path to the NEXT goal cued
+    Note ITI periods are defined at the end of the trial, so we need to look up the next trial's
+    goal to calc distances
+    """
+    # load additional data
+    trials_df = session.trials_df
+    last_trial = session.trials_df.trial.max()
+    trials_df = trials_df.set_index("trial")
+    simple_maze = session.simple_maze()
+
+    # precalculate distances to goal
+    extended_simple_maze = mr.get_extended_simple_maze(simple_maze)
+    path_distances = dict(nx.all_pairs_dijkstra_path_length(extended_simple_maze, weight="weight"))
+    label2coord = mr.get_maze_label2coord(simple_maze)
+
+    # get distances to goal for non-navigation periods
+    new_distances = nav_info_df.steps_to_goal.future.copy()
+    for trial in nav_info_df.trial.dropna().unique():
+        trial_df = nav_info_df[nav_info_df.trial == trial]
+        max_windows = trial_df.shape[0]
+        if ignore_last_n:
+            max_windows = max_windows - ignore_last_n
+        window_count = 0
+        for i, row in trial_df.iterrows():
+            print(i)
+            window_count += 1
+            current_dist = row.steps_to_goal.future
+            if not np.isnan(current_dist):
+                continue
+            else:
+                if window_count > max_windows:
+                    continue
+                trial_phase = row[("trial_phase", "")]
+                assert trial_phase in ["reward_consumption", "ITI"], f"Unexpected trial phase: {trial_phase}"
+                trial = row[("trial", "")]
+                if trial == last_trial:
+                    continue  # no next goal defined
+                next_trial = trials_df.loc[trial + 1]
+                next_goal = next_trial[("goal", "")]
+                pos = row.maze_position.simple
+                dist = path_distances[label2coord[pos]][label2coord[next_goal]]
+                new_distances.loc[i] = dist
+
+    return new_distances
+
+
+def _add_non_nav_distances2(session, nav_info_df, ignore_last_n=2):
+    # load additional data
+    trials_df = session.trials_df
+    trials_df = trials_df.set_index(("trial", ""))
+    last_trial = trials_df.index.max()
+    next_goals = trials_df[("goal", "")].shift(-1)
+    # precompute distances
+    simple_maze = session.simple_maze()
+    extended = mr.get_extended_simple_maze(simple_maze)
+    raw_dist = dict(nx.all_pairs_dijkstra_path_length(extended, weight="weight"))
+    label2coord = mr.get_maze_label2coord(simple_maze)
+    # Build dense N×N matrix for fast look ups
+    coords = list(label2coord.values())
+    coord2idx = {coord: i for i, coord in enumerate(coords)}
+    N = len(coords)
+    dist_mat = np.zeros((N, N), float)
+    for src_coord, targets in raw_dist.items():
+        i = coord2idx[src_coord]
+        for dst_coord, d in targets.items():
+            dist_mat[i, coord2idx[dst_coord]] = d
+    # rename cols for convience
+    nav = nav_info_df.copy().sort_index(axis=1)
+    nav["trial"] = nav[("trial", "")]
+    nav["phase"] = nav[("trial_phase", "")]
+    nav["future_dist"] = nav[("steps_to_goal", "future")]
+    nav["pos_label"] = nav[("maze_position", "simple")]
+    nav["next_goal"] = nav["trial"].map(next_goals)
+    nav["window_idx"] = nav.groupby("trial").cumcount()
+    nav["n_windows"] = nav.groupby("trial")["trial"].transform("count")
+    # optionally ignore last n windows of each trial
+    valid = (
+        nav["future_dist"].isna()
+        & nav["phase"].isin(["reward_consumption", "ITI"])
+        & (nav["window_idx"] < nav["n_windows"] - ignore_last_n)
+        & (nav["trial"] != last_trial)
+    )
+    # compute distances
+    src_idxs = nav.loc[valid, "pos_label"].map(label2coord).map(coord2idx).to_numpy()
+    dst_idxs = nav.loc[valid, "next_goal"].map(label2coord).map(coord2idx).to_numpy()
+    computed = dist_mat[src_idxs, dst_idxs]
+    # update distances and return
+    out = nav_info_df[("steps_to_goal", "future")].copy()
+    out.loc[valid.values] = computed
+    return out
 
 
 def _get_place_onehots_df(session, nav_rates_df):
