@@ -43,11 +43,6 @@ GOAL_SETS = ["subset_1", "subset_2", "all"]
 # %% dev
 
 
-def test():
-    dist_results = get_aligned_decoding(reference="distance")
-    time_results = get_aligned_decoding(reference="reward")
-
-
 # %% results plotting functions
 
 
@@ -414,6 +409,7 @@ def get_distance_aligned_input_data(
         distance_metrics=("steps_to_goal", "future"),
         max_distance=max_steps_to_goal,
     )
+
     ds_nav_info[("steps_to_goal", "bin")] = pd.cut(ds_nav_info.steps_to_goal.future, bins=bins)
     ds_nav_info[("steps_to_goal", "bin_mid")] = ds_nav_info.steps_to_goal.bin.apply(lambda x: x.mid).astype(float)
     # add event aligned time info (for later cross-decoder comparisons)
@@ -421,8 +417,10 @@ def get_distance_aligned_input_data(
     ds_nav_info[("event_aligned_time", "reward")] = _get_event_aligned_times(ds_nav_info, trials_df, "reward")
     # combine and filter for navigation only and to max_steps_to_goal
     ds_nav_rates_df = pd.concat([ds_nav_info, ds_spike_counts_df], axis=1)
+    return ds_nav_rates_df
     ds_nav_rates_df = ds_nav_rates_df[ds_nav_rates_df.steps_to_goal.future.le(max_steps_to_goal)]
     ds_nav_rates_df[("trial", "")] = ds_nav_rates_df[("trial", "")].astype(int)
+    return ds_nav_rates_df
     # include position inputs for decoder (optional)
     if include_place_onehots:
         place_onehots_df = _get_place_onehots_df(session, ds_nav_rates_df)
