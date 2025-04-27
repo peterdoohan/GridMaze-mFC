@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import networkx as nx
 from sklearn.linear_model import LogisticRegression
+from sklearn.neural_network import MLPClassifier
 from matplotlib import pyplot as plt
 import seaborn as sns
 from scipy.stats import ttest_1samp
@@ -190,6 +191,10 @@ def plot_event_aligned_decoding_heatmap_summary(cue_results_df, reward_results_d
     return
 
 
+def plot_distance_aligned_decoding_heatmap_summary(results_df, axes=None, cmap="Reds", vmax=0.6):
+    return
+
+
 # %% Single reference frame exp average decoding
 
 
@@ -246,22 +251,31 @@ def get_sessions_for_analysis(subject_IDs, maze_names, goal_subsets):
 # %% Cross reference frame decoding
 
 
-# %% single reference frame deocoding (session level)
+# %% distance aligned analyses
 
 
 def get_session_distance_aligned_decoding(
     session,
     inputs=["spikes"],
+    trial_phases=["navigation"],
     resolution=0.5,
+    binning_method="uniform",
     max_steps_from_goal=20,
+    n_bins=20,
     goal_stratified_validation=True,
     n_test_trials=None,
-    include_multi_units=True,
+    include_multi_units=False,
     whiten_features=True,
 ):
     """ """
     input_data = get_distance_aligned_input_data(
-        session, resolution, include_multi_units, max_steps_to_goal=max_steps_from_goal
+        session,
+        resolution,
+        include_multi_units,
+        trial_phases,
+        max_steps_to_goal=max_steps_from_goal,
+        n_bins=n_bins,
+        binning_method=binning_method,
     )
     bin_mids = sorted(input_data.steps_to_goal.bin_mid.dropna().unique())
     results_df = []
@@ -277,8 +291,8 @@ def get_session_distance_aligned_decoding(
         for fold in folds:
             # get test and train data
             fold_df = folds_df[fold]
-            test_trials = fold_df.test.unstack().dropna().values
-            train_trials = fold_df.train.unstack().dropna().values
+            test_trials = [t for t in fold_df.test.values.flatten() if isinstance(t, str)]
+            train_trials = [t for t in fold_df.train.values.flatten() if isinstance(t, str)]
             test_df = steps_df[steps_df.trial_unique_ID.isin(test_trials)]
             train_df = steps_df[steps_df.trial_unique_ID.isin(train_trials)]
             train_y, test_y = train_df.goal.values, test_df.goal.values
@@ -296,7 +310,7 @@ def get_session_distance_aligned_decoding(
                 train_X = scaler.transform(train_X)
                 test_X = scaler.transform(test_X)
             # fit model
-            decoder = LogisticRegression(max_iter=10000, C=1, penalty="l2")
+            decoder = LogisticRegression(max_iter=10000, penalty=None, random_state=0, class_weight="balanced")
             decoder.fit(train_X, train_y)
             chance = 1 / len(decoder.classes_)
             # test decoder
@@ -318,69 +332,11 @@ def get_session_distance_aligned_decoding(
     return results_df
 
 
-def get_session_event_aligned_decoding(
-    session,
-    event="cue",
-    resolution=0.5,
-    window=(-10, 10),
-    goal_stratified_validation=True,
-    n_test_trials=None,
-    include_multi_units=True,
-    add_distance_transformation=True,
-):
-    """ """
-    input_data = get_event_aligned_input_data(session, event, resolution, window, include_multi_units)
-    timepoints = sorted(input_data.event_aligned_time[event].unique())
-    folds_df = get_folds_df(session, goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials)
-    results_df = []
-    for fold in folds_df.columns.levels[0].unique():
-        fold_df = folds_df[fold]
-        test_trials = [t for t in fold_df.test.values.flatten() if isinstance(t, str)]
-        train_trials = [t for t in fold_df.train.values.flatten() if isinstance(t, str)]
-        train_df = input_data[input_data.trial_unique_ID.isin(train_trials)]
-        test_df = input_data[input_data.trial_unique_ID.isin(test_trials)]
-        decoder = LogisticRegression(penalty=None, max_iter=10000, random_state=0)
-        for t in timepoints:
-            _train_df = train_df[train_df.event_aligned_time[event] == t]
-            _test_df = test_df[test_df.event_aligned_time[event] == t]
-            if _train_df.empty or _test_df.empty:
-                continue  # rare cases when no trials for that timepoint (eg, end of session trial)
-            X_train, y_train = _train_df.spike_count.values, _train_df.goal.values
-            X_test, y_test = _test_df.spike_count.values, _test_df.goal.values
-            # fit model
-            decoder.fit(X_train, y_train)
-            chance = 1 / len(decoder.classes_)
-            # test decoder
-            test_pred = decoder.predict(X_test)
-            for y, yhat, trial in zip(y_test, test_pred, _test_df.trial_unique_ID.values):
-                results_df.append(
-                    {
-                        "event": event,
-                        "timepoint": t,
-                        "fold": fold,
-                        "trial": trial,
-                        "goal": y,
-                        "predicted_goal": yhat,
-                        "test_acc": int(y == yhat),
-                        "chance": chance,
-                    }
-                )
-    results_df = pd.DataFrame(results_df)
-    results_df["norm_acc"] = results_df.test_acc - results_df.chance
-    if add_distance_transformation:
-        window2steps = get_step_time_transformation(session, event)
-        results_df["transformed_steps_to_goal"] = results_df.timepoint.map(window2steps)
-    return results_df
-
-
-# %% input data functions (dist aligned and time rel-event aligned)
-
-
 def get_distance_aligned_input_data(
     session,
     resolution=0.5,
     include_multi_units=True,
-    include_trial_phases=["navigation", "reward_consumption", "ITI"],
+    include_trial_phases=["navigation"],
     ignore_last_n=2,
     binning_method="uniform",
     n_bins=25,
@@ -425,6 +381,7 @@ def get_distance_aligned_input_data(
     # combine and filter out points where distance is not defined
     ds_nav_rates_df = pd.concat([ds_nav_info, ds_spike_counts_df], axis=1)
     ds_nav_rates_df = ds_nav_rates_df[~ds_nav_rates_df.steps_to_goal.future.isna()]
+    ds_nav_rates_df = ds_nav_rates_df[ds_nav_rates_df.trial_phase.isin(include_trial_phases)]
     ds_nav_rates_df[("trial", "")] = ds_nav_rates_df[("trial", "")].astype(int)
     # include position inputs for decoder (optional)
     if include_place_onehots:
@@ -492,6 +449,74 @@ def _get_place_onehots_df(session, nav_rates_df):
         columns=pd.MultiIndex.from_product([["place_onehot"], positions]),
     )
     return place_onehots_df
+
+
+def _get_event_aligned_times(nav_info, trials_df, event):
+    """
+    Returns a series of time relative to event on every trial.
+    """
+    trials2event_time = trials_df.set_index("trial")["time"][event]
+    trial_ids = nav_info["trial"].astype("Int64")
+    event_times = trial_ids.map(trials2event_time)
+    return nav_info["time"] - event_times
+
+
+# %% event aligned analyses
+
+
+def get_session_event_aligned_decoding(
+    session,
+    event="cue",
+    resolution=0.5,
+    window=(-10, 10),
+    goal_stratified_validation=True,
+    n_test_trials=None,
+    include_multi_units=True,
+    add_distance_transformation=True,
+):
+    """ """
+    input_data = get_event_aligned_input_data(session, event, resolution, window, include_multi_units)
+    timepoints = sorted(input_data.event_aligned_time[event].unique())
+    folds_df = get_folds_df(session, goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials)
+    results_df = []
+    for fold in folds_df.columns.levels[0].unique():
+        fold_df = folds_df[fold]
+        test_trials = [t for t in fold_df.test.values.flatten() if isinstance(t, str)]
+        train_trials = [t for t in fold_df.train.values.flatten() if isinstance(t, str)]
+        train_df = input_data[input_data.trial_unique_ID.isin(train_trials)]
+        test_df = input_data[input_data.trial_unique_ID.isin(test_trials)]
+        decoder = LogisticRegression(penalty=None, max_iter=10000, random_state=0)
+        for t in timepoints:
+            _train_df = train_df[train_df.event_aligned_time[event] == t]
+            _test_df = test_df[test_df.event_aligned_time[event] == t]
+            if _train_df.empty or _test_df.empty:
+                continue  # rare cases when no trials for that timepoint (eg, end of session trial)
+            X_train, y_train = _train_df.spike_count.values, _train_df.goal.values
+            X_test, y_test = _test_df.spike_count.values, _test_df.goal.values
+            # fit model
+            decoder.fit(X_train, y_train)
+            chance = 1 / len(decoder.classes_)
+            # test decoder
+            test_pred = decoder.predict(X_test)
+            for y, yhat, trial in zip(y_test, test_pred, _test_df.trial_unique_ID.values):
+                results_df.append(
+                    {
+                        "event": event,
+                        "timepoint": t,
+                        "fold": fold,
+                        "trial": trial,
+                        "goal": y,
+                        "predicted_goal": yhat,
+                        "test_acc": int(y == yhat),
+                        "chance": chance,
+                    }
+                )
+    results_df = pd.DataFrame(results_df)
+    results_df["norm_acc"] = results_df.test_acc - results_df.chance
+    if add_distance_transformation:
+        window2steps = get_step_time_transformation(session, event)
+        results_df["transformed_steps_to_goal"] = results_df.timepoint.map(window2steps)
+    return results_df
 
 
 def get_event_aligned_input_data(
@@ -609,16 +634,6 @@ def _downsample_data(navigation_df, spike_counts_df, resolution=0.2):
     if nav_info.shape[0] < ds_spike_counts_df.shape[0]:
         ds_spike_counts_df = ds_spike_counts_df.iloc[:-1]
     return nav_info, ds_spike_counts_df
-
-
-def _get_event_aligned_times(nav_info, trials_df, event):
-    """
-    Returns a series of time relative to event on every trial.
-    """
-    trials2event_time = trials_df.set_index("trial")["time"][event]
-    trial_ids = nav_info["trial"].astype("Int64")
-    event_times = trial_ids.map(trials2event_time)
-    return nav_info["time"] - event_times
 
 
 # %% Cross valdiation functions
