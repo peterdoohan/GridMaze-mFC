@@ -12,7 +12,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from GridMaze.analysis.core import get_sessions as gs
-from . import goal_decoding as gd
+from .goal_decoding import get_sessions_for_analysis, get_event_aligned_input_data
 
 
 # %% Global Variables
@@ -79,15 +79,3 @@ def get_step_time_transformation_df(overwrite=False):
         # save
         step_time_df.to_csv(save_path)
         return step_time_df
-
-
-def get_steps_vs_time_curve(subject, maze, goal_subset, event, max_steps=30):
-    sessions = gd.get_sessions_for_analysis(subject_IDs=[subject], maze_names=[maze], goal_subsets=[goal_subset])
-    dfs = []
-    for session in sessions:
-        df = gd.get_event_aligned_input_data(session, event=event, resolution=0.5)
-        df = df[[("event_aligned_time", event), ("steps_to_goal", "future")]]
-        dfs.append(df)
-    step_time_df = pd.concat(dfs).reset_index(drop=True).droplevel(1, axis=1)
-    step_time_curve = step_time_df.groupby("event_aligned_time").steps_to_goal.mean()
-    return step_time_curve[step_time_curve.index <= max_steps + 1].reset_index()

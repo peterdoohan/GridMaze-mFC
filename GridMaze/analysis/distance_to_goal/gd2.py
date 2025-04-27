@@ -21,18 +21,22 @@ from GridMaze.analysis.core import get_clusters as gc
 from GridMaze.analysis.core import convert
 from GridMaze.maze import representations as mr
 
-from . import event_aligned_transform as et
 
 # %% Global Variables
 
-from GridMaze.paths import EXPERIMENT_INFO_PATH
+from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
+
+RESULTS_DIR = RESULTS_PATH / "distance_to_goal"
+
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
 
 FRAME_RATE = 60
 
-STEP_TIME_TRANSFORMATION_DF = et.get_step_time_transformation_df()
+MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
+GOAL_SETS = ["subset_1", "subset_2", "all"]
+
 
 # %% dev
 
@@ -553,3 +557,74 @@ def _get_folds_non_stratified(
     if return_unique_IDs:
         folds_df = folds_df.apply(lambda x: convert.trial2trial_unique_ID(session_info, x))
     return folds_df
+
+
+# %% Transform between distance and event aligned time
+
+
+def plot_steps_vs_time_curves(step_time_df, event="reward"):
+    """ """
+    f, axes = plt.subplots(3, 3, figsize=(10, 10), sharex=True, sharey=True)
+    for i, goal_subset in enumerate(GOAL_SETS):
+        for j, maze_name in enumerate(MAZE_NAMES):
+            ax = axes[i, j]
+            df = step_time_df.query(f"goal_subset == '{goal_subset}' and maze == '{maze_name}' and event == '{event}'")
+            grouped_df = df.groupby("event_aligned_time").steps_to_goal
+            mean = grouped_df.mean()
+            sem = grouped_df.sem()
+            ax.plot(mean.index, mean)
+            ax.fill_between(mean.index, mean - sem, mean + sem, alpha=0.2)
+            ax.set_title(f"{goal_subset} {maze_name}")
+            ax.set_xlabel("Steps to goal")
+            ax.set_ylabel("Event-aligned time (s)")
+    f.tight_layout()
+    return
+
+
+def get_step_time_transformation(session, step_time_df, event):
+    """ """
+    df = step_time_df.query(
+        f"subject == '{session.subject_ID}' and goal_subset == '{session.goal_subset}' and maze == '{session.maze_name}' and event == '{event}'"
+    )
+    return df.set_index("event_aligned_time").steps_to_goal
+
+
+def get_step_time_transformation_df(overwrite=False):
+    """ """
+    save_path = RESULTS_DIR / "step_time_transformation_df.csv"
+    if save_path.exists() and not overwrite:
+        return pd.read_csv(save_path, index_col=0)
+    else:
+        print("Generating step time transformation df")
+        dfs = []
+        for subject in SUBJECT_IDS:
+            print(f"Processing subject {subject}")
+            for maze in MAZE_NAMES:
+                for goal_subset in GOAL_SETS:
+                    for event in ["cue", "reward"]:
+                        step_time_df = get_steps_vs_time_curve(subject, maze, goal_subset, event)
+                        step_time_df["subject"] = subject
+                        step_time_df["maze"] = maze
+                        step_time_df["goal_subset"] = goal_subset
+                        step_time_df["event"] = event
+                        dfs.append(step_time_df)
+        step_time_df = pd.concat(dfs).reset_index(drop=True)
+        # save
+        step_time_df.to_csv(save_path)
+        return step_time_df
+
+
+def get_steps_vs_time_curve(subject, maze, goal_subset, event, max_steps=30):
+    sessions = get_sessions_for_analysis(subject_IDs=[subject], maze_names=[maze], goal_subsets=[goal_subset])
+    dfs = []
+    for session in sessions:
+        df = get_event_aligned_input_data(session, event=event, resolution=0.5)
+        df = df[[("event_aligned_time", event), ("steps_to_goal", "future")]]
+        dfs.append(df)
+    step_time_df = pd.concat(dfs).reset_index(drop=True).droplevel(1, axis=1)
+    step_time_curve = step_time_df.groupby("event_aligned_time").steps_to_goal.mean()
+    return step_time_curve[step_time_curve.index <= max_steps + 1].reset_index()
+
+
+# %%
+STEP_TIME_TRANSFORMATION_DF = get_step_time_transformation_df()
