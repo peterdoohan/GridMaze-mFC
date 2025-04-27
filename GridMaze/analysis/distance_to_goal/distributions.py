@@ -1,4 +1,4 @@
-""" 
+"""
 Library that generates the experiment level distributions of different distance to goal metrics,
 and saves them to analysis info.
 """
@@ -10,6 +10,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 
 from GridMaze.analysis.core import get_sessions as gs
+from . import distributions as dd
 
 # %% Global Variables
 from GridMaze.paths import ANALYSIS_INFO_PATH
@@ -51,7 +52,7 @@ def get_distance_percentile(distance_metric, percentile):
 def bin_distribution_evenly(
     distance_metric,
     n_bins,
-    max_distance,
+    max_distance=None,
     plot=False,
 ):
     """
@@ -70,6 +71,8 @@ def bin_distribution_evenly(
     data = _load_distribution(distance_metric)
     bin_edges = data["bin_edges"]
     counts = data["counts"]
+    if max_distance is None:
+        max_distance = max(bin_edges)
 
     # Adjust the distribution to account for the max_distance
     if bin_edges[-1] > max_distance:
@@ -158,13 +161,13 @@ def _plot_hist(data, n_bins=40, distance_metric=None, ax=None):
 
 def save_distance_distributions(
     distance_metrics=[
-        # ("distance_to_goal", "geodesic"),
-        # ("distance_to_goal", "euclidean"),
-        # ("distance_to_goal", "manhattan"),
-        # ("distance_to_goal", "future"),
-        # ("progress_to_goal", "time"),
-        # ("progress_to_goal", "path_length"),
-        # ("steps_to_goal", "geodesic"),
+        ("distance_to_goal", "geodesic"),
+        ("distance_to_goal", "euclidean"),
+        ("distance_to_goal", "manhattan"),
+        ("distance_to_goal", "future"),
+        ("progress_to_goal", "time"),
+        ("progress_to_goal", "path_length"),
+        ("steps_to_goal", "geodesic"),
         ("steps_to_goal", "future"),
     ],
     subject_IDs="all",

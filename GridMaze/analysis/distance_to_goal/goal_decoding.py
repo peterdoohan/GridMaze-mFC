@@ -170,7 +170,19 @@ def _plot_p_values(ax, df, height, color, bar=True):
 
 
 def get_aligned_decoding(
-    reference="distance", maze_names=["maze_1", "maze_2"], goal_sets=["subset_1", "subset_2"], verbose=True
+    reference="distance",
+    maze_names=["maze_1", "maze_2"],
+    goal_sets=["subset_1", "subset_2"],
+    inputs=["spikes"],
+    resolution=0.5,
+    window=(-10, 10),
+    binning_method="uniform",
+    n_bins=25,
+    max_steps_to_goal=25,
+    goal_stratified_validation=True,
+    n_test_trials=None,
+    include_multi_units=True,
+    verbose=True,
 ):
     """ """
     # run separately for all sessions for each subject
@@ -183,9 +195,30 @@ def get_aligned_decoding(
             if verbose:
                 print(f"Decoding: {session.name}")
             if reference == "distance":
-                results_df = get_session_distance_aligned_decoding(session)
+                results_df = get_session_distance_aligned_decoding(
+                    session,
+                    inputs,
+                    resolution,
+                    binning_method,
+                    n_bins,
+                    max_steps_to_goal,
+                    goal_stratified_validation,
+                    n_test_trials,
+                    include_multi_units,
+                )
             elif reference in ["cue", "reward"]:
-                results_df = get_session_event_aligned_decoding(session, event=reference)
+                results_df = get_session_event_aligned_decoding(
+                    session,
+                    reference,
+                    resolution,
+                    window,
+                    binning_method,
+                    n_bins,
+                    max_steps_to_goal,
+                    goal_stratified_validation,
+                    n_test_trials,
+                    include_multi_units,
+                )
             else:
                 NotImplementedError
             results_df["subject_ID"] = subject_ID
@@ -211,7 +244,7 @@ def get_cross_referenced_decoding(
         for session in sessions:
             if verbose:
                 print(f"Decoding: {session.name}")
-            results_df = get_session_cross_referenced_decoding2(session, event=event)
+            results_df = get_session_cross_referenced_decoding(session, event=event)
             results_df["subject_ID"] = subject_ID
             results_df["maze_name"] = session.maze_name
             results_df["goal_subset"] = session.goal_subset
@@ -322,16 +355,47 @@ def get_session_cross_referenced_decoding(session, event="reward"):
 
 def get_session_distance_aligned_decoding(
     session,
+    inputs=["spikes"],
     resolution=0.5,
-    max_steps_from_goal=20,
+    binning_method="uniform",
+    n_bins=25,
+    max_steps_to_goal=25,
     goal_stratified_validation=True,
     n_test_trials=None,
     include_multi_units=True,
 ):
     """ """
-    input_data = get_distance_aligned_input_data(session, resolution, include_multi_units, max_steps_from_goal)
-    results_df = []
-    for steps in range(max_steps_from_goal + 1):
+    # get input data
+    include_place_inputs = True if "place" in inputs else False
+    input_data = get_distance_aligned_input_data(
+        session,
+        resolution,
+        include_multi_units,
+        binning_method,
+        n_bins,
+        max_steps_to_goal,
+        include_place_inputs,
+    )
+    bin_mids = sorted(input_data.steps_to_goal.bin_mid.dropna().unique())
+    steps_to_goal = sorted(input_data.steps_to_goal.future.dropna().unique())
+    # init results df
+    results_df = pd.DataFrame(
+        index=np.arange(len(bin_mids) * n_bins * max_steps_to_goal),
+        columns=[
+            "steps_to_goal",
+            "fold",
+            "trial",
+            "goal",
+            "predicted_goal",
+            "test_acc",
+            "chance",
+        ],
+        dtype=object,
+    )
+    row_idx = 0
+    # loop over distance bins (steps)
+    for steps in steps_to_goal:
+        # steps_df = input_data[input_data.steps_to_goal.bin_mid == steps]
         steps_df = input_data[input_data.steps_to_goal.future == steps]
         valid_trials = steps_df.trial.unique()
         folds_df = get_folds_df(
@@ -345,30 +409,29 @@ def get_session_distance_aligned_decoding(
             fold_df = folds_df[fold]
             test_trials = fold_df.test.unstack().dropna().values
             train_trials = fold_df.train.unstack().dropna().values
-            test_df = steps_df[steps_df.trial_unique_ID.isin(test_trials)]
-            test_X, test_y = test_df.spike_count.values, test_df.goal.values
             train_df = steps_df[steps_df.trial_unique_ID.isin(train_trials)]
-            train_X, train_y = train_df.spike_count.values, train_df.goal.values
+            test_df = steps_df[steps_df.trial_unique_ID.isin(test_trials)]
+            train_y, test_y = train_df.goal.values, test_df.goal.values
+            train_X, test_X = [], []
+            if "spikes" in inputs:
+                train_X.append(train_df.spike_count.values)
+                test_X.append(test_df.spike_count.values)
+            if "place" in inputs:
+                train_X.append(train_df.place_onehot.values)
+                test_X.append(test_df.place_onehot.values)
+            train_X, test_X = np.concatenate(train_X, axis=1), np.concatenate(test_X, axis=1)
             # fit model
-            decoder = LogisticRegression(penalty=None, max_iter=10000)
+            decoder = LogisticRegression(penalty=None, max_iter=10000, random_state=0)
             decoder.fit(train_X, train_y)
             chance = 1 / len(decoder.classes_)
             # test decoder
             test_pred = decoder.predict(test_X)
-            for y, yhat, trial in zip(test_y, test_pred, test_trials):
-                results_df.append(
-                    {
-                        "steps_to_goal": steps,
-                        "fold": fold,
-                        "trial": trial,
-                        "goal": y,
-                        "predicted_goal": yhat,
-                        "test_acc": int(y == yhat),
-                        "chance": chance,
-                    }
-                )
-    results_df = pd.DataFrame(results_df)
-    results_df["norm_acc"] = results_df.test_acc - results_df.chance
+            for y_true, y_pred, trial in zip(test_y, test_pred, test_trials):
+                results_df.loc[row_idx, :] = [steps, fold, trial, y_true, y_pred, int(y_true == y_pred), chance]
+            row_idx += 1
+    # trim results and return
+    results_df = results_df.iloc[:row_idx].copy()
+    results_df["norm_acc"] = results_df["test_acc"] - results_df["chance"]
     return results_df
 
 
@@ -377,16 +440,43 @@ def get_session_event_aligned_decoding(
     event="cue",
     resolution=0.5,
     window=(-10, 10),
+    binning_method="uniform",
+    n_bins=25,
+    max_steps_to_goal=25,
     goal_stratified_validation=True,
     n_test_trials=None,
     include_multi_units=True,
     add_distance_transformation=True,
 ):
     """ """
-    input_data = get_event_aligned_input_data(session, event, resolution, window, include_multi_units)
+    input_data = get_event_aligned_input_data(
+        session,
+        event,
+        resolution,
+        window,
+        include_multi_units,
+        binning_method,
+        n_bins,
+        max_steps_to_goal,
+    )
     timepoints = sorted(input_data.event_aligned_time[event].unique())
     folds_df = get_folds_df(session, goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials)
-    results_df = []
+    # init results df
+    results_df = pd.DataFrame(
+        index=np.arange(len(timepoints) * n_bins * max_steps_to_goal),
+        columns=[
+            "event",
+            "timepoint",
+            "fold",
+            "trial",
+            "goal",
+            "predicted_goal",
+            "test_acc",
+            "chance",
+        ],
+        dtype=object,
+    )
+    row_idx = 0
     for fold in folds_df.columns.levels[0].unique():
         fold_df = folds_df[fold]
         test_trials = fold_df.test.unstack().dropna().values
@@ -407,20 +497,14 @@ def get_session_event_aligned_decoding(
             # test decoder
             test_pred = decoder.predict(X_test)
             for y, yhat, trial in zip(y_test, test_pred, _test_df.trial_unique_ID.values):
-                results_df.append(
-                    {
-                        "event": event,
-                        "timepoint": t,
-                        "fold": fold,
-                        "trial": trial,
-                        "goal": y,
-                        "predicted_goal": yhat,
-                        "test_acc": int(y == yhat),
-                        "chance": chance,
-                    }
-                )
-    results_df = pd.DataFrame(results_df)
-    results_df["norm_acc"] = results_df.test_acc - results_df.chance
+                results_df.loc[row_idx, :] = [event, t, fold, trial, y, yhat, int(y == yhat), chance]
+                row_idx += 1
+    # trim and set types
+    results_df = results_df.iloc[:row_idx].copy()
+    results_df["test_acc"] = results_df["test_acc"].astype(int)
+    results_df["chance"] = results_df["chance"].astype(float)
+    results_df["norm_acc"] = results_df["test_acc"] - results_df["chance"]
+    # equiv steps to goal for each timepoint
     if add_distance_transformation:
         window2steps = et.get_step_time_transformation(session, STEP_TIME_TRANSFORMATION_DF, event)
         results_df["transformed_steps_to_goal"] = results_df.timepoint.map(window2steps)
@@ -430,7 +514,15 @@ def get_session_event_aligned_decoding(
 # %% input data functions (dist aligned and time rel-event aligned)
 
 
-def get_distance_aligned_input_data(session, resolution=0.5, include_multi_units=True, max_steps_to_goal=25):
+def get_distance_aligned_input_data(
+    session,
+    resolution=0.5,
+    include_multi_units=True,
+    binning_method="uniform",
+    n_bins=25,
+    max_steps_to_goal=25,
+    include_place_onehots=False,
+):
     """
     Returns a dataframe with spike counts aligned to future path-distance to goal over all trials in a session.
     """
@@ -449,6 +541,15 @@ def get_distance_aligned_input_data(session, resolution=0.5, include_multi_units
     spike_counts_df = spike_counts_df[spike_counts_df.columns[spike_counts_df.spike_count.columns.isin(keep_clusters)]]
     # downsample data
     ds_nav_info, ds_spike_counts_df = _downsample_data(navigation_df, spike_counts_df, resolution)
+    # add distance bins info
+    bins = convert._get_distance_bins(
+        binning_method=binning_method,
+        n_distance_bins=n_bins,
+        distance_metrics=("steps_to_goal", "future"),
+        max_distance=max_steps_to_goal,
+    )
+    ds_nav_info[("steps_to_goal", "bin")] = pd.cut(ds_nav_info.steps_to_goal.future, bins=bins)
+    ds_nav_info[("steps_to_goal", "bin_mid")] = ds_nav_info.steps_to_goal.bin.apply(lambda x: x.mid).astype(float)
     # add event aligned time info (for later cross-decoder comparisons)
     ds_nav_info[("event_aligned_time", "cue")] = _get_event_aligned_times(ds_nav_info, trials_df, "cue")
     ds_nav_info[("event_aligned_time", "reward")] = _get_event_aligned_times(ds_nav_info, trials_df, "reward")
@@ -456,10 +557,25 @@ def get_distance_aligned_input_data(session, resolution=0.5, include_multi_units
     ds_nav_rates_df = pd.concat([ds_nav_info, ds_spike_counts_df], axis=1)
     ds_nav_rates_df = ds_nav_rates_df[ds_nav_rates_df.steps_to_goal.future.le(max_steps_to_goal)]
     ds_nav_rates_df[("trial", "")] = ds_nav_rates_df[("trial", "")].astype(int)
+    # include position inputs for decoder (optional)
+    if include_place_onehots:
+        place_onehots_df = _get_place_onehots_df(session, ds_nav_rates_df)
+        # combine with other data (nav_info and spike_counts)
+        ds_nav_rates_df = pd.concat([ds_nav_rates_df, place_onehots_df], axis=1)
     return ds_nav_rates_df
 
 
-def get_event_aligned_input_data(session, event="cue", resolution=0.5, window=(-10, 10), include_multi_units=True):
+def get_event_aligned_input_data(
+    session,
+    event="cue",
+    resolution=0.5,
+    window=(-10, 10),
+    include_multi_units=True,
+    binning_method="uniform",
+    n_bins=25,
+    max_steps_to_goal=25,
+    include_place_onehots=False,
+):
     """
     Returns a dataframe with spike counts aligned to event (cue & reward) times.
     """
@@ -517,11 +633,39 @@ def get_event_aligned_input_data(session, event="cue", resolution=0.5, window=(-
         ds_nav_aligned_df[("trial_unique_ID", "")] = convert.trial2trial_unique_ID(session_info, trial)
         nav_info_dfs.append(ds_nav_aligned_df)
         spike_count_dfs.append(ds_spikes_aligned_df)
+    # combine over trials
     nav_info_df = pd.concat(nav_info_dfs, axis=0).reset_index(drop=True)
     spike_count_df = pd.concat(spike_count_dfs, axis=0).reset_index(drop=True)
+    # add distance bins info
+    bins = convert._get_distance_bins(
+        binning_method=binning_method,
+        n_distance_bins=n_bins,
+        distance_metrics=("steps_to_goal", "future"),
+        max_distance=max_steps_to_goal,
+    )
+    nav_info_df[("steps_to_goal", "bin")] = pd.cut(nav_info_df.steps_to_goal.future, bins=bins)
+    nav_info_df[("steps_to_goal", "bin_mid")] = nav_info_df.steps_to_goal.bin.apply(lambda x: x.mid).astype(float)
     # combine nav_info and spike counts
     event_aligned_nav_rates_df = pd.concat([nav_info_df, spike_count_df], axis=1)
+    if include_place_onehots:
+        place_onehots_df = _get_place_onehots_df(session, event_aligned_nav_rates_df)
+        # combine with other data (nav_info and spike_counts)
+        event_aligned_nav_rates_df = pd.concat([event_aligned_nav_rates_df, place_onehots_df], axis=1)
     return event_aligned_nav_rates_df
+
+
+def _get_place_onehots_df(session, nav_rates_df):
+    """ """
+    simple_maze = session.simple_maze()
+    positions = mr.get_maze_locations(simple_maze)
+    # convert position labels to one-hot encoding
+    place_onehots = convert.place2onehot(nav_rates_df.maze_position.simple.values, session.simple_maze())
+    place_onehots_df = pd.DataFrame(
+        data=place_onehots.astype(int),
+        index=nav_rates_df.index,
+        columns=pd.MultiIndex.from_product([["place_onehot"], positions]),
+    )
+    return place_onehots_df
 
 
 def _downsample_data(navigation_df, spike_counts_df, resolution=0.2):
