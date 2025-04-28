@@ -7,6 +7,7 @@ Eg, build separate decoders for neural activity 1, step from goal, 2 steps from 
 # %% Imports
 from curses import window
 import json
+from math import nan
 import numpy as np
 import pandas as pd
 import networkx as nx
@@ -17,7 +18,6 @@ import seaborn as sns
 from scipy.stats import ttest_1samp
 from statsmodels.stats.multitest import multipletests
 from sklearn.preprocessing import StandardScaler
-from webcolors import names
 
 
 from GridMaze.analysis.core import get_sessions as gs
@@ -191,8 +191,53 @@ def plot_event_aligned_decoding_heatmap_summary(cue_results_df, reward_results_d
     return
 
 
-def plot_distance_aligned_decoding_heatmap_summary(results_df, axes=None, cmap="Reds", vmax=0.6):
-    return
+def plot_distance_aligned_decoding_heatmap_summary(results_df, ax=None, cmap="Reds", vmax=0.5):
+    """ """
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(4, 4), clear=True)
+    # average decoding acc for each subject then average over subjects
+    subject_mean_df = (
+        results_df.groupby(["goal_subset", "maze_name", "subject_ID", "steps_to_goal"]).norm_acc.mean().unstack()
+    )
+    mean_df = subject_mean_df.groupby(["goal_subset", "maze_name"]).mean(0)
+    # calc sig from cross subject variance
+    sig_df = pd.DataFrame(index=mean_df.index, columns=mean_df.columns)
+    steps = mean_df.columns
+    for maze in subject_mean_df.index.get_level_values(1).unique():
+        for goal_subset in subject_mean_df.index.get_level_values(0).unique():
+            _df = subject_mean_df.loc[(goal_subset, maze)]
+            # get p-values for these trials
+            p_values = []
+            for t in steps:
+                t_stat, p_val = ttest_1samp(_df[t], popmean=0, alternative="greater", nan_policy="omit")
+                p_values.append(p_val)
+            reject, pvals_corrected, _, _ = multipletests(p_values, alpha=0.05, method="fdr_bh")
+            sig_df.loc[(goal_subset, maze), steps] = reject
+    for df in [mean_df, sig_df]:
+        df.index = pd.MultiIndex.from_product(
+            [["subset_1", "subset_2", "all"], df.index.levels[1]], names=["goal_subset", "maze_name"]
+        )
+    # plot
+    sns.heatmap(
+        mean_df[sig_df],
+        cmap=cmap,
+        vmin=0,
+        vmax=vmax,
+        ax=ax,
+        rasterized=True,
+        cbar=True,
+        cbar_kws={"label": "Decoding Acc."},
+    )
+    tick_labels = steps[::4]
+    tick_positions = [np.argmin(np.abs(steps - tick)) for tick in tick_labels]
+    ax.set_xticks(tick_positions)
+    ax.set_xticklabels(tick_labels, rotation=0)
+    ax.set_xlabel(f"Steps to goal")
+    for spine in ax.spines.values():
+        spine.set_visible(True)
+        spine.set_edgecolor("black")
+        spine.set_linewidth(0.5)
+    ax.set_ylabel("")
 
 
 # %% Single reference frame exp average decoding
@@ -252,6 +297,11 @@ def get_sessions_for_analysis(subject_IDs, maze_names, goal_subsets):
 
 
 # %% distance aligned analyses
+
+
+def get_sessions_distance_basis_decoding():
+    """ """
+    return
 
 
 def get_session_distance_aligned_decoding(
