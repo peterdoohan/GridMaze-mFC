@@ -25,6 +25,7 @@ def distance_basis_generator(
     normalise=True,
     max_distance=1.8,
     max_steps=20,
+    plot=False,
 ):
     """
     Returns a callable f(x) -> activations of shape (len(x), len(basis_values))
@@ -48,6 +49,12 @@ def distance_basis_generator(
         scale = GAUSSIAN_2P_SCALE[btype]
     else:
         NotImplementedError
+    # plot
+    if plot:
+        if basis == "gamma":
+            plot_gamma_basis_functions(basis_values, btype=btype, max_distance=max_distance, max_steps=max_steps)
+        elif basis == "gaussian":
+            plot_gaussian_basis_functions(basis_values, btype=btype, max_distance=max_distance, max_steps=max_steps)
     # precompute normalisation constants
     basis_values = np.array(basis_values)
     if normalise:
