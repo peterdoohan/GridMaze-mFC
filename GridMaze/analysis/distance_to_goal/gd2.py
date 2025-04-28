@@ -5,9 +5,7 @@ Eg, build separate decoders for neural activity 1, step from goal, 2 steps from 
 """
 
 # %% Imports
-from curses import window
 import json
-from math import nan
 import numpy as np
 import pandas as pd
 import networkx as nx
@@ -24,6 +22,8 @@ from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import get_clusters as gc
 from GridMaze.analysis.core import convert
 from GridMaze.maze import representations as mr
+
+from . import bases as db
 
 
 # %% Global Variables
@@ -299,9 +299,85 @@ def get_sessions_for_analysis(subject_IDs, maze_names, goal_subsets):
 # %% distance aligned analyses
 
 
-def get_sessions_distance_basis_decoding():
+def get_sessions_distance_basis_decoding(
+    session,
+    resolution=0.5,
+    n_bins=20,
+    binning_method="uniform",
+    max_steps_from_goal=20,
+    n_bases=4,
+    basis_type="gamma",
+    goal_stratified_validation=True,
+    n_test_trials=None,
+    whiten_features=True,
+):
     """ """
-    return
+    # get input data
+    input_data = get_distance_aligned_input_data(
+        session,
+        resolution,
+        include_multi_units=False,
+        include_trial_phases=["navigation"],
+        max_steps_to_goal=max_steps_from_goal,
+        n_bins=n_bins,
+        binning_method=binning_method,
+    )
+    # load basis functions
+    gamma_basis_shape_params = db.get_gamma_basis_shape_params(n_bases, btype="steps", max_steps=max_steps_from_goal)
+    basis_fn = db.distance_basis_generator(
+        gamma_basis_shape_params,
+        basis=basis_type,
+        btype="steps",
+        normalise=True,
+        max_steps=max_steps_from_goal,
+        plot=True,
+    )
+
+    folds_df = get_folds_df(session, goal_stratified_validation, n_test_trials=n_test_trials)
+    results = []
+    for fold in folds_df.columns.levels[0].unique():
+        fold_df = folds_df[fold]
+        test_trials = [t for t in fold_df.test.values.flatten() if isinstance(t, str)]
+        train_trials = [t for t in fold_df.train.values.flatten() if isinstance(t, str)]
+        train_df = input_data[input_data.trial_unique_ID.isin(train_trials)]
+        test_df = input_data[input_data.trial_unique_ID.isin(test_trials)]
+        # get input as neurons x distance basis
+        Xs = []
+        for _df in [train_df, test_df]:
+            basis_activations = basis_fn(_df.steps_to_goal.future)
+            spikes = _df.spike_count.values
+            A = spikes[:, :, None] * basis_activations[:, None, :]  # [n_timepoints, n_neurons, n_bases]
+            Xs.append(A.reshape(A.shape[0], -1))  # [n_timepoints, n_neurons * n_bases]
+        train_X, test_X = Xs
+        if whiten_features:  # zscore features
+            scaler = StandardScaler()  # mean=0, std=1 per column
+            scaler.fit(train_X)  # learn stats on train
+            train_X = scaler.transform(train_X)
+            test_X = scaler.transform(test_X)
+        train_y, test_y = train_df.goal.values, test_df.goal.values
+        # fit single model
+        decoder = LogisticRegression(max_iter=10000, penalty="l2", C=1, random_state=0, class_weight="balanced")
+        decoder.fit(train_X, train_y)
+        chance = 1 / len(decoder.classes_)
+        # test decoder
+        test_pred = decoder.predict(test_X)
+        for y, yhat, trial, steps in zip(
+            test_y, test_pred, test_df.trial_unique_ID.values, test_df.steps_to_goal.future.values
+        ):
+            results.append(
+                {
+                    "fold": fold,
+                    "steps_to_goal": steps,
+                    "trial": trial,
+                    "goal": y,
+                    "predicted_goal": yhat,
+                    "test_acc": int(y == yhat),
+                    "chance": chance,
+                }
+            )
+    results_df = pd.DataFrame(results)
+    results_df["norm_acc"] = results_df.test_acc - results_df.chance
+    return results_df
 
 
 def get_session_distance_aligned_decoding(
@@ -430,7 +506,7 @@ def get_distance_aligned_input_data(
     ds_nav_info[("event_aligned_time", "reward")] = _get_event_aligned_times(ds_nav_info, trials_df, "reward")
     # combine and filter out points where distance is not defined
     ds_nav_rates_df = pd.concat([ds_nav_info, ds_spike_counts_df], axis=1)
-    ds_nav_rates_df = ds_nav_rates_df[~ds_nav_rates_df.steps_to_goal.future.isna()]
+    ds_nav_rates_df = ds_nav_rates_df[~ds_nav_rates_df.steps_to_goal.bin.isna()]
     ds_nav_rates_df = ds_nav_rates_df[ds_nav_rates_df.trial_phase.isin(include_trial_phases)]
     ds_nav_rates_df[("trial", "")] = ds_nav_rates_df[("trial", "")].astype(int)
     # include position inputs for decoder (optional)

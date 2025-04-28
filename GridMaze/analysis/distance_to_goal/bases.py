@@ -120,14 +120,34 @@ def plot_gamma_basis_functions(
         ax.spines["right"].set_visible(False)
 
 
-def get_gamma_basis_shape_params(n, btype="steps"):
+def get_gamma_basis_shape_params(
+    n,
+    btype="steps",
+    max_distance=1.8,
+    max_steps=20,
+):
     """
-    Add defualt for distance too!
+    Return n Gamma shape parameters whose resulting
+    curve-peaks (modes) are evenly spaced over the domain.
+
+    - btype="steps": modes from 0 to max_steps
+    - btype="distance": modes from 0 to max_distance
     """
     if btype == "steps":
-        return np.arange(1, n + 1, 1) ** 2
+        scale = GAMMA_2P_SCALE["steps"]
+        domain_max = max_steps
+    elif btype == "distance":
+        scale = GAMMA_2P_SCALE["distance"]
+        domain_max = max_distance
     else:
-        NotImplementedError
+        raise ValueError(f"Unknown btype {btype!r}")
+
+    # 1) pick n evenly spaced desired peak locations:
+    peaks = np.linspace(0, domain_max, n)
+
+    # 2) invert mode=(α-1)*scale to get α:
+    shapes = peaks / scale + 1.0
+    return shapes
 
 
 def gamma_function(x, shape, scale=None):
