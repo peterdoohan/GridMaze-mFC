@@ -4,6 +4,7 @@ Refactoring goal_decoding.py / gd2.py to include a separate utils supporing lib 
 
 # %% Imports
 import json
+from turtle import update
 import numpy as np
 import pandas as pd
 import networkx as nx
@@ -292,6 +293,76 @@ def _get_event_aligned_times(nav_info, trials_df, event):
     trial_ids = nav_info["trial"].astype("Int64")
     event_times = trial_ids.map(trials2event_time)
     return nav_info["time"] - event_times
+
+
+# %%
+
+
+def get_place_decoding_input_data(
+    session,
+    resolution=0.5,
+    include_multi_units=True,
+    window=(-10, 10),
+):
+    """
+    Simpler version of other input_data functions which just returns downsampled navigation
+    data but with info relevant for place decoding analyses
+    """
+    # load data
+    session_info = session.session_info
+    trials_df = session.trials_df
+    navigation_df = session.navigation_df
+    spike_counts_df = session.navigation_spike_counts_df.reset_index(drop=True)
+    # filter clusters
+    keep_clusters = gc.filter_clusters(
+        session.cluster_metrics,
+        session.session_info,
+        return_unique_IDs=True,
+        single_units=True,
+        multi_units=include_multi_units,
+    )
+    spike_counts_df = spike_counts_df[spike_counts_df.columns[spike_counts_df.spike_count.columns.isin(keep_clusters)]]
+    # downsample data
+    nav_info, spike_counts_df = _downsample_data(navigation_df, spike_counts_df, resolution)
+    # update trial definitions to start in previous ITI
+    nav_info["trial"] = update_trial_ID(nav_info, trials_df)
+    nav_info["trial_unique_ID"] = convert.trial2trial_unique_ID(session_info, nav_info["trial"])
+    # add event aligned time
+    nav_info[("event_aligned_time", "cue")] = _get_event_aligned_times(nav_info, trials_df, "cue")
+    nav_info[("event_aligned_time", "reward")] = _get_event_aligned_times(nav_info, trials_df, "reward")
+    # bin event aligned time and report bin_mids for convience
+    bins = pd.IntervalIndex.from_breaks(np.arange(window[0], window[1] + resolution, resolution), closed="right")
+    cue_aligned_bins = pd.cut(nav_info[("event_aligned_time", "cue")], bins=bins)
+    reward_aligned_bins = pd.cut(nav_info[("event_aligned_time", "reward")], bins=bins)
+    nav_info[("event_aligned_bin", "cue")] = cue_aligned_bins.apply(lambda x: x.mid).astype(float)
+    nav_info[("event_aligned_bin", "reward")] = reward_aligned_bins.apply(lambda x: x.mid).astype(float)
+    # combine and remove out of trial times
+    nav_rates_df = pd.concat([nav_info, spike_counts_df], axis=1)
+    nav_rates_df = nav_rates_df[~nav_rates_df.trial.isna()]
+    return nav_rates_df
+
+
+def update_trial_ID(
+    nav_info,
+    trials_df,
+):
+    """
+    Vectorized assignment of ITI-period rows to the *next* trial ID,
+    with all other rows keeping their own trial ID (and non-string
+    phases becoming NaN). Returns a NumPy array of the updated IDs.
+    """
+    trial = nav_info.trial
+    trial_phase = nav_info.trial_phase
+
+    # compute some masks
+    is_def = trial_phase.map(lambda x: isinstance(x, str))
+    is_iti = is_def & (trial_phase == "ITI")
+    next_trial = trial + 1
+    within_bounds = next_trial <= trials_df.trial.max()
+
+    updated = np.where(~is_def, np.nan, np.where(is_iti, np.where(within_bounds, next_trial, np.nan), trial))
+
+    return pd.Series(updated)
 
 
 # %% event aligned input data

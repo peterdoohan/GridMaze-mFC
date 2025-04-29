@@ -16,7 +16,7 @@ from statsmodels.stats.multitest import multipletests
 from sklearn.preprocessing import StandardScaler
 
 from . import bases as db
-from . import decoding_utils as dutils
+from . import decoding_utils as du
 
 
 # %% Global Variables
@@ -33,9 +33,6 @@ FRAME_RATE = 60
 
 MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
 GOAL_SETS = ["subset_1", "subset_2", "all"]
-
-
-# %% dev
 
 
 # %% results plotting functions
@@ -247,7 +244,7 @@ def get_aligned_decoding(reference, maze_names="all", goal_sets="all", verbose=T
     for subject_ID in SUBJECT_IDS:
         if verbose:
             print(f"Loading {subject_ID} data...")
-        sessions = dutils.get_sessions_for_analysis([subject_ID], maze_names, goal_sets)
+        sessions = du.get_sessions_for_analysis([subject_ID], maze_names, goal_sets)
         for session in sessions:
             if verbose:
                 print(f"Decoding: {session.name}")
@@ -291,7 +288,7 @@ def get_distance_referenced_event_aligned_goal_decoding(
     """
     # get input data
     p_onehots = True if "place" in inputs else False
-    dist_input_data = dutils.get_distance_aligned_input_data(
+    dist_input_data = du.get_distance_aligned_input_data(
         session,
         resolution,
         include_multi_units=include_multi_units,
@@ -301,7 +298,7 @@ def get_distance_referenced_event_aligned_goal_decoding(
         binning_method=binning_method,
         include_place_onehots=p_onehots,
     )
-    event_input_data = dutils.get_event_aligned_input_data(
+    event_input_data = du.get_event_aligned_input_data(
         session,
         event,
         resolution,
@@ -327,7 +324,7 @@ def get_distance_referenced_event_aligned_goal_decoding(
     )
 
     # get validation folds
-    folds_df = dutils.get_folds_df(session, goal_stratified_validation, n_test_trials=n_test_trials)
+    folds_df = du.get_folds_df(session, goal_stratified_validation, n_test_trials=n_test_trials)
     results_dfs = []
     for fold in folds_df.columns.levels[0].unique():
         fold_df = folds_df[fold]
@@ -399,7 +396,7 @@ def get_distance_basis_goal_decoding(
     """ """
     # get input data
     p_onehots = True if "place" in inputs else False
-    input_data = dutils.get_distance_aligned_input_data(
+    input_data = du.get_distance_aligned_input_data(
         session,
         resolution,
         include_multi_units=True,
@@ -425,7 +422,7 @@ def get_distance_basis_goal_decoding(
         plot=False,
     )
 
-    folds_df = dutils.get_folds_df(session, goal_stratified_validation, n_test_trials=n_test_trials)
+    folds_df = du.get_folds_df(session, goal_stratified_validation, n_test_trials=n_test_trials)
     results_dfs = []
     for fold in folds_df.columns.levels[0].unique():
         fold_df = folds_df[fold]
@@ -492,7 +489,7 @@ def get_distance_aligned_goal_decoding(
 ):
     """ """
     p_onehots = True if "place" in inputs else False
-    input_data = dutils.get_distance_aligned_input_data(
+    input_data = du.get_distance_aligned_input_data(
         session,
         resolution,
         include_multi_units,
@@ -507,7 +504,7 @@ def get_distance_aligned_goal_decoding(
     for steps in bin_mids:
         steps_df = input_data[input_data.steps_to_goal.bin_mid == steps]
         valid_trials = steps_df.trial.unique()
-        folds_df = dutils.get_folds_df(
+        folds_df = du.get_folds_df(
             session, goal_stratified_validation, valid_trials, return_unique_IDs=True, n_test_trials=n_test_trials
         )
         if folds_df.shape[0] < 2:
@@ -573,11 +570,9 @@ def get_event_aligned_goal_decoding(
     """
     Chance is always 1 / n_goals.
     """
-    input_data = dutils.get_event_aligned_input_data(session, event, resolution, window, include_multi_units)
+    input_data = du.get_event_aligned_input_data(session, event, resolution, window, include_multi_units)
     timepoints = sorted(input_data.event_aligned_time[event].unique())
-    folds_df = dutils.get_folds_df(
-        session, goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials
-    )
+    folds_df = du.get_folds_df(session, goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials)
     results_dfs = []
     for fold in folds_df.columns.levels[0].unique():
         fold_df = folds_df[fold]
