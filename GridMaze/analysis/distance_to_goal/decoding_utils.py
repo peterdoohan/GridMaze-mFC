@@ -14,6 +14,8 @@ from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import get_clusters as gc
 from GridMaze.analysis.core import convert
 from GridMaze.maze import representations as mr
+from scipy.spatial.distance import euclidean
+
 
 # %% Global Variables
 
@@ -29,6 +31,91 @@ FRAME_RATE = 60
 
 MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
 GOAL_SETS = ["subset_1", "subset_2", "all"]
+
+# %% results crunching functions
+
+
+def _decoding_accuracy_df(results_df, group_by="timepoint"):
+    """
+    group_by: "timepoint" or "steps_to_goal"
+    """
+    idx = results_df.groupby(["trial_unique_ID", group_by]).predicted_goal_prob.idxmax()
+    df = results_df.loc[idx]
+    df["test_acc"] = (df.true_goal == df.predicted_goal).astype(int)
+    return df.reset_index(drop=True)
+
+
+def _get_expected_distance_error(results_df, group_by="steps_to_goal"):
+    """
+    use distance cals
+    """
+    return NotImplementedError
+
+
+def _get_decoding_probability_mass(results_df, simple_maze):
+    """ """
+    goals = sorted(results_df.true_goal.unique())
+    label2coord = mr.get_maze_label2coord(simple_maze)
+    goal_coords = [label2coord[g] for g in goals]
+    # precompute distances
+    extended_maze = mr.get_extended_simple_maze(simple_maze)
+    geo_dist = dict(nx.all_pairs_dijkstra_path_length(extended_maze, weight="weight"))
+    euc_dist = {c1: {c2: euclidean(c1, c2) for c2 in goal_coords} for c1 in goal_coords}
+    # calc geo or euc distance from every goal to every possible predicted goal
+    goal_coords = results_df.true_goal.map(label2coord)
+    pred_goal_coords = results_df.predicted_goal.map(label2coord)
+    results_df["geo_dist"] = [geo_dist[coord1][coord2] for coord1, coord2 in zip(goal_coords, pred_goal_coords)]
+    results_df["euc_dist"] = [euc_dist[coord1][coord2] for coord1, coord2 in zip(goal_coords, pred_goal_coords)]
+    #
+
+
+def expected_decoding_error(session, include_goals="all", dist_metric="geodesic", return_as="error"):
+    """ """
+    goals = session.goals if include_goals == "all" else include_goals
+    simple_maze = session.simple_maze()
+    label2coord = mr.get_maze_label2coord(simple_maze)
+    goal_coords = [label2coord[g] for g in goals]
+
+    # precompute distances
+    if dist_metric == "geodesic":
+        extended = mr.get_extended_simple_maze(simple_maze)
+        raw_dist = dict(nx.all_pairs_dijkstra_path_length(extended, weight="weight"))
+    elif dist_metric == "euclidean":
+        raw_dist = {c1: {c2: euclidean(c1, c2) for c2 in goal_coords} for c1 in goal_coords}
+    # buld n_goals x n_goals distance matrix
+    goal2idx = {g: i for i, g in enumerate(goals)}
+    N = len(goals)
+    dist_mat = np.zeros((N, N), float)
+    for i, g1 in enumerate(goal_coords):
+        for j, g2 in enumerate(goal_coords):
+            dist_mat[i, j] = raw_dist[g1][g2]
+
+    def _get_weighted_error(test_y, test_X, decoder):
+        """ """
+        set(test_y).issubset(set(goals)), f"Decoder classes {decoder.classes_} do not match session goals {goals}"
+        y_indices = np.array([goal2idx[item] for item in test_y])
+        y_dist = dist_mat[y_indices, :]  # [n_test, n_goals]
+        predict_proba = decoder.predict_proba(test_X)  # [n_test, n_goals]
+        return np.sum(y_dist * predict_proba, axis=1)  # [n_test]
+
+    def _get_weighted_goal_prob(test_y, test_X, decoder):
+        """ """
+        set(test_y).issubset(set(goals)), f"Decoder classes {decoder.classes_} do not match session goals {goals}"
+        y_indices = np.array([goal2idx[item] for item in test_y])
+        y_dist = dist_mat[y_indices, :]  # [n_test, n_goals]
+        predict_proba = decoder.predict_proba(test_X)
+        weigted_prob = y_dist * predict_proba
+        goal_mask = test_y[:, None] == np.array(goals)[None, :]
+        goal_mass = weigted_prob[goal_mask]
+        return goal_mass
+
+    if return_as == "error":
+        return _get_weighted_error
+    elif return_as == "goal_prob":
+        return _get_weighted_goal_prob
+    else:
+        NotImplementedError
+
 
 # %% get sessions
 

@@ -17,6 +17,7 @@ from scipy.stats import ttest_1samp
 from statsmodels.stats.multitest import multipletests
 from sklearn.preprocessing import StandardScaler
 from scipy.spatial.distance import euclidean
+import test
 
 
 from GridMaze.analysis.core import get_sessions as gs
@@ -452,7 +453,7 @@ def get_session_distance_aligned_decoding(
 # %% event aligned analyses
 
 
-def get_session_event_aligned_decoding(
+def get_session_event_aligned_goal_decoding(
     session,
     event="cue",
     resolution=0.5,
@@ -460,17 +461,17 @@ def get_session_event_aligned_decoding(
     goal_stratified_validation=True,
     n_test_trials=None,
     include_multi_units=True,
-    add_distance_transformation=True,
+    add_distance_transformation=False,
 ):
-    """ """
+    """
+    Chance is always 1 / n_goals.
+    """
     input_data = dutils.get_event_aligned_input_data(session, event, resolution, window, include_multi_units)
     timepoints = sorted(input_data.event_aligned_time[event].unique())
     folds_df = dutils.get_folds_df(
         session, goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials
     )
-    euc_dist_err_fn = expected_decoding_error(session, include_goals="all", dist_metric="euclidean")
-    geo_dist_err_fn = expected_decoding_error(session, include_goals="all", dist_metric="geodesic")
-    results_df = []
+    results_dfs = []
     for fold in folds_df.columns.levels[0].unique():
         fold_df = folds_df[fold]
         test_trials = [t for t in fold_df.test.values.flatten() if isinstance(t, str)]
@@ -487,47 +488,30 @@ def get_session_event_aligned_decoding(
             X_test, y_test = _test_df.spike_count.values, _test_df.goal.values
             # fit model
             decoder.fit(X_train, y_train)
-            chance = 1 / len(decoder.classes_)
-            # test decoder
-            test_pred = decoder.predict(X_test)
-            euc_dist_err = euc_dist_err_fn(y_test, X_test, decoder)
-            geo_dist_err = geo_dist_err_fn(y_test, X_test, decoder)
-            for y, yhat, trial, ede, gde, gm in zip(
-                y_test,
-                test_pred,
-                _test_df.trial_unique_ID.values,
-                euc_dist_err,
-                geo_dist_err,
-            ):
-                results_df.append(
-                    {
-                        "event": event,
-                        "timepoint": t,
-                        "fold": fold,
-                        "trial": trial,
-                        "goal": y,
-                        "predicted_goal": yhat,
-                        "test_acc": int(y == yhat),
-                        "chance": chance,
-                        "euc_dist_err": ede,
-                        "geo_dist_err": gde,
-                    }
-                )
-    results_df = pd.DataFrame(results_df)
-    results_df["norm_acc"] = results_df.test_acc - results_df.chance
+            # out_df
+            Gprobs = decoder.predict_proba(X_test)
+            n_samples, n_goals = Gprobs.shape
+            goals = list(decoder.classes_)
+            df = pd.DataFrame(
+                {
+                    "timepoint": np.repeat(t, n_samples * n_goals),
+                    "true_goal": np.repeat(y_test, n_goals),
+                    "trial_unique_ID": np.repeat(_test_df.trial_unique_ID.values, n_goals),
+                    "predicted_goal": np.tile(goals, n_samples),
+                    "predicted_goal_prob": Gprobs.ravel(),
+                }
+            )
+            df["fold"] = fold
+            results_dfs.append(df)
+    results_df = pd.concat(results_dfs, axis=0)
+    results_df.reset_index(drop=True, inplace=True)
     if add_distance_transformation:
         window2steps = dutils.get_step_time_transformation(session, event)
         results_df["transformed_steps_to_goal"] = results_df.timepoint.map(window2steps)
     return results_df
 
 
-def get_predicted_probs_mass(test_y, test_X, decoder):
-    """ """
-    goals = decoder.classes_
-    predict_proba = decoder.predict_proba(test_X)
-    goal_mask = test_y[:, None] == goals[None, :]
-    goal_mass = predict_proba[goal_mask]
-    return goal_mass
+# %% dev
 
 
 def expected_decoding_error(session, include_goals="all", dist_metric="geodesic", return_as="error"):
