@@ -35,13 +35,13 @@ GOAL_SETS = ["subset_1", "subset_2", "all"]
 # %% results crunching functions
 
 
-def _decoding_accuracy_df(results_df, group_by="timepoint"):
+def _decoding_accuracy_df(results_df, decoding_type="goal", alignment="timepoint"):
     """
-    group_by: "timepoint" or "steps_to_goal"
+    alignment: "timepoint" or "steps_to_goal"
     """
-    idx = results_df.groupby(["trial_unique_ID", group_by]).predicted_goal_prob.idxmax()
+    idx = results_df.groupby(["trial_unique_ID", alignment])[f"predicted_{decoding_type}_prob"].idxmax()
     df = results_df.loc[idx]
-    df["test_acc"] = (df.true_goal == df.predicted_goal).astype(int)
+    df["test_acc"] = (df[f"true_{decoding_type}"] == df[f"predicted_{decoding_type}"]).astype(int)
     return df.reset_index(drop=True)
 
 
