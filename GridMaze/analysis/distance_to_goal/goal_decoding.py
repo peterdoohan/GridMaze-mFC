@@ -6,26 +6,14 @@ Eg, build separate decoders for neural activity 1, step from goal, 2 steps from 
 
 # %% Imports
 import json
-from math import dist
-from xml.etree.ElementInclude import include
 import numpy as np
 import pandas as pd
-import networkx as nx
 from sklearn.linear_model import LogisticRegression
-from sklearn.neural_network import MLPClassifier
 from matplotlib import pyplot as plt
 import seaborn as sns
 from scipy.stats import ttest_1samp
 from statsmodels.stats.multitest import multipletests
 from sklearn.preprocessing import StandardScaler
-from scipy.spatial.distance import euclidean
-import test
-
-
-from GridMaze.analysis.core import get_sessions as gs
-from GridMaze.analysis.core import get_clusters as gc
-from GridMaze.analysis.core import convert
-from GridMaze.maze import representations as mr
 
 from . import bases as db
 from . import decoding_utils as dutils
