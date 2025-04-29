@@ -35,7 +35,7 @@ GOAL_SETS = ["subset_1", "subset_2", "all"]
 # %% results crunching functions
 
 
-def _decoding_accuracy_df(results_df, decoding_type="goal", alignment="timepoint"):
+def decoding_accuracy_df(results_df, decoding_type="goal", alignment="timepoint"):
     """
     alignment: "timepoint" or "steps_to_goal"
     """
@@ -45,19 +45,51 @@ def _decoding_accuracy_df(results_df, decoding_type="goal", alignment="timepoint
     return df.reset_index(drop=True)
 
 
-def _get_expected_distance_error(results_df, group_by="steps_to_goal"):
+def get_expected_distance_error_df(results_df, simple_maze, decoding_type="goal", alignment="timepoint"):
     """
     use distance cals
     """
+    # check decoding_type matches results df
+    _check_decoding_type(results_df, decoding_type)
+    # add colums for distance to goal (geo or euc) for every true and predicted place/goal pair
+    results_df = _add_distance_cols(results_df, simple_maze, decoding_type, round_euc=False)
+    # calc expected distance error
+    results_df["geo_weight_prob"] = results_df[f"predicted_{decoding_type}_prob"] * results_df["geo_dist"]
+    results_df["euc_weight_prob"] = results_df[f"predicted_{decoding_type}_prob"] * results_df["euc_dist"]
+    # EDE (expected distance error)
+    trial_EDE = results_df.groupby(["trial_unique_ID", alignment])[["geo_weight_prob", "euc_weight_prob"]].sum()
+    av_EDE = trial_EDE.groupby(alignment).mean()
+    av_EDE.columns = ["geodesic", "euclidean"]
+    return av_EDE
 
-    return
 
-
-def _get_decoding_probability_mass(results_df, simple_maze, decoding_type="goal", return_trial_av=True):
+def get_decoding_probability_mass_df(results_df, simple_maze, decoding_type="goal", return_trial_av=True):
     """
     decoding_type in ["goal", "place"]
     """
     # check decoding_type matches results df
+    _check_decoding_type(results_df, decoding_type)
+    # add colums for distance to goal (geo or euc) for every true and predicted place/goal pair
+    results_df = _add_distance_cols(results_df, simple_maze, decoding_type, round_euc=True)
+    # calc prob mass over distances fro predictions
+    prob_mass_curves = []
+    for dist in ["euc_dist", "geo_dist"]:
+        prob_mass_trial = results_df.groupby(["trial_unique_ID", dist]).predicted_goal_prob.mean().unstack()
+        if return_trial_av:
+            prob_mass_trial.columns = pd.MultiIndex.from_product([[dist], prob_mass_trial.columns])
+            prob_mass_curves.append(prob_mass_trial)
+        else:
+            prob_mass_curves.append(prob_mass_trial.mean())
+    if return_trial_av:
+        return pd.concat(prob_mass_curves, axis=1)
+    else:
+        dist_prob_mass = pd.concat(prob_mass_curves, axis=1)
+        dist_prob_mass.columns = ["euc_dist", "geo_dist"]
+        return dist_prob_mass
+
+
+def _check_decoding_type(results_df, decoding_type):
+    """ """
     if decoding_type == "goal":
         assert "predicted_goal" in results_df.columns, "results_df does not contain goal decoding"
     elif decoding_type == "place":
@@ -65,6 +97,9 @@ def _get_decoding_probability_mass(results_df, simple_maze, decoding_type="goal"
     else:
         raise ValueError(f"Unknown decoding type {decoding_type}")
 
+
+def _add_distance_cols(results_df, simple_maze, decoding_type, round_euc=False):
+    """ """
     # precompute step distances (tower-->edge = 1 step)
     extended_maze = mr.get_extended_simple_maze(simple_maze)
     geo_dist = dict(nx.all_pairs_dijkstra_path_length(extended_maze, weight="weight"))
@@ -83,69 +118,9 @@ def _get_decoding_probability_mass(results_df, simple_maze, decoding_type="goal"
     pred_coords = results_df[f"predicted_{decoding_type}"].map(label2coord)
     results_df["geo_dist"] = [geo_dist[coord1][coord2] for coord1, coord2 in zip(true_coords, pred_coords)]
     results_df["euc_dist"] = [euc_dist[coord1][coord2] for coord1, coord2 in zip(true_coords, pred_coords)]
-    results_df["euc_dist"] = results_df["euc_dist"].round().astype(int)  # round euclidean to nearest step
-    prob_mass_curves = []
-    for dist in ["euc_dist", "geo_dist"]:
-        prob_mass_trial = results_df.groupby(["trial_unique_ID", dist]).predicted_goal_prob.mean().unstack()
-        if return_trial_av:
-            prob_mass_trial.columns = pd.MultiIndex.from_product([[dist], prob_mass_trial.columns])
-            prob_mass_curves.append(prob_mass_trial)
-        else:
-            prob_mass_curves.append(prob_mass_trial.mean())
-    if return_trial_av:
-        return pd.concat(prob_mass_curves, axis=1)
-    else:
-        dist_prob_mass = pd.concat(prob_mass_curves, axis=1)
-        dist_prob_mass.columns = ["euc_dist", "geo_dist"]
-        return dist_prob_mass
-
-
-def expected_decoding_error(session, include_goals="all", dist_metric="geodesic", return_as="error"):
-    """ """
-    goals = session.goals if include_goals == "all" else include_goals
-    simple_maze = session.simple_maze()
-    label2coord = mr.get_maze_label2coord(simple_maze)
-    goal_coords = [label2coord[g] for g in goals]
-
-    # precompute distances
-    if dist_metric == "geodesic":
-        extended = mr.get_extended_simple_maze(simple_maze)
-        raw_dist = dict(nx.all_pairs_dijkstra_path_length(extended, weight="weight"))
-    elif dist_metric == "euclidean":
-        raw_dist = {c1: {c2: euclidean(c1, c2) for c2 in goal_coords} for c1 in goal_coords}
-    # buld n_goals x n_goals distance matrix
-    goal2idx = {g: i for i, g in enumerate(goals)}
-    N = len(goals)
-    dist_mat = np.zeros((N, N), float)
-    for i, g1 in enumerate(goal_coords):
-        for j, g2 in enumerate(goal_coords):
-            dist_mat[i, j] = raw_dist[g1][g2]
-
-    def _get_weighted_error(test_y, test_X, decoder):
-        """ """
-        set(test_y).issubset(set(goals)), f"Decoder classes {decoder.classes_} do not match session goals {goals}"
-        y_indices = np.array([goal2idx[item] for item in test_y])
-        y_dist = dist_mat[y_indices, :]  # [n_test, n_goals]
-        predict_proba = decoder.predict_proba(test_X)  # [n_test, n_goals]
-        return np.sum(y_dist * predict_proba, axis=1)  # [n_test]
-
-    def _get_weighted_goal_prob(test_y, test_X, decoder):
-        """ """
-        set(test_y).issubset(set(goals)), f"Decoder classes {decoder.classes_} do not match session goals {goals}"
-        y_indices = np.array([goal2idx[item] for item in test_y])
-        y_dist = dist_mat[y_indices, :]  # [n_test, n_goals]
-        predict_proba = decoder.predict_proba(test_X)
-        weigted_prob = y_dist * predict_proba
-        goal_mask = test_y[:, None] == np.array(goals)[None, :]
-        goal_mass = weigted_prob[goal_mask]
-        return goal_mass
-
-    if return_as == "error":
-        return _get_weighted_error
-    elif return_as == "goal_prob":
-        return _get_weighted_goal_prob
-    else:
-        NotImplementedError
+    if round_euc:
+        results_df["euc_dist"] = results_df["euc_dist"].round().astype(int)  # round euclidean to nearest step
+    return results_df
 
 
 # %% get sessions
