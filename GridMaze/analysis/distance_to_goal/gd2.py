@@ -421,17 +421,13 @@ def get_session_distance_aligned_decoding(
             decoder.fit(train_X, train_y)
             goals = list(decoder.classes_)
             chance = 1 / len(goals)
-            euc_dist_err_fn = expected_decoding_error(
-                session, include_goals=goals, dist_metric="euclidean", return_as="goal_prob"
-            )
-            geo_dist_err_fn = expected_decoding_error(
-                session, include_goals=goals, dist_metric="geodesic", return_as="goal_prob"
-            )
             # test decoder
             test_pred = decoder.predict(test_X)
-            euc_dist_err = euc_dist_err_fn(test_y, test_X, decoder)
-            geo_dist_err = geo_dist_err_fn(test_y, test_X, decoder)
-            for y, yhat, trial, ede, gde in zip(test_y, test_pred, test_trials, euc_dist_err, geo_dist_err):
+            for (
+                y,
+                yhat,
+                trial,
+            ) in zip(test_y, test_pred, test_trials):
                 results_df.append(
                     {
                         "steps_to_goal": steps,
@@ -441,8 +437,6 @@ def get_session_distance_aligned_decoding(
                         "predicted_goal": yhat,
                         "test_acc": int(y == yhat),
                         "chance": chance,
-                        "euc_dist_err": ede,
-                        "geo_dist_err": gde,
                     }
                 )
     results_df = pd.DataFrame(results_df)
@@ -461,7 +455,7 @@ def get_session_event_aligned_goal_decoding(
     goal_stratified_validation=True,
     n_test_trials=None,
     include_multi_units=True,
-    add_distance_transformation=False,
+    whiten_features=True,
 ):
     """
     Chance is always 1 / n_goals.
@@ -486,6 +480,11 @@ def get_session_event_aligned_goal_decoding(
                 continue  # rare cases when no trials for that timepoint (eg, end of session trial)
             X_train, y_train = _train_df.spike_count.values, _train_df.goal.values
             X_test, y_test = _test_df.spike_count.values, _test_df.goal.values
+            if whiten_features:  # zscore features
+                scaler = StandardScaler()  # mean=0, std=1 per column
+                scaler.fit(train_X)  # learn stats on train
+                train_X = scaler.transform(train_X)
+                test_X = scaler.transform(test_X)
             # fit model
             decoder.fit(X_train, y_train)
             # out_df
@@ -505,58 +504,7 @@ def get_session_event_aligned_goal_decoding(
             results_dfs.append(df)
     results_df = pd.concat(results_dfs, axis=0)
     results_df.reset_index(drop=True, inplace=True)
-    if add_distance_transformation:
-        window2steps = dutils.get_step_time_transformation(session, event)
-        results_df["transformed_steps_to_goal"] = results_df.timepoint.map(window2steps)
     return results_df
 
 
 # %% dev
-
-
-def expected_decoding_error(session, include_goals="all", dist_metric="geodesic", return_as="error"):
-    """ """
-    goals = session.goals if include_goals == "all" else include_goals
-    simple_maze = session.simple_maze()
-    label2coord = mr.get_maze_label2coord(simple_maze)
-    goal_coords = [label2coord[g] for g in goals]
-
-    # precompute distances
-    if dist_metric == "geodesic":
-        extended = mr.get_extended_simple_maze(simple_maze)
-        raw_dist = dict(nx.all_pairs_dijkstra_path_length(extended, weight="weight"))
-    elif dist_metric == "euclidean":
-        raw_dist = {c1: {c2: euclidean(c1, c2) for c2 in goal_coords} for c1 in goal_coords}
-    # buld n_goals x n_goals distance matrix
-    goal2idx = {g: i for i, g in enumerate(goals)}
-    N = len(goals)
-    dist_mat = np.zeros((N, N), float)
-    for i, g1 in enumerate(goal_coords):
-        for j, g2 in enumerate(goal_coords):
-            dist_mat[i, j] = raw_dist[g1][g2]
-
-    def _get_weighted_error(test_y, test_X, decoder):
-        """ """
-        set(test_y).issubset(set(goals)), f"Decoder classes {decoder.classes_} do not match session goals {goals}"
-        y_indices = np.array([goal2idx[item] for item in test_y])
-        y_dist = dist_mat[y_indices, :]  # [n_test, n_goals]
-        predict_proba = decoder.predict_proba(test_X)  # [n_test, n_goals]
-        return np.sum(y_dist * predict_proba, axis=1)  # [n_test]
-
-    def _get_weighted_goal_prob(test_y, test_X, decoder):
-        """ """
-        set(test_y).issubset(set(goals)), f"Decoder classes {decoder.classes_} do not match session goals {goals}"
-        y_indices = np.array([goal2idx[item] for item in test_y])
-        y_dist = dist_mat[y_indices, :]  # [n_test, n_goals]
-        predict_proba = decoder.predict_proba(test_X)
-        weigted_prob = y_dist * predict_proba
-        goal_mask = test_y[:, None] == np.array(goals)[None, :]
-        goal_mass = weigted_prob[goal_mask]
-        return goal_mass
-
-    if return_as == "error":
-        return _get_weighted_error
-    elif return_as == "goal_prob":
-        return _get_weighted_goal_prob
-    else:
-        NotImplementedError

@@ -35,6 +35,19 @@ GOAL_SETS = ["subset_1", "subset_2", "all"]
 # %% results crunching functions
 
 
+def _get_transformed_steps_to_goal(session, results_df, event, round_steps=False):
+    """
+    Translates between time aliged to cue or reward and steps to goal, based on that
+    subjects average distance across all relevant maze and goal subset sessions.
+    """
+    assert "timepoint" in results_df.columns, "results_df does not contain timepoint column"
+    window2step = get_step_time_transformation(session, event)
+    transformed_steps_to_goal = results_df.timepoint.map(window2step).astype(int)
+    if round_steps:
+        transformed_steps_to_goal = transformed_steps_to_goal.round().astype(int)
+    return transformed_steps_to_goal
+
+
 def decoding_accuracy_df(results_df, decoding_type="goal", alignment="timepoint"):
     """
     alignment: "timepoint" or "steps_to_goal"
