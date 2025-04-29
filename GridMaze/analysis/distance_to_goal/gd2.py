@@ -6,6 +6,7 @@ Eg, build separate decoders for neural activity 1, step from goal, 2 steps from 
 
 # %% Imports
 import json
+from xml.etree.ElementInclude import include
 import numpy as np
 import pandas as pd
 import networkx as nx
@@ -279,56 +280,72 @@ def get_aligned_decoding(reference, maze_names="all", goal_sets="all", verbose=T
 # %% distance aligned analyses
 
 
-def get_sessions_distance_basis_decoding(
+def get_sessions_distance_basis_goal_decoding(
     session,
-    resolution=0.5,
+    inputs=["spikes"],
+    resolution=0.2,
     n_bins=20,
     binning_method="uniform",
     max_steps_from_goal=20,
-    n_bases=4,
+    n_bases=5,
     basis_type="gamma",
     goal_stratified_validation=True,
     n_test_trials=None,
     whiten_features=True,
+    inv_alpha=10,
 ):
     """ """
     # get input data
+    p_onehots = True if "place" in inputs else False
     input_data = dutils.get_distance_aligned_input_data(
         session,
         resolution,
-        include_multi_units=False,
+        include_multi_units=True,
         include_trial_phases=["navigation"],
         max_steps_to_goal=max_steps_from_goal,
         n_bins=n_bins,
         binning_method=binning_method,
+        include_place_onehots=p_onehots,
     )
     # load basis functions
-    gamma_basis_shape_params = db.get_gamma_basis_shape_params(n_bases, btype="steps", max_steps=max_steps_from_goal)
+    if basis_type == "gamma":
+        basis_params = db.get_gamma_basis_shape_params(n_bases, btype="steps", max_steps=max_steps_from_goal)
+    elif basis_type == "gaussian":
+        basis_params = db.get_gaussian_basis_centres(n_bases, btype="steps", max_steps=max_steps_from_goal)
+    else:
+        raise NotImplementedError(f"Basis type {basis_type} not implemented")
     basis_fn = db.distance_basis_generator(
-        gamma_basis_shape_params,
+        basis_params,
         basis=basis_type,
         btype="steps",
         normalise=True,
         max_steps=max_steps_from_goal,
-        plot=True,
+        plot=False,
     )
 
     folds_df = dutils.get_folds_df(session, goal_stratified_validation, n_test_trials=n_test_trials)
-    results = []
+    results_dfs = []
     for fold in folds_df.columns.levels[0].unique():
         fold_df = folds_df[fold]
         test_trials = [t for t in fold_df.test.values.flatten() if isinstance(t, str)]
         train_trials = [t for t in fold_df.train.values.flatten() if isinstance(t, str)]
         train_df = input_data[input_data.trial_unique_ID.isin(train_trials)]
         test_df = input_data[input_data.trial_unique_ID.isin(test_trials)]
-        # get input as neurons x distance basis
-        Xs = []
-        for _df in [train_df, test_df]:
-            basis_activations = basis_fn(_df.steps_to_goal.future)
-            spikes = _df.spike_count.values
-            A = spikes[:, :, None] * basis_activations[:, None, :]  # [n_timepoints, n_neurons, n_bases]
-            Xs.append(A.reshape(A.shape[0], -1))  # [n_timepoints, n_neurons * n_bases]
-        train_X, test_X = Xs
+        # get input as neurons x distance basis (and/or place x distance basis)
+        train_X, test_X = [], []
+        if "spikes" in inputs:
+            for _df, X in zip([train_df, test_df], [train_X, test_X]):
+                basis_activations = basis_fn(_df.steps_to_goal.future)
+                spikes = _df.spike_count.values
+                S = spikes[:, :, None] * basis_activations[:, None, :]  # [n_timepoints, n_neurons, n_bases]
+                X.append(S.reshape(S.shape[0], -1))  # [n_timepoints, n_neurons * n_bases]
+        if "place" in inputs:
+            for _df, X in zip([train_df, test_df], [train_X, test_X]):
+                basis_activations = basis_fn(_df.steps_to_goal.future)
+                place_onehot = _df.place_onehot.values
+                P = place_onehot[:, :, None] * basis_activations[:, None, :]  # [n_timepoints, n_places, n_bases]
+                X.append(P.reshape(P.shape[0], -1))  # [n_timepoints, n_places * n_bases]
+        train_X, test_X = np.concatenate(train_X, axis=1), np.concatenate(test_X, axis=1)
         if whiten_features:  # zscore features
             scaler = StandardScaler()  # mean=0, std=1 per column
             scaler.fit(train_X)  # learn stats on train
@@ -336,32 +353,29 @@ def get_sessions_distance_basis_decoding(
             test_X = scaler.transform(test_X)
         train_y, test_y = train_df.goal.values, test_df.goal.values
         # fit single model
-        decoder = LogisticRegression(max_iter=10000, penalty="l2", C=1, random_state=0, class_weight="balanced")
+        decoder = LogisticRegression(max_iter=10000, penalty="l2", C=inv_alpha, random_state=0)
         decoder.fit(train_X, train_y)
-        chance = 1 / len(decoder.classes_)
         # test decoder
-        test_pred = decoder.predict(test_X)
-        return test_y, test_X, decoder
-        for y, yhat, trial, steps in zip(
-            test_y, test_pred, test_df.trial_unique_ID.values, test_df.steps_to_goal.future.values
-        ):
-            results.append(
-                {
-                    "fold": fold,
-                    "steps_to_goal": steps,
-                    "trial": trial,
-                    "goal": y,
-                    "predicted_goal": yhat,
-                    "test_acc": int(y == yhat),
-                    "chance": chance,
-                }
-            )
-    results_df = pd.DataFrame(results)
-    results_df["norm_acc"] = results_df.test_acc - results_df.chance
+        Gprobs = decoder.predict_proba(test_X)
+        n_samples, n_goals = Gprobs.shape
+        goals = list(decoder.classes_)
+        df = pd.DataFrame(
+            {
+                "steps_to_goal": np.repeat(test_df.steps_to_goal.future.values, n_goals),
+                "true_goal": np.repeat(test_y, n_goals),
+                "trial_unique_ID": np.repeat(test_df.trial_unique_ID.values, n_goals),
+                "predicted_goal": np.tile(goals, n_samples),
+                "predicted_goal_prob": Gprobs.ravel(),
+            }
+        )
+        df["fold"] = fold
+        results_dfs.append(df)
+    results_df = pd.concat(results_dfs, axis=0)
+    results_df.reset_index(drop=True, inplace=True)
     return results_df
 
 
-def get_session_distance_aligned_decoding(
+def get_session_distance_aligned_goal_decoding(
     session,
     inputs=["spikes"],
     trial_phases=["navigation"],
@@ -375,6 +389,7 @@ def get_session_distance_aligned_decoding(
     whiten_features=True,
 ):
     """ """
+    p_onehots = True if "place" in inputs else False
     input_data = dutils.get_distance_aligned_input_data(
         session,
         resolution,
@@ -383,9 +398,10 @@ def get_session_distance_aligned_decoding(
         max_steps_to_goal=max_steps_from_goal,
         n_bins=n_bins,
         binning_method=binning_method,
+        include_place_onehots=p_onehots,
     )
     bin_mids = sorted(input_data.steps_to_goal.bin_mid.dropna().unique())
-    results_df = []
+    results_dfs = []
     for steps in bin_mids:
         steps_df = input_data[input_data.steps_to_goal.bin_mid == steps]
         valid_trials = steps_df.trial.unique()
@@ -419,28 +435,23 @@ def get_session_distance_aligned_decoding(
             # fit model
             decoder = LogisticRegression(max_iter=10000, penalty=None, random_state=0, class_weight="balanced")
             decoder.fit(train_X, train_y)
-            goals = list(decoder.classes_)
-            chance = 1 / len(goals)
             # test decoder
-            test_pred = decoder.predict(test_X)
-            for (
-                y,
-                yhat,
-                trial,
-            ) in zip(test_y, test_pred, test_trials):
-                results_df.append(
-                    {
-                        "steps_to_goal": steps,
-                        "fold": fold,
-                        "trial": trial,
-                        "goal": y,
-                        "predicted_goal": yhat,
-                        "test_acc": int(y == yhat),
-                        "chance": chance,
-                    }
-                )
-    results_df = pd.DataFrame(results_df)
-    results_df["norm_acc"] = results_df.test_acc - results_df.chance
+            Gprobs = decoder.predict_proba(test_X)
+            n_samples, n_goals = Gprobs.shape
+            goals = list(decoder.classes_)
+            df = pd.DataFrame(
+                {
+                    "steps_to_goal": np.repeat(steps, n_samples * n_goals),
+                    "true_goal": np.repeat(test_y, n_goals),
+                    "trial_unique_ID": np.repeat(test_df.trial_unique_ID.values, n_goals),
+                    "predicted_goal": np.tile(goals, n_samples),
+                    "predicted_goal_prob": Gprobs.ravel(),
+                }
+            )
+            df["fold"] = fold
+            results_dfs.append(df)
+    results_df = pd.concat(results_dfs, axis=0)
+    results_df.reset_index(drop=True, inplace=True)
     return results_df
 
 
@@ -472,7 +483,7 @@ def get_session_event_aligned_goal_decoding(
         train_trials = [t for t in fold_df.train.values.flatten() if isinstance(t, str)]
         train_df = input_data[input_data.trial_unique_ID.isin(train_trials)]
         test_df = input_data[input_data.trial_unique_ID.isin(test_trials)]
-        decoder = LogisticRegression(penalty=None, max_iter=10000, random_state=0)
+        decoder = LogisticRegression(penalty=None, max_iter=10000, random_state=0, class_weight="balanced")
         for t in timepoints:
             _train_df = train_df[train_df.event_aligned_time[event] == t]
             _test_df = test_df[test_df.event_aligned_time[event] == t]

@@ -159,18 +159,18 @@ def gamma_function(x, shape, scale=None):
 # %% Gaussian basis functions
 
 
-def get_gaussian_basis_centres(n, dtype="steps", max_distance=1.8, max_steps=20):
+def get_gaussian_basis_centres(n, btype="steps", max_distance=1.8, max_steps=20):
     """
     Return n centres evenly spaced over either step‐indices or real distances.
     """
-    if dtype == "steps":
+    if btype == "steps":
         # n centres between 0 and max_steps inclusive
         return np.linspace(0, max_steps, n)
-    elif dtype == "distance":
+    elif btype == "distance":
         # n centres between 0 and max_distance
         return np.linspace(0, max_distance, n)
     else:
-        raise NotImplementedError(f"Unknown dtype {dtype}")
+        raise NotImplementedError(f"Unknown dtype {btype}")
 
 
 def gaussian_function(x, centre, scale=None):
