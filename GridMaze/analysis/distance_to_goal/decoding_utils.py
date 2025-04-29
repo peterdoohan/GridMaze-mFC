@@ -52,21 +52,35 @@ def _get_expected_distance_error(results_df, group_by="steps_to_goal"):
     return NotImplementedError
 
 
-def _get_decoding_probability_mass(results_df, simple_maze):
+def _get_decoding_probability_mass(results_df, simple_maze, return_trial_av=True):
     """ """
     goals = sorted(results_df.true_goal.unique())
     label2coord = mr.get_maze_label2coord(simple_maze)
     goal_coords = [label2coord[g] for g in goals]
-    # precompute distances
+    # precompute step distances (tower-->edge = 1 step)
     extended_maze = mr.get_extended_simple_maze(simple_maze)
     geo_dist = dict(nx.all_pairs_dijkstra_path_length(extended_maze, weight="weight"))
-    euc_dist = {c1: {c2: euclidean(c1, c2) for c2 in goal_coords} for c1 in goal_coords}
+    euc_dist = {c1: {c2: euclidean(c1, c2) * 2 for c2 in goal_coords} for c1 in goal_coords}
     # calc geo or euc distance from every goal to every possible predicted goal
     goal_coords = results_df.true_goal.map(label2coord)
     pred_goal_coords = results_df.predicted_goal.map(label2coord)
     results_df["geo_dist"] = [geo_dist[coord1][coord2] for coord1, coord2 in zip(goal_coords, pred_goal_coords)]
     results_df["euc_dist"] = [euc_dist[coord1][coord2] for coord1, coord2 in zip(goal_coords, pred_goal_coords)]
-    #
+    results_df["euc_dist"] = results_df["euc_dist"].round().astype(int)  # round euclidean to nearest step
+    prob_mass_curves = []
+    for dist in ["euc_dist", "geo_dist"]:
+        prob_mass_trial = results_df.groupby(["trial_unique_ID", dist]).predicted_goal_prob.mean().unstack()
+        if return_trial_av:
+            prob_mass_trial.columns = pd.MultiIndex.from_product([[dist], prob_mass_trial.columns])
+            prob_mass_curves.append(prob_mass_trial)
+        else:
+            prob_mass_curves.append(prob_mass_trial.mean())
+    if return_trial_av:
+        return pd.concat(prob_mass_curves, axis=1)
+    else:
+        dist_prob_mass = pd.concat(prob_mass_curves, axis=1)
+        dist_prob_mass.columns = ["euc_dist", "geo_dist"]
+        return dist_prob_mass
 
 
 def expected_decoding_error(session, include_goals="all", dist_metric="geodesic", return_as="error"):
