@@ -49,23 +49,40 @@ def _get_expected_distance_error(results_df, group_by="steps_to_goal"):
     """
     use distance cals
     """
-    return NotImplementedError
+
+    return
 
 
-def _get_decoding_probability_mass(results_df, simple_maze, return_trial_av=True):
-    """ """
-    goals = sorted(results_df.true_goal.unique())
-    label2coord = mr.get_maze_label2coord(simple_maze)
-    goal_coords = [label2coord[g] for g in goals]
+def _get_decoding_probability_mass(results_df, simple_maze, decoding_type="goal", return_trial_av=True):
+    """
+    decoding_type in ["goal", "place"]
+    """
+    # check decoding_type matches results df
+    if decoding_type == "goal":
+        assert "predicted_goal" in results_df.columns, "results_df does not contain goal decoding"
+    elif decoding_type == "place":
+        assert "predicted_place" in results_df.columns, "results_df does not contain place decoding"
+    else:
+        raise ValueError(f"Unknown decoding type {decoding_type}")
+
     # precompute step distances (tower-->edge = 1 step)
     extended_maze = mr.get_extended_simple_maze(simple_maze)
     geo_dist = dict(nx.all_pairs_dijkstra_path_length(extended_maze, weight="weight"))
-    euc_dist = {c1: {c2: euclidean(c1, c2) * 2 for c2 in goal_coords} for c1 in goal_coords}
-    # calc geo or euc distance from every goal to every possible predicted goal
-    goal_coords = results_df.true_goal.map(label2coord)
-    pred_goal_coords = results_df.predicted_goal.map(label2coord)
-    results_df["geo_dist"] = [geo_dist[coord1][coord2] for coord1, coord2 in zip(goal_coords, pred_goal_coords)]
-    results_df["euc_dist"] = [euc_dist[coord1][coord2] for coord1, coord2 in zip(goal_coords, pred_goal_coords)]
+    label2coord = mr.get_maze_label2coord(simple_maze)
+    all_coords = list(label2coord.values())
+    euc_dist = {}
+    for c1 in all_coords:
+        _euc_dist = {}
+        for c2 in all_coords:  # adapt edge coods eg, ((6,5), (6,6), to (6, 5.5) by taking mean
+            _c1 = tuple(np.array(c1).mean(axis=0)) if isinstance(c1[0], tuple) else c1
+            _c2 = tuple(np.array(c2).mean(axis=0)) if isinstance(c2[0], tuple) else c2
+            _euc_dist[c2] = euclidean(_c1, _c2) * 2
+        euc_dist[c1] = _euc_dist
+    # calc geo or euc distance from every goal to every possible predicted goal/place
+    true_coords = results_df[f"true_{decoding_type}"].map(label2coord)
+    pred_coords = results_df[f"predicted_{decoding_type}"].map(label2coord)
+    results_df["geo_dist"] = [geo_dist[coord1][coord2] for coord1, coord2 in zip(true_coords, pred_coords)]
+    results_df["euc_dist"] = [euc_dist[coord1][coord2] for coord1, coord2 in zip(true_coords, pred_coords)]
     results_df["euc_dist"] = results_df["euc_dist"].round().astype(int)  # round euclidean to nearest step
     prob_mass_curves = []
     for dist in ["euc_dist", "geo_dist"]:
