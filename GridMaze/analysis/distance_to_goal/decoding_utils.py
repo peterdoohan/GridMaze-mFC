@@ -145,7 +145,7 @@ def get_sessions_for_analysis(subject_IDs, maze_names, goal_subsets):
     sessions = gs.get_maze_sessions(
         subject_IDs=subject_IDs,
         maze_names=maze_names,
-        days_on_maze=days_on_maze,
+        days_on_maze="all",
         goal_subsets=goal_subsets,
         with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
         must_have_data=True,
