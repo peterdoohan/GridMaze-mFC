@@ -61,7 +61,7 @@ def decoding_accuracy_df(results_df, decoding_type="goal", alignment="timepoint"
 
 
 def get_expected_distance_error_df(
-    results_df, simple_maze, decoding_type="goal", alignment="timepoint", return_trial_av=False
+    results_df, simple_maze, decoding_type="goal", alignment="timepoint", permuted=False, return_trial_av=False
 ):
     """
     use distance cals
@@ -121,27 +121,40 @@ def _check_decoding_type(results_df, decoding_type):
 
 
 def _add_distance_cols(results_df, simple_maze, decoding_type, round_euc=False):
-    """ """
-    # precompute step distances (tower-->edge = 1 step)
-    extended_maze = mr.get_extended_simple_maze(simple_maze)
-    geo_dist = dict(nx.all_pairs_dijkstra_path_length(extended_maze, weight="weight"))
+    """
+    Vectorized version: builds NxN distance matrices once, then
+    does batch lookups for all rows in results_df.
+    """
+    # Build label→coord, label→idx, and coord list
     label2coord = mr.get_maze_label2coord(simple_maze)
-    all_coords = list(label2coord.values())
-    euc_dist = {}
-    for c1 in all_coords:
-        _euc_dist = {}
-        for c2 in all_coords:  # adapt edge coods eg, ((6,5), (6,6), to (6, 5.5) by taking mean
-            _c1 = tuple(np.array(c1).mean(axis=0)) if isinstance(c1[0], tuple) else c1
-            _c2 = tuple(np.array(c2).mean(axis=0)) if isinstance(c2[0], tuple) else c2
-            _euc_dist[c2] = euclidean(_c1, _c2) * 2
-        euc_dist[c1] = _euc_dist
-    # calc geo or euc distance from every goal to every possible predicted goal/place
-    true_coords = results_df[f"true_{decoding_type}"].map(label2coord)
-    pred_coords = results_df[f"predicted_{decoding_type}"].map(label2coord)
-    results_df["geo_dist"] = [geo_dist[coord1][coord2] for coord1, coord2 in zip(true_coords, pred_coords)]
-    results_df["euc_dist"] = [euc_dist[coord1][coord2] for coord1, coord2 in zip(true_coords, pred_coords)]
+    labels = list(label2coord.keys())
+    n_labels = len(labels)
+    label2idx = {lbl: i for i, lbl in enumerate(labels)}
+    # Build the graph (geo) distance matrix as a tiny n×n NumPy array for super‐fast lookups.
+    extended_maze = mr.get_extended_simple_maze(simple_maze)
+    raw_geo = dict(nx.all_pairs_dijkstra_path_length(extended_maze, weight="weight"))
+    geo_mat = np.empty((n_labels, n_labels), dtype=float)
+    for i, lab_i in enumerate(labels):
+        coord_i = label2coord[lab_i]
+        row_dist = raw_geo[coord_i]
+        for j, lab_j in enumerate(labels):
+            geo_mat[i, j] = row_dist[label2coord[lab_j]]
+    # Build the “center” coordinate array for Euclidean dists in steps
+    centers = np.vstack(
+        [np.mean(c, axis=0) if isinstance(c[0], tuple) else np.array(c) for c in label2coord.values()]
+    )  # shape (n_labels, 2)
+    # calc geo dists
+    tcol = f"true_{decoding_type}"
+    pcol = f"predicted_{decoding_type}"
+    true_idxs = results_df[tcol].map(label2idx).to_numpy()
+    pred_idxs = results_df[pcol].map(label2idx).to_numpy()
+    results_df["geo_dist"] = geo_mat[true_idxs, pred_idxs]
+    # calc euclidean dists
+    diffs = centers[true_idxs] - centers[pred_idxs]  # shape (M,2)
+    eucs = np.linalg.norm(diffs, axis=1) * 2  # shape (M,)
     if round_euc:
-        results_df["euc_dist"] = results_df["euc_dist"].round().astype(int)  # round euclidean to nearest step
+        eucs = np.rint(eucs).astype(int)
+    results_df["euc_dist"] = eucs
     return results_df
 
 
