@@ -14,17 +14,20 @@ from scipy.stats import ttest_1samp
 from statsmodels.stats.multitest import multipletests
 from sklearn.preprocessing import StandardScaler
 
-
+from GridMaze.analysis.core import get_sessions as gs
 from . import decoding_utils as du
 from . import bases as db
 
 # %% Global Variables
+from GridMaze.paths import RESULTS_PATH
 
+RESULTS_DIR = RESULTS_PATH / "place_decoding"
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # %% Plotting functions
 
 
-def plot_place_decoding(
+def plot_session_place_decoding(
     results_df, simple_maze, dist_type="geodesic", axes=None, cue_window=(-4, 10), reward_window=(-10, 4), ymax=15
 ):
     """ """
@@ -34,32 +37,114 @@ def plot_place_decoding(
         ax.spines[["top", "right"]].set_visible(False)
         ax.axvline(0, color="k", ls="--", alpha=0.5)
     axes[0].set_ylabel("Expected distance error")
-    # ede = expected distance error
-    cue_ede = du.get_expected_distance_error_df(
-        results_df, simple_maze, decoding_type="place", alignment="cue_aligned_time", return_trial_av=True
-    )[dist_type]
-    reward_ede = du.get_expected_distance_error_df(
-        results_df, simple_maze, decoding_type="place", alignment="reward_aligned_time", return_trial_av=True
-    )[dist_type]
-    for ax, window, df, label in zip(axes, [cue_window, reward_window], [cue_ede, reward_ede], ["cue", "reward"]):
+    # expected distance error (ede)
+    true_results = results_df[results_df.permutation.isna()]
+    permuted_results = results_df[~results_df.permutation.isna()]
+    # plot
+    for ax, event, window in zip(
+        axes,
+        ["cue", "reward"],
+        [cue_window, reward_window],
+    ):
+        # plot true
+        true_ede = du.get_expected_distance_error_df(
+            true_results.copy(),
+            simple_maze,
+            decoding_type="place",
+            alignment=f"{event}_aligned_time",
+            permuted=False,
+            return_total_av=True,
+        )[dist_type]
         ax.plot(
-            df.columns.values,
-            df.mean().values,
+            true_ede.index.values,
+            true_ede.values,
             color="k",
             lw=2,
         )
+        # plot chance
+        perm_ede = du.get_expected_distance_error_df(
+            permuted_results.copy(),
+            simple_maze,
+            decoding_type="place",
+            alignment=f"{event}_aligned_time",
+            permuted=True,
+            return_total_av=False,
+        )[dist_type]
+        perm_av_ede = perm_ede.groupby("permutation").mean()
+        p_mean = perm_av_ede.mean().values
+        p_sem = perm_av_ede.sem().values
+
+        ax.fill_between(
+            true_ede.index.values,
+            p_mean - p_sem,
+            p_mean + p_sem,
+            color="k",
+            alpha=0.2,
+        )
         ax.set_xlim(window)
-        ax.set_xlabel(f"{label} (s)")
+        ax.set_xlabel(f"{event} (s)")
         ax.set_ylim(0, ymax)
 
 
 # %% Decoding function
 
 
+def run_session_place_decoding(
+    session,
+    n_chance=10,
+    training_trial_phases=["navigation"],
+    verbose=True,
+):
+    """
+    Runs place decoding on a session on true data and on permuted data n_chance times where spikes are circularly shifted
+    relative to subject's position/place.
+    """
+    if not isinstance(session, gs.MazeSession):  # optional input as tuple of strings for HPC
+        subject_ID, maze_name, day_on_maze = session
+        session = gs.get_maze_sessions(
+            [subject_ID],
+            [maze_name],
+            [day_on_maze],
+            with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
+            must_have_data=True,
+        )
+    # check if session has already been run
+    save_path = RESULTS_DIR / ".".join(training_trial_phases) / session.name
+    if save_path.exists():
+        results_df = pd.read_parquet(save_path)
+    else:
+        # generate true results
+        if verbose:
+            print("Running non-permuted decoding")
+        true_results_df = get_place_decoding(session, training_trial_phases=training_trial_phases, permuted=False)
+        true_results_df["permutation"] = np.nan
+        # generate permuted results
+        if verbose:
+            print("Running permuted decodings")
+        permuted_dfs = []
+        for i in range(n_chance):
+            if verbose:
+                print(i)
+            permuted_results_df = get_place_decoding(
+                session,
+                training_trial_phases=training_trial_phases,
+                permuted=True,
+            )
+            permuted_results_df["permutation"] = i
+            permuted_dfs.append(permuted_results_df)
+        # combine into one df
+        results_df = pd.concat([true_results_df] + permuted_dfs, axis=0)
+        results_df.reset_index(drop=True, inplace=True)
+        # save results
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        results_df.to_parquet(save_path, index=False, compression="gzip")
+    return results_df
+
+
 def get_place_decoding(
     session,
     resolution=0.5,
-    include_multi_units=False,
+    include_multi_units=True,
     window=(-10, 10),
     goal_stratified_validation=True,
     n_test_trials=None,
@@ -73,7 +158,6 @@ def get_place_decoding(
     folds_df = du.get_folds_df(session, goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials)
     results_dfs = []
     for fold in folds_df.columns.levels[0].unique():
-        print(fold)
         fold_df = folds_df[fold]
         test_trials = [t for t in fold_df.test.values.flatten() if isinstance(t, str)]
         train_trials = [t for t in fold_df.train.values.flatten() if isinstance(t, str)]
@@ -102,6 +186,8 @@ def get_place_decoding(
             {
                 "cue_aligned_time": np.repeat(test_df.event_aligned_bin["cue"].values, n_places),
                 "reward_aligned_time": np.repeat(test_df.event_aligned_bin["reward"].values, n_places),
+                "steps_to_goal": np.repeat(test_df.steps_to_goal.future.values, n_places),
+                "trial_phase": np.repeat(test_df.trial_phase.values, n_places),
                 "true_place": np.repeat(y_test, n_places),
                 "trial_unique_ID": np.repeat(test_df.trial_unique_ID.values, n_places),
                 "predicted_place": np.tile(places, n_samples),
