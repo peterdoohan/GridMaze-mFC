@@ -14,6 +14,7 @@ import seaborn as sns
 from scipy.stats import ttest_1samp
 from statsmodels.stats.multitest import multipletests
 from sklearn.preprocessing import StandardScaler
+from GridMaze.analysis.core import permute
 
 from . import bases as db
 from . import decoding_utils as du
@@ -267,6 +268,7 @@ def get_aligned_decoding(reference, maze_names="all", goal_sets="all", verbose=T
 
 def get_distance_referenced_event_aligned_goal_decoding(
     session,
+    permuted=False,
     event="cue",
     inputs=["place"],
     resolution=0.5,
@@ -306,7 +308,10 @@ def get_distance_referenced_event_aligned_goal_decoding(
         include_multi_units=include_multi_units,
         include_place_onehots=p_onehots,
     )
-
+    if permuted:
+        dist_input_data, event_input_data = permute.shuffle_trials(
+            [dist_input_data, event_input_data], trial_unique_ID=True
+        )
     # load basis functions
     if basis_type == "gamma":
         basis_params = db.get_gamma_basis_shape_params(n_bases, btype="steps", max_steps=max_steps_from_goal)
@@ -381,6 +386,7 @@ def get_distance_referenced_event_aligned_goal_decoding(
 
 def get_distance_basis_goal_decoding(
     session,
+    permuted=False,
     inputs=["spikes"],
     resolution=0.2,
     n_bins=20,
@@ -406,6 +412,8 @@ def get_distance_basis_goal_decoding(
         binning_method=binning_method,
         include_place_onehots=p_onehots,
     )
+    if permuted:
+        input_data = permute.shuffle_trials(input_data, trial_unique_ID=True)
     # load basis functions
     if basis_type == "gamma":
         basis_params = db.get_gamma_basis_shape_params(n_bases, btype="steps", max_steps=max_steps_from_goal)

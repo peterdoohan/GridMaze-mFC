@@ -14,6 +14,7 @@ from matplotlib import pyplot as plt
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import get_clusters as gc
 from GridMaze.analysis.core import convert
+from GridMaze.analysis.core import permute
 from GridMaze.maze import representations as mr
 from scipy.spatial.distance import euclidean
 
@@ -59,7 +60,9 @@ def decoding_accuracy_df(results_df, decoding_type="goal", alignment="timepoint"
     return df.reset_index(drop=True)
 
 
-def get_expected_distance_error_df(results_df, simple_maze, decoding_type="goal", alignment="timepoint"):
+def get_expected_distance_error_df(
+    results_df, simple_maze, decoding_type="goal", alignment="timepoint", return_trial_av=False
+):
     """
     use distance cals
     """
@@ -72,9 +75,14 @@ def get_expected_distance_error_df(results_df, simple_maze, decoding_type="goal"
     results_df["euc_weight_prob"] = results_df[f"predicted_{decoding_type}_prob"] * results_df["euc_dist"]
     # EDE (expected distance error)
     trial_EDE = results_df.groupby(["trial_unique_ID", alignment])[["geo_weight_prob", "euc_weight_prob"]].sum()
-    av_EDE = trial_EDE.groupby(alignment).mean()
-    av_EDE.columns = ["geodesic", "euclidean"]
-    return av_EDE
+    if return_trial_av:
+        _trial_EDE = trial_EDE.unstack()
+        _trial_EDE = _trial_EDE.rename(columns={"geo_weight_prob": "geodesic", "euc_weight_prob": "euclidean"}, level=0)
+        return _trial_EDE
+    else:
+        av_EDE = trial_EDE.groupby(alignment).mean()
+        av_EDE.columns = ["geodesic", "euclidean"]
+        return av_EDE
 
 
 def get_decoding_probability_mass_df(results_df, simple_maze, decoding_type="goal", return_trial_av=True):
@@ -303,6 +311,7 @@ def get_place_decoding_input_data(
     resolution=0.5,
     include_multi_units=True,
     window=(-10, 10),
+    permuted=False,
 ):
     """
     Simpler version of other input_data functions which just returns downsampled navigation
@@ -313,6 +322,8 @@ def get_place_decoding_input_data(
     trials_df = session.trials_df
     navigation_df = session.navigation_df
     spike_counts_df = session.navigation_spike_counts_df.reset_index(drop=True)
+    if permuted:
+        spike_counts_df = permute.random_circular_shift(spike_counts_df)
     # filter clusters
     keep_clusters = gc.filter_clusters(
         session.cluster_metrics,

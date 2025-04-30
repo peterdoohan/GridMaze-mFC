@@ -20,20 +20,56 @@ from . import bases as db
 
 # %% Global Variables
 
-# %% Functions
+
+# %% Plotting functions
 
 
-def test(
+def plot_place_decoding(
+    results_df, simple_maze, dist_type="geodesic", axes=None, cue_window=(-4, 10), reward_window=(-10, 4), ymax=15
+):
+    """ """
+    if axes is None:
+        fig, axes = plt.subplots(1, 2, figsize=(4, 2), sharey=True)
+    for ax in axes:
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.axvline(0, color="k", ls="--", alpha=0.5)
+    axes[0].set_ylabel("Expected distance error")
+    # ede = expected distance error
+    cue_ede = du.get_expected_distance_error_df(
+        results_df, simple_maze, decoding_type="place", alignment="cue_aligned_time", return_trial_av=True
+    )[dist_type]
+    reward_ede = du.get_expected_distance_error_df(
+        results_df, simple_maze, decoding_type="place", alignment="reward_aligned_time", return_trial_av=True
+    )[dist_type]
+    for ax, window, df, label in zip(axes, [cue_window, reward_window], [cue_ede, reward_ede], ["cue", "reward"]):
+        ax.plot(
+            df.columns.values,
+            df.mean().values,
+            color="k",
+            lw=2,
+        )
+        ax.set_xlim(window)
+        ax.set_xlabel(f"{label} (s)")
+        ax.set_ylim(0, ymax)
+
+
+# %% Decoding function
+
+
+def get_place_decoding(
     session,
     resolution=0.5,
-    include_multi_units=True,
+    include_multi_units=False,
     window=(-10, 10),
     goal_stratified_validation=True,
     n_test_trials=None,
     training_trial_phases=["navigation", "reward_consumption", "ITI"],
+    training_steps_to_goal_range=None,
+    whiten_features=True,
+    permuted=False,
 ):
     """ """
-    input_data = du.get_place_decoding_input_data(session, resolution, include_multi_units, window)
+    input_data = du.get_place_decoding_input_data(session, resolution, include_multi_units, window, permuted=permuted)
     folds_df = du.get_folds_df(session, goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials)
     results_dfs = []
     for fold in folds_df.columns.levels[0].unique():
@@ -42,12 +78,21 @@ def test(
         test_trials = [t for t in fold_df.test.values.flatten() if isinstance(t, str)]
         train_trials = [t for t in fold_df.train.values.flatten() if isinstance(t, str)]
         train_df = input_data[input_data.trial_unique_ID.isin(train_trials)]
+        # include only specified trial phases in training data
         train_df = train_df[train_df.trial_phase.isin(training_trial_phases)]
+        # include only specified steps to goal in training data (check how this works with NaNs in other trial phases)
+        if training_steps_to_goal_range is not None:
+            train_df = train_df[train_df.steps_to_goal.future.between(*training_steps_to_goal_range)]
         test_df = input_data[input_data.trial_unique_ID.isin(test_trials)]
         X_train, y_train = train_df.spike_count.values, train_df.maze_position.simple.values
         X_test, y_test = test_df.spike_count.values, test_df.maze_position.simple.values
+        if whiten_features:
+            scaler = StandardScaler()  # mean=0, std=1 per column
+            scaler.fit(X_train)  # learn stats on train
+            X_train = scaler.transform(X_train)
+            X_test = scaler.transform(X_test)
         decoder = LogisticRegression(
-            penalty=None, max_iter=10000, random_state=0, class_weight="balanced", verbose=True
+            penalty=None, max_iter=10_000, random_state=0, class_weight="balanced", verbose=False
         )
         decoder.fit(X_train, y_train)
         Pprobs = decoder.predict_proba(X_test)
