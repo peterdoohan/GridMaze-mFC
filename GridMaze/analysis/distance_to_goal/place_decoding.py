@@ -109,7 +109,7 @@ def run_session_place_decoding(
             must_have_data=True,
         )
     # check if session has already been run
-    save_path = RESULTS_DIR / ".".join(training_trial_phases) / session.name
+    save_path = RESULTS_DIR / ".".join(training_trial_phases) / f"{session.name}.parquet.gzip"
     if save_path.exists():
         results_df = pd.read_parquet(save_path)
     else:
