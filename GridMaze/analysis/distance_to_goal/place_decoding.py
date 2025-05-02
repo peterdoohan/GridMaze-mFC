@@ -5,6 +5,7 @@ aligned time. Uses util functions in ./decoding_utils.py
 """
 
 # %% Imports
+import json
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
@@ -13,18 +14,119 @@ import seaborn as sns
 from scipy.stats import ttest_1samp
 from statsmodels.stats.multitest import multipletests
 from sklearn.preprocessing import StandardScaler
+from torch import permute
 
 from GridMaze.analysis.core import get_sessions as gs
 from . import decoding_utils as du
 from . import bases as db
 
 # %% Global Variables
-from GridMaze.paths import RESULTS_PATH
+from GridMaze.paths import RESULTS_PATH, EXPERIMENT_INFO_PATH
 
 RESULTS_DIR = RESULTS_PATH / "place_decoding"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-# %% Plotting functions
+with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
+    SUBJECT_IDS = json.load(input_file)
+
+# %% Plot summary figures
+
+
+def plot_place_decoding(results_df, distance_metric="geodesic", cue_window=(-8, 8), reward_window=(-8, 8), axes=None):
+    """ """
+    # set up fig
+    if axes is None:
+        fig, axes = plt.subplots(1, 2, figsize=(4, 2), sharey=True)
+    for ax in axes:
+        ax.axvline(0, color="k", ls="--", alpha=0.5)
+        ax.axhline(0, color="k", ls="--", alpha=0.5)
+    axes[0].spines[["top", "right"]].set_visible(False)
+    axes[1].spines[["top", "right", "left"]].set_visible(False)
+    axes[0].set_ylabel("Expected distance error")
+    # plot cross subject expected distance error
+    df = results_df[results_df.distance_metric == distance_metric]
+    subject_means = df.groupby(["event", "timepoint", "subject_ID"]).ede.mean()
+    subject_grouped = subject_means.groupby(["event", "timepoint"])
+    mean = subject_grouped.mean().unstack().T
+    sem = subject_grouped.sem().unstack().T
+    for event, window, ax in zip(["cue", "reward"], [cue_window, reward_window], axes):
+        # plot mean and sem
+        ax.plot(mean.index.values, mean[event].values, color="k", lw=2)
+        ax.fill_between(
+            mean.index.values,
+            mean[event] - sem[event],
+            mean[event] + sem[event],
+            color="k",
+            alpha=0.2,
+        )
+        ax.set_xlim(window)
+        ax.set_xlabel(f"{event} (s)")
+
+
+# %%
+
+
+def get_place_decoding_summary_df(
+    maze_names="all", goal_subsets="all", days_on_maze="late", training_trial_phases="navigation", verbose=True
+):
+    save_path = RESULTS_DIR / f"place_decoding_summary_{training_trial_phases}.csv"
+    if save_path.exists():
+        EDE_df = pd.read_csv(save_path, index_col=0)
+    else:
+        if training_trial_phases == "all":
+            ttp = ["navigation", "reward_consumption", "ITI"]
+        elif training_trial_phases == "navigation":
+            ttp = ["navigation"]
+        else:
+            NotImplementedError
+        EDE_dfs = []
+        for subject in SUBJECT_IDS:
+            sessions = gs.get_maze_sessions(
+                subject_IDs=[subject],
+                maze_names=maze_names,
+                days_on_maze=days_on_maze,
+                goal_subsets=goal_subsets,
+                with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
+                must_have_data=True,
+            )
+            for session in sessions:
+                if verbose:
+                    print(session.name)
+                simple_maze = session.simple_maze()
+                # get place decoding results
+                results_df = run_session_place_decoding(session, training_trial_phases=ttp)
+                true_results = results_df[results_df.permutation.isna()]
+                permuted_results = results_df[~results_df.permutation.isna()]
+                for event in ["cue", "reward"]:
+                    # define trial phases for eahc event so we know what trial phase corresponds to pre and post event
+                    valid_phases = ["ITI", "navigation"] if event == "cue" else ["navigation", "reward_consumption"]
+                    _true_results = true_results[true_results.trial_phase.isin(valid_phases)]
+                    _permuted_results = permuted_results[permuted_results.trial_phase.isin(valid_phases)]
+                    # calc expected distance error (ede)
+                    for df, permuted in zip([_true_results, _permuted_results], [False, True]):
+                        ede = du.get_expected_distance_error_df(
+                            df.copy(),
+                            simple_maze,
+                            decoding_type="place",
+                            alignment=f"{event}_aligned_time",
+                            permuted=permuted,
+                            return_total_av=True,
+                        )
+                        ede_df = ede.unstack().reset_index()
+                        ede_df.columns = ["distance_metric", "timepoint", "ede"]
+                        ede_df["permuted"] = permuted
+                        ede_df["event"] = event
+                        ede_df["subject_ID"] = session.subject_ID
+                        ede_df["maze_name"] = session.maze_name
+                        ede_df["day_on_maze"] = session.day_on_maze
+                        EDE_dfs.append(ede_df)
+        EDE_df = pd.concat(EDE_dfs, axis=0).reset_index(drop=True)
+        # save
+        EDE_df.to_csv(save_path)
+    return EDE_df
+
+
+# %% single session plotting functions
 
 
 def plot_session_place_decoding(
