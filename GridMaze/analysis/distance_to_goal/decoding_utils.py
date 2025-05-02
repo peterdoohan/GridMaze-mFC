@@ -61,7 +61,13 @@ def decoding_accuracy_df(results_df, decoding_type="goal", alignment="timepoint"
 
 
 def get_expected_distance_error_df(
-    results_df, simple_maze, decoding_type="goal", alignment="timepoint", permuted=False, return_total_av=False
+    results_df,
+    simple_maze,
+    op="sum",
+    decoding_type="goal",
+    alignment="timepoint",
+    permuted=False,
+    return_total_av=True,
 ):
     """
     use distance cals
@@ -75,7 +81,15 @@ def get_expected_distance_error_df(
     results_df["euc_weight_prob"] = results_df[f"predicted_{decoding_type}_prob"] * results_df["euc_dist"]
     # EDE (expected distance error)
     group_by = ["trial_unique_ID", alignment] if not permuted else ["trial_unique_ID", "permutation", alignment]
-    trial_EDE = results_df.groupby(group_by)[["geo_weight_prob", "euc_weight_prob"]].sum()
+    # change to categorical to speed up groupby
+    for col in group_by:
+        if not pd.api.types.is_categorical_dtype(results_df[col]):
+            results_df[col] = results_df[col].astype("category")
+    grouped_df = results_df.groupby(group_by, observed=True, sort=False)[["geo_weight_prob", "euc_weight_prob"]]
+    if op == "sum":
+        trial_EDE = grouped_df.sum()
+    elif op == "max":
+        trial_EDE = grouped_df.max()
     if not return_total_av:
         _trial_EDE = trial_EDE.unstack()
         _trial_EDE = _trial_EDE.rename(columns={"geo_weight_prob": "geodesic", "euc_weight_prob": "euclidean"}, level=0)
