@@ -64,55 +64,6 @@ def decoding_accuracy_df(results_df, decoding_type="goal", alignment="timepoint"
 import polars as pl
 
 
-def get_expected_distance_error_df2(
-    results_df,
-    simple_maze,
-    op="sum",
-    decoding_type="goal",
-    alignment="timepoint",
-    permuted=False,
-    return_total_av=True,
-):
-    """
-    use distance cals
-    """
-    # check decoding_type matches results df
-    _check_decoding_type(results_df, decoding_type)
-    # add colums for distance to goal (geo or euc) for every true and predicted place/goal pair
-    results_df = _add_distance_cols(results_df, simple_maze, decoding_type, round_euc=False)
-    return results_df
-    # calc expected distance error
-    group_by = ["trial_unique_ID", alignment] if not permuted else ["trial_unique_ID", "permutation", alignment]
-    pl_df = pl.from_pandas(results_df)
-    out = (
-        pl_df.with_columns(
-            [
-                (pl.col(f"predicted_{decoding_type}_prob") * pl.col("geo_dist")).alias("geo_weight_prob"),
-                (pl.col(f"predicted_{decoding_type}_prob") * pl.col("euc_dist")).alias("euc_weight_prob"),
-            ]
-        )
-        .groupby(group_by)
-        .agg([pl.sum("geo_weight_prob"), pl.sum("euc_weight_prob")])
-    )
-    return out
-    results_df["geo_weight_prob"] = results_df[f"predicted_{decoding_type}_prob"] * results_df["geo_dist"]
-    results_df["euc_weight_prob"] = results_df[f"predicted_{decoding_type}_prob"] * results_df["euc_dist"]
-    # EDE (expected distance error)
-    grouped_df = results_df.groupby(group_by, observed=True, sort=False)[["geo_weight_prob", "euc_weight_prob"]]
-    if op == "sum":
-        trial_EDE = grouped_df.sum()
-    elif op == "max":
-        trial_EDE = grouped_df.max()
-    if not return_total_av:
-        _trial_EDE = trial_EDE.unstack()
-        _trial_EDE = _trial_EDE.rename(columns={"geo_weight_prob": "geodesic", "euc_weight_prob": "euclidean"}, level=0)
-        return _trial_EDE
-    else:
-        av_EDE = trial_EDE.groupby(alignment).mean()
-        av_EDE.columns = ["geodesic", "euclidean"]
-        return av_EDE
-
-
 # %%
 
 
@@ -133,11 +84,12 @@ def get_expected_distance_error_df(
     # add colums for distance to goal (geo or euc) for every true and predicted place/goal pair
     results_df = _add_distance_cols(results_df, simple_maze, decoding_type, round_euc=False)
     # calc expected distance error
-    results_df["geo_weight_prob"] = results_df[f"predicted_{decoding_type}_prob"] * results_df["geo_dist"]
-    results_df["euc_weight_prob"] = results_df[f"predicted_{decoding_type}_prob"] * results_df["euc_dist"]
+    results_df.loc[:, "geo_weight_prob"] = results_df[f"predicted_{decoding_type}_prob"] * results_df["geo_dist"]
+    results_df.loc[:, "euc_weight_prob"] = results_df[f"predicted_{decoding_type}_prob"] * results_df["euc_dist"]
     # EDE (expected distance error)
-    group_by = ["trial_unique_ID", alignment] if not permuted else ["trial_unique_ID", "permutation", alignment]
-    grouped_df = results_df.groupby(group_by, observed=True, sort=False)[["geo_weight_prob", "euc_weight_prob"]]
+    group_cols = ["trial_unique_ID", alignment] if not permuted else ["trial_unique_ID", "permutation", alignment]
+    small_df = results_df[group_cols + ["geo_weight_prob", "euc_weight_prob"]]
+    grouped_df = small_df.groupby(group_cols, observed=True, sort=False)[["geo_weight_prob", "euc_weight_prob"]]
     if op == "sum":
         trial_EDE = grouped_df.sum()
     elif op == "max":
@@ -150,6 +102,57 @@ def get_expected_distance_error_df(
         av_EDE = trial_EDE.groupby(alignment).mean()
         av_EDE.columns = ["geodesic", "euclidean"]
         return av_EDE
+
+
+def _add_distance_cols(results_df, simple_maze, decoding_type, round_euc=False):
+    # --- (previous matrix-building code here remains unchanged) ---
+    # Build label→coord, label→idx, and coord list
+    label2coord = mr.get_maze_label2coord(simple_maze)
+    labels = list(label2coord.keys())
+    n_labels = len(labels)
+    label2idx = {lbl: i for i, lbl in enumerate(labels)}
+
+    # Build the graph (geo) distance matrix as a tiny n×n NumPy array for super‐fast lookups.
+    extended_maze = mr.get_extended_simple_maze(simple_maze)
+    raw_geo = dict(nx.all_pairs_dijkstra_path_length(extended_maze, weight="weight"))
+    geo_mat = np.empty((n_labels, n_labels), dtype=float)
+    for i, lab_i in enumerate(labels):
+        coord_i = label2coord[lab_i]
+        row_dist = raw_geo[coord_i]
+        for j, lab_j in enumerate(labels):
+            geo_mat[i, j] = row_dist[label2coord[lab_j]]
+
+    # Build the “center” coordinate array for Euclidean dists in steps
+    centers = np.vstack([np.mean(c, axis=0) if isinstance(c[0], tuple) else np.array(c) for c in label2coord.values()])
+
+    # Precompute Euclidean matrix
+    euc_mat = np.linalg.norm(centers[:, None, :] - centers[None, :, :], axis=2) * 2.0
+
+    # --- Steps 4 & 5: categorical conversion & batch assignment ---
+    tcol = f"true_{decoding_type}"
+    pcol = f"predicted_{decoding_type}"
+
+    # Step 4: turn label columns into Categorical codes for zero-copy mapping
+    for col in (tcol, pcol):
+        if not pd.api.types.is_categorical_dtype(results_df[col]):
+            results_df.loc[:, col] = results_df[col].astype(pd.CategoricalDtype(categories=labels))
+
+    true_idxs = results_df[tcol].cat.codes.to_numpy()
+    pred_idxs = results_df[pcol].cat.codes.to_numpy()
+
+    # Lookup distances via fancy indexing
+    geo_vals = geo_mat[true_idxs, pred_idxs]
+    euc_vals = euc_mat[true_idxs, pred_idxs]
+    if round_euc:
+        euc_vals = np.rint(euc_vals).astype(int)
+
+    # Step 5: assign both columns in one go
+    results_df.loc[:, ["geo_dist", "euc_dist"]] = np.vstack([geo_vals, euc_vals]).T
+
+    return results_df
+
+
+# %%
 
 
 def get_decoding_probability_mass_df(results_df, simple_maze, decoding_type="goal", return_trial_av=True):
@@ -185,54 +188,6 @@ def _check_decoding_type(results_df, decoding_type):
         assert "predicted_place" in results_df.columns, "results_df does not contain place decoding"
     else:
         raise ValueError(f"Unknown decoding type {decoding_type}")
-
-
-def _add_distance_cols3(results_df, simple_maze, decoding_type, round_euc=False):
-    # --- (previous matrix-building code here remains unchanged) ---
-    # Build label→coord, label→idx, and coord list
-    label2coord = mr.get_maze_label2coord(simple_maze)
-    labels = list(label2coord.keys())
-    n_labels = len(labels)
-    label2idx = {lbl: i for i, lbl in enumerate(labels)}
-
-    # Build the graph (geo) distance matrix as a tiny n×n NumPy array for super‐fast lookups.
-    extended_maze = mr.get_extended_simple_maze(simple_maze)
-    raw_geo = dict(nx.all_pairs_dijkstra_path_length(extended_maze, weight="weight"))
-    geo_mat = np.empty((n_labels, n_labels), dtype=float)
-    for i, lab_i in enumerate(labels):
-        coord_i = label2coord[lab_i]
-        row_dist = raw_geo[coord_i]
-        for j, lab_j in enumerate(labels):
-            geo_mat[i, j] = row_dist[label2coord[lab_j]]
-
-    # Build the “center” coordinate array for Euclidean dists in steps
-    centers = np.vstack([np.mean(c, axis=0) if isinstance(c[0], tuple) else np.array(c) for c in label2coord.values()])
-
-    # Precompute Euclidean matrix
-    euc_mat = np.linalg.norm(centers[:, None, :] - centers[None, :, :], axis=2) * 2.0
-
-    # --- Steps 4 & 5: categorical conversion & batch assignment ---
-    tcol = f"true_{decoding_type}"
-    pcol = f"predicted_{decoding_type}"
-
-    # Step 4: turn label columns into Categorical codes for zero-copy mapping
-    for col in (tcol, pcol):
-        if not pd.api.types.is_categorical_dtype(results_df[col]):
-            results_df[col] = results_df[col].astype(pd.CategoricalDtype(categories=labels))
-
-    true_idxs = results_df[tcol].cat.codes.to_numpy()
-    pred_idxs = results_df[pcol].cat.codes.to_numpy()
-
-    # Lookup distances via fancy indexing
-    geo_vals = geo_mat[true_idxs, pred_idxs]
-    euc_vals = euc_mat[true_idxs, pred_idxs]
-    if round_euc:
-        euc_vals = np.rint(euc_vals).astype(int)
-
-    # Step 5: assign both columns in one go
-    results_df.loc[:, ["geo_dist", "euc_dist"]] = np.vstack([geo_vals, euc_vals]).T
-
-    return results_df
 
 
 # %% get sessions

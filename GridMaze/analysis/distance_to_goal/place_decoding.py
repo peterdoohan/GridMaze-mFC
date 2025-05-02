@@ -14,6 +14,7 @@ import seaborn as sns
 from scipy.stats import ttest_1samp
 from statsmodels.stats.multitest import multipletests
 from sklearn.preprocessing import StandardScaler
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from GridMaze.analysis.core import get_sessions as gs
 from . import decoding_utils as du
@@ -27,6 +28,9 @@ RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
+
+with open(EXPERIMENT_INFO_PATH / "maze_day2date.json", "r") as input_file:
+    MAZE_DAY2DATE = json.load(input_file)
 
 # %% Plot summary figures
 
@@ -69,11 +73,107 @@ def plot_place_decoding(results_df, distance_metric="geodesic", cue_window=(-8, 
 # %%
 
 
-def get_place_decoding_summary_df(
-    maze_names="all", goal_subsets="all", days_on_maze="late", training_trial_phases="navigation", verbose=True
+def _process_session(session, ttp):
+    """Compute EDE-dfs for a single session."""
+    simple_maze = session.simple_maze()
+    results_df = run_session_place_decoding(session, training_trial_phases=ttp)
+    true_results = results_df[results_df.permutation.isna()]
+    permuted_results = results_df[~results_df.permutation.isna()]
+    session_dfs = []
+    for event in ("cue", "reward"):
+        valid_phases = ["ITI", "navigation"] if event == "cue" else ["navigation", "reward_consumption"]
+        _true = true_results[true_results.trial_phase.isin(valid_phases)]
+        _perm = permuted_results[permuted_results.trial_phase.isin(valid_phases)]
+        for df, permuted in ((_true, False), (_perm, True)):
+            ede = du.get_expected_distance_error_df(
+                df.copy(),
+                simple_maze,
+                decoding_type="place",
+                alignment=f"{event}_aligned_time",
+                permuted=permuted,
+                return_total_av=True,
+            )
+            ede_df = (
+                ede.unstack()
+                .reset_index()
+                .rename(columns={"level_0": "distance_metric", "level_1": "timepoint", 0: "ede"})
+            )
+            ede_df["permuted"] = permuted
+            ede_df["event"] = event
+            ede_df["subject_ID"] = session.subject_ID
+            ede_df["maze_name"] = session.maze_name
+            ede_df["day_on_maze"] = session.day_on_maze
+            ede_df["trial_subset"] = session.goal_subset
+            session_dfs.append(ede_df)
+    return session_dfs
+
+
+def get_place_decoding_summary_df2(
+    maze_names="all",
+    goal_subsets="all",
+    days_on_maze="late",
+    training_trial_phases="navigation",
+    verbose=True,
+    overwrite=False,
+    n_jobs=20,
 ):
     save_path = RESULTS_DIR / f"place_decoding_summary_{training_trial_phases}.csv"
-    if save_path.exists():
+    if save_path.exists() and not overwrite:
+        return pd.read_csv(save_path, index_col=0)
+
+    # determine phases
+    if training_trial_phases == "all":
+        ttp = ["navigation", "reward_consumption", "ITI"]
+    elif training_trial_phases == "navigation":
+        ttp = ["navigation"]
+    else:
+        raise NotImplementedError(f"Unknown phase: {training_trial_phases}")
+
+    # gather all sessions up front
+    all_sessions = []
+    for subject in SUBJECT_IDS:
+        sess = gs.get_maze_sessions(
+            subject_IDs=[subject],
+            maze_names=maze_names,
+            days_on_maze=days_on_maze,
+            goal_subsets=goal_subsets,
+            with_data=["cluster_metrics", "trials_df"],
+            must_have_data=True,
+        )
+        all_sessions.extend(sess)
+
+    EDE_dfs = []
+    # parallel dispatch
+    with ProcessPoolExecutor(max_workers=n_jobs) as exe:
+        futures = {exe.submit(_process_session, session, ttp): session for session in all_sessions}
+        for fut in as_completed(futures):
+            session = futures[fut]
+            try:
+                if verbose:
+                    print(f"Finished: {session.name}")
+                EDE_dfs.extend(fut.result())
+            except Exception as e:
+                print(f"Error processing {session.name}: {e}")
+
+    # concat & save
+    EDE_df = pd.concat(EDE_dfs, axis=0).reset_index(drop=True)
+    EDE_df.to_csv(save_path)
+    return EDE_df
+
+
+# %%
+
+
+def get_place_decoding_summary_df(
+    maze_names="all",
+    goal_subsets="all",
+    days_on_maze="late",
+    training_trial_phases="navigation",
+    verbose=True,
+    overwrite=False,
+):
+    save_path = RESULTS_DIR / f"place_decoding_summary_{training_trial_phases}.csv"
+    if save_path.exists() and not overwrite:
         EDE_df = pd.read_csv(save_path, index_col=0)
     else:
         if training_trial_phases == "all":
@@ -89,7 +189,7 @@ def get_place_decoding_summary_df(
                 maze_names=maze_names,
                 days_on_maze=days_on_maze,
                 goal_subsets=goal_subsets,
-                with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
+                with_data=["cluster_metrics", "trials_df"],
                 must_have_data=True,
             )
             for session in sessions:
@@ -207,17 +307,13 @@ def run_session_place_decoding(
     """
     if not isinstance(session, gs.MazeSession):  # optional input as tuple of strings for HPC
         subject_ID, maze_name, day_on_maze = session
-        session = gs.get_maze_sessions(
-            [subject_ID],
-            [maze_name],
-            [day_on_maze],
-            with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
-            must_have_data=True,
-        )
+        session_name = f"{subject_ID}.{MAZE_DAY2DATE[maze_name][str(day_on_maze)]}.maze"
+    else:
+        session_name = session.name
     # check if session has already been run
-    save_path = RESULTS_DIR / ".".join(training_trial_phases) / f"{session.name}.parquet.gzip"
+    save_path = RESULTS_DIR / ".".join(training_trial_phases) / f"{session_name}.parquet.gzip"
     if save_path.exists():
-        results_df = pd.read_parquet(save_path)
+        results_df = pd.read_parquet(save_path, engine="pyarrow", use_threads=True)
     else:
         # generate true results
         if verbose:
