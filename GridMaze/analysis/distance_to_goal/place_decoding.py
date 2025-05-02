@@ -289,9 +289,12 @@ def get_place_decoding(
     training_trial_phases=["navigation"],
     training_steps_to_goal_range=None,
     whiten_features=True,
+    inv_alpha="auto",
+    return_inv_alpha=False,
     permuted=False,
 ):
     """ """
+    simple_maze = session.simple_maze()
     input_data = du.get_place_decoding_input_data(session, resolution, include_multi_units, window, permuted=permuted)
     if input_type == "place_direction":
         input_data[("place_direction", "")] = input_data.apply(
@@ -321,9 +324,30 @@ def get_place_decoding(
             scaler.fit(X_train)  # learn stats on train
             X_train = scaler.transform(X_train)
             X_test = scaler.transform(X_test)
-        decoder = LogisticRegression(
-            penalty=None, max_iter=10_000, random_state=0, class_weight="balanced", verbose=False
-        )
+
+        # get optimal regularization
+        if fold == "fold_0":
+            if inv_alpha == "auto":
+                opt_reg = get_opt_reg(
+                    test_df,
+                    X_train,
+                    X_test,
+                    y_train,
+                    y_test,
+                    input_type,
+                    simple_maze,
+                )
+            else:
+                opt_reg = inv_alpha
+
+        if opt_reg is None:
+            decoder = LogisticRegression(
+                penalty=None, max_iter=10_000, random_state=0, class_weight="balanced", verbose=False
+            )
+        else:
+            decoder = LogisticRegression(
+                penalty="l2", C=opt_reg, max_iter=10_000, random_state=0, class_weight="balanced", verbose=False
+            )
         decoder.fit(X_train, y_train)
         Pprobs = decoder.predict_proba(X_test)
         n_samples, n_places = Pprobs.shape
@@ -344,7 +368,71 @@ def get_place_decoding(
         results_dfs.append(df)
     results_df = pd.concat(results_dfs, axis=0)
     results_df.reset_index(drop=True, inplace=True)
-    return results_df
+    if return_inv_alpha:
+        return results_df, opt_reg
+    else:
+        return results_df
 
 
 # %%
+
+
+def get_opt_reg(
+    test_df,
+    X_train,
+    X_test,
+    y_train,
+    y_test,
+    input_type,
+    simple_maze,
+    reg_range=[None, 10, 50, 1e2, 5e2, 1e3, 1e4],
+    dist_metric="geodesic",
+    cue_window=(-2, 2),
+    reward_window=(-8, 0),
+):
+    """
+    Find optimal regularisation for Logistic regression by minimising expected distance error (EDE) on one
+    fold of test data
+    """
+    reg_EDE = []
+    for inv_alpha in reg_range:
+        if inv_alpha is None:
+            decoder = LogisticRegression(
+                penalty=None, max_iter=10_000, random_state=0, class_weight="balanced", verbose=False
+            )
+        else:
+            decoder = LogisticRegression(
+                penalty="l2", C=inv_alpha, max_iter=10_000, random_state=0, class_weight="balanced", verbose=False
+            )
+        decoder.fit(X_train, y_train)
+        Pprobs = decoder.predict_proba(X_test)
+        n_samples, n_places = Pprobs.shape
+        places = list(decoder.classes_)
+        df = pd.DataFrame(
+            {
+                "cue_aligned_time": np.repeat(test_df.event_aligned_bin["cue"].values, n_places),
+                "reward_aligned_time": np.repeat(test_df.event_aligned_bin["reward"].values, n_places),
+                "steps_to_goal": np.repeat(test_df.steps_to_goal.future.values, n_places),
+                "trial_phase": np.repeat(test_df.trial_phase.values, n_places),
+                f"true_{input_type}": np.repeat(y_test, n_places),
+                "trial_unique_ID": np.repeat(test_df.trial_unique_ID.values, n_places),
+                f"predicted_{input_type}": np.tile(places, n_samples),
+                f"predicted_{input_type}_prob": Pprobs.ravel(),
+            }
+        )
+        EDEs = []
+        for event, window in zip(["cue", "reward"], [cue_window, reward_window]):
+            ede_df = du.get_expected_distance_error_df(
+                df,
+                simple_maze,
+                op="sum",
+                decoding_type=input_type,
+                alignment=f"{event}_aligned_time",
+                permuted=False,
+                return_total_av=True,
+            )[dist_metric]
+            EDEs.extend(ede_df[(ede_df.index < window[1]) & (ede_df.index > window[0])].to_list())
+        reg_EDE.append(np.mean(EDEs))
+    reg_EDE = np.array(reg_EDE)
+    opt_reg = reg_range[np.argmin(reg_EDE)]
+    return opt_reg
