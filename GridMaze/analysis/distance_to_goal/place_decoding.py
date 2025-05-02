@@ -280,6 +280,7 @@ def run_session_place_decoding(
 
 def get_place_decoding(
     session,
+    input_type="place_direction",
     resolution=0.5,
     include_multi_units=True,
     window=(-10, 10),
@@ -292,9 +293,14 @@ def get_place_decoding(
 ):
     """ """
     input_data = du.get_place_decoding_input_data(session, resolution, include_multi_units, window, permuted=permuted)
+    if input_type == "place_direction":
+        input_data[("place_direction", "")] = input_data.apply(
+            lambda x: f"{x[("maze_position", "simple")]}_{x[("cardinal_movement_direction", "")]}", axis=1
+        )
     folds_df = du.get_folds_df(session, goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials)
     results_dfs = []
     for fold in folds_df.columns.levels[0].unique():
+        print(fold)
         fold_df = folds_df[fold]
         test_trials = [t for t in fold_df.test.values.flatten() if isinstance(t, str)]
         train_trials = [t for t in fold_df.train.values.flatten() if isinstance(t, str)]
@@ -305,7 +311,10 @@ def get_place_decoding(
         if training_steps_to_goal_range is not None:
             train_df = train_df[train_df.steps_to_goal.future.between(*training_steps_to_goal_range)]
         test_df = input_data[input_data.trial_unique_ID.isin(test_trials)]
-        X_train, y_train = train_df.spike_count.values, train_df.maze_position.simple.values
+        if input_type == "place":
+            X_train, y_train = train_df.spike_count.values, train_df.maze_position.simple.values
+        elif input_type == "place_direction":
+            X_train, y_train = train_df.spike_count.values, train_df.place_direction.values
         X_test, y_test = test_df.spike_count.values, test_df.maze_position.simple.values
         if whiten_features:
             scaler = StandardScaler()  # mean=0, std=1 per column
@@ -325,10 +334,10 @@ def get_place_decoding(
                 "reward_aligned_time": np.repeat(test_df.event_aligned_bin["reward"].values, n_places),
                 "steps_to_goal": np.repeat(test_df.steps_to_goal.future.values, n_places),
                 "trial_phase": np.repeat(test_df.trial_phase.values, n_places),
-                "true_place": np.repeat(y_test, n_places),
+                f"true_{input_type}": np.repeat(y_test, n_places),
                 "trial_unique_ID": np.repeat(test_df.trial_unique_ID.values, n_places),
-                "predicted_place": np.tile(places, n_samples),
-                "predicted_place_prob": Pprobs.ravel(),
+                f"predicted_{input_type}": np.tile(places, n_samples),
+                f"predicted_{input_type}_prob": Pprobs.ravel(),
             }
         )
         df["fold"] = fold
@@ -336,3 +345,6 @@ def get_place_decoding(
     results_df = pd.concat(results_dfs, axis=0)
     results_df.reset_index(drop=True, inplace=True)
     return results_df
+
+
+# %%

@@ -60,10 +60,6 @@ def decoding_accuracy_df(results_df, decoding_type="goal", alignment="timepoint"
     return df.reset_index(drop=True)
 
 
-# %% Dev
-import polars as pl
-
-
 # %%
 
 
@@ -105,7 +101,9 @@ def get_expected_distance_error_df(
 
 
 def _add_distance_cols(results_df, simple_maze, decoding_type, round_euc=False):
-    # --- (previous matrix-building code here remains unchanged) ---
+    if decoding_type == "place_direction":
+        results_df["true_place"] = results_df.true_place_direction.str.partition("_")[0]
+        results_df["predicted_place"] = results_df.predicted_place_direction.str.partition("_")[0]
     # Build label→coord, label→idx, and coord list
     label2coord = mr.get_maze_label2coord(simple_maze)
     labels = list(label2coord.keys())
@@ -128,8 +126,12 @@ def _add_distance_cols(results_df, simple_maze, decoding_type, round_euc=False):
     euc_mat = np.linalg.norm(centers[:, None, :] - centers[None, :, :], axis=2) * 2.0
 
     # --- Steps 4 & 5: categorical conversion & batch assignment ---
-    tcol = f"true_{decoding_type}"
-    pcol = f"predicted_{decoding_type}"
+    if decoding_type == "place_direction":
+        _dt = "place"
+    else:
+        _dt = decoding_type
+    tcol = f"true_{_dt}"
+    pcol = f"predicted_{_dt}"
 
     # Step 4: turn label columns into Categorical codes for zero-copy mapping
     for col in (tcol, pcol):
@@ -184,6 +186,8 @@ def _check_decoding_type(results_df, decoding_type):
         assert "predicted_goal" in results_df.columns, "results_df does not contain goal decoding"
     elif decoding_type == "place":
         assert "predicted_place" in results_df.columns, "results_df does not contain place decoding"
+    elif decoding_type == "place_direction":
+        assert "predicted_place_direction" in results_df.columns, "results_df does not contain place direction decoding"
     else:
         raise ValueError(f"Unknown decoding type {decoding_type}")
 
