@@ -234,6 +234,8 @@ def run_session_place_decoding(
     verbose=True,
 ):
     """
+    TODO: update to handel place direction
+
     Runs place decoding on a session on true data and on permuted data n_chance times where spikes are circularly shifted
     relative to subject's position/place.
     """
