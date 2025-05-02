@@ -110,7 +110,6 @@ def _add_distance_cols(results_df, simple_maze, decoding_type, round_euc=False):
     label2coord = mr.get_maze_label2coord(simple_maze)
     labels = list(label2coord.keys())
     n_labels = len(labels)
-    label2idx = {lbl: i for i, lbl in enumerate(labels)}
 
     # Build the graph (geo) distance matrix as a tiny n×n NumPy array for super‐fast lookups.
     extended_maze = mr.get_extended_simple_maze(simple_maze)
@@ -134,8 +133,7 @@ def _add_distance_cols(results_df, simple_maze, decoding_type, round_euc=False):
 
     # Step 4: turn label columns into Categorical codes for zero-copy mapping
     for col in (tcol, pcol):
-        if not pd.api.types.is_categorical_dtype(results_df[col]):
-            results_df.loc[:, col] = results_df[col].astype(pd.CategoricalDtype(categories=labels))
+        results_df[col] = pd.Categorical(results_df[col], categories=labels)
 
     true_idxs = results_df[tcol].cat.codes.to_numpy()
     pred_idxs = results_df[pcol].cat.codes.to_numpy()
@@ -529,6 +527,7 @@ def _downsample_data(navigation_df, spike_counts_df, resolution=0.2):
             ("goal", ""),
             ("trial_phase", ""),
             ("maze_position", "simple"),
+            ("cardinal_movement_direction", ""),
             ("steps_to_goal", "future"),
         ]
     ]
