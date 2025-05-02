@@ -361,6 +361,8 @@ def get_place_decoding_input_data(
     reward_aligned_bins = pd.cut(nav_info[("event_aligned_time", "reward")], bins=bins)
     nav_info[("event_aligned_bin", "cue")] = cue_aligned_bins.apply(lambda x: x.mid).astype(float)
     nav_info[("event_aligned_bin", "reward")] = reward_aligned_bins.apply(lambda x: x.mid).astype(float)
+    # add non nav distances
+    nav_info[("steps_to_goal", "future")] = _add_non_nav_distances(session, nav_info, ignore_last_n=0)
     # combine and remove out of trial times
     nav_rates_df = pd.concat([nav_info, spike_counts_df], axis=1)
     nav_rates_df = nav_rates_df[~nav_rates_df.trial.isna()]

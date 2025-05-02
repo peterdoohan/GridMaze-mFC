@@ -14,7 +14,6 @@ import seaborn as sns
 from scipy.stats import ttest_1samp
 from statsmodels.stats.multitest import multipletests
 from sklearn.preprocessing import StandardScaler
-from torch import permute
 
 from GridMaze.analysis.core import get_sessions as gs
 from . import decoding_utils as du
@@ -45,20 +44,24 @@ def plot_place_decoding(results_df, distance_metric="geodesic", cue_window=(-8, 
     axes[0].set_ylabel("Expected distance error")
     # plot cross subject expected distance error
     df = results_df[results_df.distance_metric == distance_metric]
-    subject_means = df.groupby(["event", "timepoint", "subject_ID"]).ede.mean()
-    subject_grouped = subject_means.groupby(["event", "timepoint"])
-    mean = subject_grouped.mean().unstack().T
-    sem = subject_grouped.sem().unstack().T
+    subject_means = df.groupby(["event", "timepoint", "permuted", "subject_ID"]).ede.mean()
+    subject_grouped = subject_means.groupby(["event", "timepoint", "permuted"])
+    mean = subject_grouped.mean().unstack()
+    sem = subject_grouped.sem().unstack()
+    timepoints = mean.index.get_level_values(1).unique().values
     for event, window, ax in zip(["cue", "reward"], [cue_window, reward_window], axes):
-        # plot mean and sem
-        ax.plot(mean.index.values, mean[event].values, color="k", lw=2)
-        ax.fill_between(
-            mean.index.values,
-            mean[event] - sem[event],
-            mean[event] + sem[event],
-            color="k",
-            alpha=0.2,
-        )
+        for permuted, color in zip([True, False], ["k", "r"]):
+            # plot mean and sem
+            _mean = mean.loc[event, :][permuted]
+            _sem = sem.loc[event, :][permuted]
+            ax.plot(timepoints, _mean, color=color, lw=2)
+            ax.fill_between(
+                timepoints,
+                _mean - _sem,
+                _mean + _sem,
+                color=color,
+                alpha=0.2,
+            )
         ax.set_xlim(window)
         ax.set_xlabel(f"{event} (s)")
 
@@ -119,6 +122,7 @@ def get_place_decoding_summary_df(
                         ede_df["subject_ID"] = session.subject_ID
                         ede_df["maze_name"] = session.maze_name
                         ede_df["day_on_maze"] = session.day_on_maze
+                        ede_df["trial_subset"] = session.goal_subset
                         EDE_dfs.append(ede_df)
         EDE_df = pd.concat(EDE_dfs, axis=0).reset_index(drop=True)
         # save
@@ -241,6 +245,9 @@ def run_session_place_decoding(
         save_path.parent.mkdir(parents=True, exist_ok=True)
         results_df.to_parquet(save_path, index=False, compression="gzip")
     return results_df
+
+
+# %% Decoding
 
 
 def get_place_decoding(
