@@ -19,7 +19,8 @@ GAUSSIAN_2P_SCALE = {"distance": 0.75, "steps": 1.5}
 
 
 def distance_basis_generator(
-    basis_values,
+    n_bases=5,
+    basis_values=None,
     basis="gamma",
     btype="steps",
     normalise=True,
@@ -49,6 +50,14 @@ def distance_basis_generator(
         scale = GAUSSIAN_2P_SCALE[btype]
     else:
         NotImplementedError
+    # get shape values
+    if basis_values in None:
+        if basis == "gamma":
+            basis_values = get_gamma_basis_shape_params(n_bases, btype="steps", max_steps=20)
+        elif basis == "gaussian":
+            basis_values = get_gaussian_basis_centres(n_bases, btype="steps", max_steps=20)
+        else:
+            raise NotImplementedError(f"Basis type {basis} not implemented")
     # plot
     if plot:
         if basis == "gamma":
