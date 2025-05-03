@@ -14,6 +14,7 @@ import networkx as nx
 from sklearn.linear_model import LogisticRegression
 from matplotlib import pyplot as plt
 from sklearn.preprocessing import StandardScaler
+from joblib import Parallel, delayed
 
 from GridMaze.maze import representations as mr
 from GridMaze.analysis.core import get_sessions as gs
@@ -87,6 +88,81 @@ def get_predicted_place_directions(
             X_test = scaler.transform(X_test)
 
     return
+
+
+# %%
+def _evaluate_alpha(
+    inv_alpha, X_train, y_train, X_test, y_test, test_df, simple_maze, eval_metric, eval_kwargs, output_type
+):
+    # instantiate decoder
+    if inv_alpha is None:
+        decoder = LogisticRegression(penalty=None, max_iter=10_000, random_state=0, class_weight="balanced")
+    else:
+        decoder = LogisticRegression(
+            penalty="l2", C=inv_alpha, max_iter=10_000, random_state=0, class_weight="balanced"
+        )
+    # fit & get probs
+    decoder.fit(X_train, y_train)
+    Yprobs = decoder.predict_proba(X_test)
+    features = list(decoder.classes_)
+    df = _get_decoding_results_df(test_df, y_test, Yprobs, features, output_type)
+
+    # compute your metric (EDE here)
+    cue_EDE_df, reward_EDE_edf = [
+        get_expected_distance_error_pl(
+            df,
+            simple_maze,
+            op=eval_kwargs["op"],
+            decoding_type=output_type,
+            alignment=f"{event}_aligned_time",
+            permuted=False,
+            return_total_av=True,
+        )[eval_kwargs["dist_metric"]]
+        for event in ["cue", "reward"]
+    ]
+    windows = [eval_kwargs["cue_window"], eval_kwargs["reward_window"]]
+    values = np.concatenate(
+        [_df[(_df.index > w[0]) & (_df.index < w[1])].values for _df, w in zip([cue_EDE_df, reward_EDE_edf], windows)]
+    )
+    return values.mean()
+
+
+def get_opt_reg_parallel(
+    input_data,
+    fold_df,
+    simple_maze=None,
+    basis_fn=None,
+    input_type="spikes",  # X
+    output_type="place_direction",  # Y
+    training_trial_phases=["navigation"],
+    reg_range=[None, 10, 50, 1e2, 5e2, 1e3],
+    eval_metric="expected_distance_error",
+    eval_kwargs={
+        "op": "sum",
+        "dist_metric": "geodesic",
+        "cue_window": (-2, 2),
+        "reward_window": (-8, 0),
+    },
+):
+    # prepare data exactly as before
+    train_df, test_df = _get_test_train_dfs(input_data, fold_df, training_trial_phases)
+    X_train, X_test, y_train, y_test = _get_test_train_arrays(train_df, test_df, input_type, output_type, basis_fn)
+    # now parallel evaluate
+    eval_metrics = Parallel(n_jobs=len(reg_range), verbose=5)(
+        delayed(_evaluate_alpha)(
+            inv_alpha, X_train, y_train, X_test, y_test, test_df, simple_maze, eval_metric, eval_kwargs, output_type
+        )
+        for inv_alpha in reg_range
+    )
+    eval_metrics = np.array(eval_metrics)
+    # choose best
+    if eval_metric == "expected_distance_error":
+        return reg_range[np.argmin(eval_metrics)]
+    else:
+        return reg_range[np.argmax(eval_metrics)]
+
+
+# %%
 
 
 def get_opt_reg(
