@@ -91,40 +91,6 @@ def get_predicted_place_directions(
 
 
 # %%
-def _evaluate_alpha(
-    inv_alpha, X_train, y_train, X_test, y_test, test_df, simple_maze, eval_metric, eval_kwargs, output_type
-):
-    # instantiate decoder
-    if inv_alpha is None:
-        decoder = LogisticRegression(penalty=None, max_iter=10_000, random_state=0, class_weight="balanced")
-    else:
-        decoder = LogisticRegression(
-            penalty="l2", C=inv_alpha, max_iter=10_000, random_state=0, class_weight="balanced"
-        )
-    # fit & get probs
-    decoder.fit(X_train, y_train)
-    Yprobs = decoder.predict_proba(X_test)
-    features = list(decoder.classes_)
-    df = _get_decoding_results_df(test_df, y_test, Yprobs, features, output_type)
-
-    # compute your metric (EDE here)
-    cue_EDE_df, reward_EDE_edf = [
-        get_expected_distance_error_pl(
-            df,
-            simple_maze,
-            op=eval_kwargs["op"],
-            decoding_type=output_type,
-            alignment=f"{event}_aligned_time",
-            permuted=False,
-            return_total_av=True,
-        )[eval_kwargs["dist_metric"]]
-        for event in ["cue", "reward"]
-    ]
-    windows = [eval_kwargs["cue_window"], eval_kwargs["reward_window"]]
-    values = np.concatenate(
-        [_df[(_df.index > w[0]) & (_df.index < w[1])].values for _df, w in zip([cue_EDE_df, reward_EDE_edf], windows)]
-    )
-    return values.mean()
 
 
 def get_opt_reg_parallel(
@@ -162,85 +128,40 @@ def get_opt_reg_parallel(
         return reg_range[np.argmax(eval_metrics)]
 
 
-# %%
-
-
-def get_opt_reg(
-    input_data,
-    fold_df,
-    simple_maze=None,
-    basis_fn=None,
-    input_type="spikes",  # X
-    output_type="place_direction",  # Y
-    training_trial_phases=["navigation"],
-    reg_range=[None, 10, 50, 1e2, 5e2, 1e3],
-    eval_metric="expected_distance_error",
-    eval_kwargs={
-        "op": "sum",
-        "dist_metric": "geodesic",
-        "cue_window": (-2, 2),
-        "reward_window": (-8, 0),
-    },
+def _evaluate_alpha(
+    inv_alpha, X_train, y_train, X_test, y_test, test_df, simple_maze, eval_metric, eval_kwargs, output_type
 ):
-    """
-    Returns optimal regularisation parameter for a logistic regression decoder
-    --- Notes ---
-    input_type: ["spikes", "spikes_by_distance", "place_direction", "place"]
-    output_type: ["place_direction", "goal"]
-    """
-    # process input data to X,y arrays to feed into decoder
-    train_df, test_df = _get_test_train_dfs(input_data, fold_df, training_trial_phases)
-    X_train, X_test, y_train, y_test = _get_test_train_arrays(train_df, test_df, input_type, output_type, basis_fn)
-    eval_metrics = []
-    for inv_alpha in reg_range:
-        if inv_alpha is None:
-            decoder = LogisticRegression(penalty=None, max_iter=10_000, random_state=0, class_weight="balanced")
-        else:
-            decoder = LogisticRegression(
-                penalty="l2", C=inv_alpha, max_iter=10_000, random_state=0, class_weight="balanced"
-            )
-        decoder.fit(X_train, y_train)
-        Yprobs = decoder.predict_proba(X_test)
-        features = list(decoder.classes_)
-        df = _get_decoding_results_df(test_df, y_test, Yprobs, features, output_type)
-        if eval_metric == "expected_distance_error":
-            cue_EDE_df, reward_EDE_edf = [
-                get_expected_distance_error_pl(
-                    df,
-                    simple_maze,
-                    op=eval_kwargs["op"],
-                    decoding_type=output_type,
-                    alignment=f"{event}_aligned_time",
-                    permuted=False,
-                    return_total_av=True,
-                )[eval_kwargs["dist_metric"]]
-                for event in ["cue", "reward"]
-            ]
-            M = np.concatenate(
-                [
-                    _df[(_df.index < window[1]) & (_df.index > window[0])].values
-                    for _df, window in zip(
-                        [cue_EDE_df, reward_EDE_edf], [eval_kwargs["cue_window"], eval_kwargs["reward_window"]]
-                    )
-                ]
-            ).mean()
-
-        elif eval_metric == "accuracy":
-            NotImplementedError
-        else:
-            raise ValueError(f"Unknown eval metric {eval_metric!r}")
-
-        eval_metrics.append(M)
-
-    # return best regularisation parameter
-    eval_metrics = np.array(eval_metrics)
-    if eval_metric == "expected_distance_error":
-        opt_reg = reg_range[np.argmin(eval_metrics)]
-    elif eval_metric == "accuracy":
-        opt_reg = reg_range[np.argmax(eval_metrics)]
+    # instantiate decoder
+    if inv_alpha is None:
+        decoder = LogisticRegression(penalty=None, max_iter=10_000, random_state=0, class_weight="balanced")
     else:
-        raise ValueError(f"Unknown eval metric {eval_metric!r}")
-    return opt_reg
+        decoder = LogisticRegression(
+            penalty="l2", C=inv_alpha, max_iter=10_000, random_state=0, class_weight="balanced"
+        )
+    # fit & get probs
+    decoder.fit(X_train, y_train)
+    Yprobs = decoder.predict_proba(X_test)
+    features = list(decoder.classes_)
+    df = _get_decoding_results_df(test_df, y_test, Yprobs, features, output_type)
+
+    # compute your metric (EDE here)
+    cue_EDE_df, reward_EDE_edf = [
+        get_expected_distance_error_pl(
+            df,
+            simple_maze,
+            op=eval_kwargs["op"],
+            decoding_type=output_type,
+            alignment=f"{event}_aligned_time",
+            permuted=False,
+            return_total_av=True,
+        )[eval_kwargs["dist_metric"]]
+        for event in ["cue", "reward"]
+    ]
+    windows = [eval_kwargs["cue_window"], eval_kwargs["reward_window"]]
+    values = np.concatenate(
+        [_df[(_df.index > w[0]) & (_df.index < w[1])].values for _df, w in zip([cue_EDE_df, reward_EDE_edf], windows)]
+    )
+    return values.mean()
 
 
 # %% new polars eval functions
