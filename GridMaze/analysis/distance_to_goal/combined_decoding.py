@@ -60,7 +60,12 @@ def test(
 
 
 def get_predicted_place_directions(
-    input_data, folds_df, training_trial_phases=["navigation"], whiten_features=True, verbose=False
+    input_data,
+    folds_df,
+    simple_maze,
+    inv_alpha="auto",
+    training_trial_phases=["navigation"],
+    verbose=False,
 ):
     """
     From some input_data, and folds_df dataframes, preform cross-validated prediction
@@ -72,28 +77,62 @@ def get_predicted_place_directions(
 
     W/ automatic regularisation optimisation
     """
+    # precompute all place_directions ("A1_N")
+    place_directions = mr.get_maze_place_direction_pairs(simple_maze)
+    place_directions = ["_".join(x) for x in place_directions]
+
+    # add place_direction column to input_data
     input_data[("place_direction", "")] = input_data.apply(
         lambda x: f"{x[("maze_position", "simple")]}_{x[("cardinal_movement_direction", "")]}", axis=1
     )
+    # get x-val optimal regularisation
+    if inv_alpha == "auto":
+        inv_alpha = get_opt_reg(
+            input_data,
+            folds_df["fold_0"],
+            simple_maze,
+            input_type="spikes",
+            output_type="place_direction",
+            taining_trial_phases=training_trial_phases,
+            eval_metric="expected_distance_error",
+        )
+    # get x-valed place-direction prob from spikes on each input_data sample
+    dfs = []
     for fold in folds_df.columns.levels[0].unique():
         if verbose:
             print(fold)
         train_df, test_df = _get_test_train_dfs(input_data, folds_df[fold], training_trial_phases)
-        X_train, y_train = train_df.spike_count.values, train_df.place_direction.values
-        X_test, y_test = test_df.spike_count.values, test_df.maze_position.simple.values
-        if whiten_features:
-            scaler = StandardScaler()  # mean=0, std=1 per column
-            scaler.fit(X_train)  # learn stats on train
-            X_train = scaler.transform(X_train)
-            X_test = scaler.transform(X_test)
-
-    return
+        X_train, X_test, y_train, y_test = _get_test_train_arrays(
+            train_df, test_df, input_type="spikes", output_type="place_direction", whiten_features=True
+        )
+        if inv_alpha is None:
+            decoder = LogisticRegression(penalty=None, max_iter=10_000, random_state=0, class_weight="balanced")
+        else:
+            decoder = LogisticRegression(
+                penalty="l2", C=inv_alpha, max_iter=10_000, random_state=0, class_weight="balanced"
+            )
+        decoder.fit(X_train, y_train)
+        Yprobs = decoder.predict_proba(X_test)
+        features = list(decoder.classes_)
+        place_direction_probs_df = pd.DataFrame(
+            index=test_df.index,
+            columns=pd.MultiIndex.from_product([["place_direction_prob"], features]),
+            data=Yprobs,
+        )
+        # check for missing place_directions and add columns with value 0
+        missing_directions = set(place_directions) - set(features)
+        if len(missing_directions) > 0:
+            for missing_direction in missing_directions:
+                place_direction_probs_df[("place_direction_prob", missing_direction)] = 0
+        dfs.append(place_direction_probs_df)
+    # check final index lines up with input_data
+    return dfs
 
 
 # %%
 
 
-def get_opt_reg_parallel(
+def get_opt_reg(
     input_data,
     fold_df,
     simple_maze=None,
@@ -144,24 +183,29 @@ def _evaluate_alpha(
     features = list(decoder.classes_)
     df = _get_decoding_results_df(test_df, y_test, Yprobs, features, output_type)
 
-    # compute your metric (EDE here)
-    cue_EDE_df, reward_EDE_edf = [
-        get_expected_distance_error_pl(
-            df,
-            simple_maze,
-            op=eval_kwargs["op"],
-            decoding_type=output_type,
-            alignment=f"{event}_aligned_time",
-            permuted=False,
-            return_total_av=True,
-        )[eval_kwargs["dist_metric"]]
-        for event in ["cue", "reward"]
-    ]
-    windows = [eval_kwargs["cue_window"], eval_kwargs["reward_window"]]
-    values = np.concatenate(
-        [_df[(_df.index > w[0]) & (_df.index < w[1])].values for _df, w in zip([cue_EDE_df, reward_EDE_edf], windows)]
-    )
-    return values.mean()
+    if eval_metric == "expected_distance_error":
+        cue_EDE_df, reward_EDE_edf = [
+            get_expected_distance_error_pl(
+                df,
+                simple_maze,
+                op=eval_kwargs["op"],
+                decoding_type=output_type,
+                alignment=f"{event}_aligned_time",
+                permuted=False,
+                return_total_av=True,
+            )[eval_kwargs["dist_metric"]]
+            for event in ["cue", "reward"]
+        ]
+        windows = [eval_kwargs["cue_window"], eval_kwargs["reward_window"]]
+        values = np.concatenate(
+            [
+                _df[(_df.index > w[0]) & (_df.index < w[1])].values
+                for _df, w in zip([cue_EDE_df, reward_EDE_edf], windows)
+            ]
+        )
+        return values.mean()
+    else:
+        NotImplementedError
 
 
 # %% new polars eval functions
@@ -332,7 +376,9 @@ def _get_test_train_dfs(input_data, fold_df, training_trial_phases=["navigation"
     return train_df, test_df
 
 
-def _get_test_train_arrays(train_df, test_df, input_type="spikes", output_type="goal", basis_fn=None):
+def _get_test_train_arrays(
+    train_df, test_df, input_type="spikes", output_type="goal", whiten_features=True, basis_fn=None
+):
     """ """
     # process input data (X)
     if input_type == "spikes":
@@ -364,5 +410,11 @@ def _get_test_train_arrays(train_df, test_df, input_type="spikes", output_type="
         y_train, y_test = train_df.maze_position.simple.values, test_df.maze_position.simple.values
     else:
         raise ValueError(f"Unknown output type {output_type!r}")
+
+    if whiten_features:
+        scaler = StandardScaler()  # mean=0, std=1 per column
+        scaler.fit(X_train)  # learn stats on train
+        X_train = scaler.transform(X_train)
+        X_test = scaler.transform(X_test)
 
     return X_train, X_test, y_train, y_test
