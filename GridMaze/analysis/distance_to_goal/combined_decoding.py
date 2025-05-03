@@ -125,20 +125,8 @@ def get_opt_reg(
             )
         decoder.fit(X_train, y_train)
         Yprobs = decoder.predict_proba(X_test)
-        n_samples, n_features = Yprobs.shape
-        places = list(decoder.classes_)
-        df = pl.DataFrame(  # note use of polars df (big output dfs need something faster than pandas)
-            {
-                "cue_aligned_time": np.repeat(test_df.event_aligned_bin["cue"].values, n_features),
-                "reward_aligned_time": np.repeat(test_df.event_aligned_bin["reward"].values, n_features),
-                "steps_to_goal": np.repeat(test_df.steps_to_goal.future.values, n_features),
-                "trial_phase": np.repeat(test_df.trial_phase.values, n_features),
-                f"true_{output_type}": np.repeat(y_test, n_features),
-                "trial_unique_ID": np.repeat(test_df.trial_unique_ID.values, n_features),
-                f"predicted_{output_type}": np.tile(places, n_samples),
-                f"predicted_{output_type}_prob": Yprobs.ravel(),
-            }
-        )
+        features = list(decoder.classes_)
+        df = _get_decoding_results_df(test_df, y_test, Yprobs, features, output_type)
         if eval_metric == "expected_distance_error":
             cue_EDE_df, reward_EDE_edf = [
                 get_expected_distance_error_pl(
@@ -180,6 +168,23 @@ def get_opt_reg(
 
 
 # %% new polars eval functions
+
+
+def _get_decoding_results_df(test_df, y_test, Yprobs, features, output_type):
+    n_samples, n_features = Yprobs.shape
+    df = pl.DataFrame(  # note use of polars df (big output dfs need something faster than pandas)
+        {
+            "cue_aligned_time": np.repeat(test_df.event_aligned_bin["cue"].values, n_features),
+            "reward_aligned_time": np.repeat(test_df.event_aligned_bin["reward"].values, n_features),
+            "steps_to_goal": np.repeat(test_df.steps_to_goal.future.values, n_features),
+            "trial_phase": np.repeat(test_df.trial_phase.values, n_features),
+            f"true_{output_type}": np.repeat(y_test, n_features),
+            "trial_unique_ID": np.repeat(test_df.trial_unique_ID.values, n_features),
+            f"predicted_{output_type}": np.tile(features, n_samples),
+            f"predicted_{output_type}_prob": Yprobs.ravel(),
+        }
+    )
+    return df
 
 
 def get_expected_distance_error_pl(
