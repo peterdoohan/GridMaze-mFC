@@ -37,26 +37,45 @@ def test(
     window=(-10, 10),
     goal_stratified_validation=True,
     n_test_trials=None,
-    n_bases=4,
+    n_bases=8,
     basis_type="gamma",
     training_trial_phases=["navigation"],
-    training_steps_to_goal_range=None,
+    training_max_steps_to_goal=30,
+    verbose=True,
 ):
-    """ """
+    """
+    CONDITION 1: spikes --(predict)--> goal
+    CONDITION 2: spikes_by_distance --(predict)--> goal
+    CONDITION 3: spikes --(predict)--> place_direction --(predict)--> goal (control)
+    """
+    simple_maze = session.simple_maze()
+    # get downsampled input data containing behavioural info and spike data
     input_data = du.get_place_decoding_input_data(session, resolution, include_multi_units, window, permuted=False)
+    # organise trials into test-train folds
     folds_df = du.get_folds_df(session, goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials)
-    return input_data, folds_df
-    # load basis functions
-
-    results_dfs = []
+    # predict place direction probabilities from spike counts (for control condition)
+    place_direction_probs_df = get_predicted_place_directions(
+        input_data,
+        folds_df,
+        simple_maze,
+        in_alpha="auto",
+        training_trial_phases=training_trial_phases,
+        verbose=verbose,
+    )
+    # get distance to goal basis functions (for spikes_by_distance condition)
+    basis_fn = db.distance_basis_generator(
+        n_bases=n_bases, basis=basis_type, max_steps=training_max_steps_to_goal, plot=False
+    )
     for fold in folds_df.columns.levels[0].unique():
-        print(fold)
-        fold_df = folds_df[fold]
-        test_trials = [t for t in fold_df.test.values.flatten() if isinstance(t, str)]
-        train_trials = [t for t in fold_df.train.values.flatten() if isinstance(t, str)]
-        train_df = input_data[input_data.trial_unique_ID.isin(train_trials)]
-
-    return
+        if verbose:
+            print(fold)
+        # CONDITION 1: spikes --(predict)--> goal
+        # get test and train dataframes
+        train_df, test_df = _get_test_train_dfs(input_data, folds_df[fold], training_trial_phases)
+        # get test and train arrays
+        X_train, X_test, y_train, y_test = _get_test_train_arrays(
+            train_df, test_df, input_type="spikes", output_type="goal", whiten_features=True
+        )
 
 
 def get_predicted_place_directions(
@@ -65,7 +84,7 @@ def get_predicted_place_directions(
     simple_maze,
     inv_alpha="auto",
     training_trial_phases=["navigation"],
-    verbose=False,
+    verbose=True,
 ):
     """
     From some input_data, and folds_df dataframes, preform cross-validated prediction
@@ -87,13 +106,15 @@ def get_predicted_place_directions(
     )
     # get x-val optimal regularisation
     if inv_alpha == "auto":
+        if verbose:
+            print("Auto-optimising regularisation")
         inv_alpha = get_opt_reg(
             input_data,
             folds_df["fold_0"],
             simple_maze,
             input_type="spikes",
             output_type="place_direction",
-            taining_trial_phases=training_trial_phases,
+            training_trial_phases=training_trial_phases,
             eval_metric="expected_distance_error",
         )
     # get x-valed place-direction prob from spikes on each input_data sample
@@ -124,9 +145,12 @@ def get_predicted_place_directions(
         if len(missing_directions) > 0:
             for missing_direction in missing_directions:
                 place_direction_probs_df[("place_direction_prob", missing_direction)] = 0
-        dfs.append(place_direction_probs_df)
-    # check final index lines up with input_data
-    return dfs
+        dfs.append(place_direction_probs_df.sort_index(axis=1))
+    # combine folds and ensure index lines up with input_data
+    place_direction_probs_df = pd.concat(dfs, axis=0)
+    place_direction_probs_df.sort_index(axis=0, inplace=True)
+    assert place_direction_probs_df.index.equals(input_data.index)
+    return place_direction_probs_df
 
 
 # %%
@@ -148,12 +172,18 @@ def get_opt_reg(
         "cue_window": (-2, 2),
         "reward_window": (-8, 0),
     },
+    verbose=True,
 ):
     # prepare data exactly as before
     train_df, test_df = _get_test_train_dfs(input_data, fold_df, training_trial_phases)
     X_train, X_test, y_train, y_test = _get_test_train_arrays(train_df, test_df, input_type, output_type, basis_fn)
     # now parallel evaluate
-    eval_metrics = Parallel(n_jobs=len(reg_range), verbose=5)(
+    if verbose:
+        print("Evaluating reg_range in parallel")
+        v = 5
+    else:
+        v = False
+    eval_metrics = Parallel(n_jobs=len(reg_range), verbose=v)(
         delayed(_evaluate_alpha)(
             inv_alpha, X_train, y_train, X_test, y_test, test_df, simple_maze, eval_metric, eval_kwargs, output_type
         )

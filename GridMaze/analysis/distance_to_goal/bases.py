@@ -51,11 +51,11 @@ def distance_basis_generator(
     else:
         NotImplementedError
     # get shape values
-    if basis_values in None:
+    if basis_values is None:
         if basis == "gamma":
-            basis_values = get_gamma_basis_shape_params(n_bases, btype="steps", max_steps=20)
+            basis_values = get_gamma_basis_shape_params(n_bases, btype="steps", max_steps=max_steps)
         elif basis == "gaussian":
-            basis_values = get_gaussian_basis_centres(n_bases, btype="steps", max_steps=20)
+            basis_values = get_gaussian_basis_centres(n_bases, btype="steps", max_steps=max_steps)
         else:
             raise NotImplementedError(f"Basis type {basis} not implemented")
     # plot
