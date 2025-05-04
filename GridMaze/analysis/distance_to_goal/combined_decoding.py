@@ -108,12 +108,6 @@ def test(
             X_train, X_test, y_train, y_test = _get_test_train_arrays(
                 train_df, test_df, input_type=input_type, output_type="goal", whiten_features=True, basis_fn=basis_fn
             )
-            if np.isnan(X_train).any():
-                print("train")
-                return train_df, test_df
-            if np.isnan(X_test).any():
-                print("test")
-                return train_df, test_df
             if inv_alpha is None:
                 decoder = LogisticRegression(penalty=None, max_iter=10_000, random_state=0)
             else:
