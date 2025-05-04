@@ -54,23 +54,30 @@ def test(
     # organise trials into test-train folds
     folds_df = du.get_folds_df(session, goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials)
     # predict place direction probabilities from spike counts (for control condition)
+    if verbose:
+        print("Predicting place direction probabilities from spike counts")
     place_direction_probs_df = get_predicted_place_directions(
         input_data,
         folds_df,
         simple_maze,
-        in_alpha="auto",
+        inv_alpha="auto",
         training_trial_phases=training_trial_phases,
         verbose=verbose,
     )
+    input_data = pd.concat([input_data, place_direction_probs_df], axis=1)
     # get distance to goal basis functions (for spikes_by_distance condition)
     basis_fn = db.distance_basis_generator(
         n_bases=n_bases, basis=basis_type, max_steps=training_max_steps_to_goal, plot=False
     )
+    # get optimal regularisation for each condition
+    C1_inv_alpha = None
+    C2_inv_alpha = None
+    C3_inv_alpha = None
+    # run xvaled decoding for each condition aross folds
     for fold in folds_df.columns.levels[0].unique():
         if verbose:
             print(fold)
         # CONDITION 1: spikes --(predict)--> goal
-        # get test and train dataframes
         train_df, test_df = _get_test_train_dfs(input_data, folds_df[fold], training_trial_phases)
         # get test and train arrays
         X_train, X_test, y_train, y_test = _get_test_train_arrays(
@@ -176,7 +183,9 @@ def get_opt_reg(
 ):
     # prepare data exactly as before
     train_df, test_df = _get_test_train_dfs(input_data, fold_df, training_trial_phases)
-    X_train, X_test, y_train, y_test = _get_test_train_arrays(train_df, test_df, input_type, output_type, basis_fn)
+    X_train, X_test, y_train, y_test = _get_test_train_arrays(
+        train_df, test_df, input_type, output_type, whiten_features=True, basis_fn=basis_fn
+    )
     # now parallel evaluate
     if verbose:
         print("Evaluating reg_range in parallel")
@@ -193,8 +202,10 @@ def get_opt_reg(
     # choose best
     if eval_metric == "expected_distance_error":
         return reg_range[np.argmin(eval_metrics)]
-    else:
+    elif eval_metric == "decoding_accuracy":
         return reg_range[np.argmax(eval_metrics)]
+    else:
+        raise ValueError(f"Unknown eval metric {eval_metric!r}")
 
 
 def _evaluate_alpha(
@@ -234,8 +245,19 @@ def _evaluate_alpha(
             ]
         )
         return values.mean()
+    elif eval_metric == "decoding_accuracy":
+        accs = []
+        for event in ["cue", "reward"]:
+            acc_df = decoding_accuracy_df_pl(
+                df,
+                decoding_type=output_type,
+                alignment=f"{event}_aligned_time",
+            )
+            window = eval_kwargs[f"{event}_window"]
+            accs.extend(acc_df[acc_df.cue_aligned_time.between(*window)].test_acc.to_list())
+        return np.mean(accs)
     else:
-        NotImplementedError
+        raise ValueError(f"Unknown eval metric {eval_metric!r}")
 
 
 # %% new polars eval functions
@@ -256,6 +278,35 @@ def _get_decoding_results_df(test_df, y_test, Yprobs, features, output_type):
         }
     )
     return df
+
+
+def decoding_accuracy_df_pl(
+    results_df,
+    decoding_type,
+    alignment,
+):
+    """
+    input polars df, output pandas df
+    """
+    prob_col = f"predicted_{decoding_type}_prob"
+    true_col = f"true_{decoding_type}"
+    pred_col = f"predicted_{decoding_type}"
+
+    # sort by (trial_unique_ID ↑, alignment ↑, prob ↓) so the max‐prob row is first in each group
+    df_sorted = results_df.sort(
+        by=["trial_unique_ID", alignment, prob_col],
+        descending=[False, False, True],
+    )
+
+    # pick the first row per (trial_unique_ID, alignment)
+    df_best = df_sorted.unique(
+        subset=["trial_unique_ID", alignment],
+        keep="first",
+    )
+
+    # compute accuracy flag
+    acc_df = df_best.with_columns((pl.col(true_col) == pl.col(pred_col)).cast(pl.Int8).alias("test_acc"))
+    return acc_df.to_pandas()
 
 
 def get_expected_distance_error_pl(
@@ -413,10 +464,10 @@ def _get_test_train_arrays(
     # process input data (X)
     if input_type == "spikes":
         X_train, X_test = train_df.spike_count.values, test_df.spike_count.values
-    elif input_type == "place_direction":
-        NotImplementedError
+    elif input_type == "place_direction_prob":
+        X_train, X_test = train_df.place_direction_prob.values, test_df.place_direction_prob.values
     elif input_type == "place":
-        NotImplementedError
+        X_train, X_test = train_df.place_probs.values, test_df.place_probs.values
     elif input_type == "spikes_by_distance":
         assert basis_fn is not None, "basis_fn must be provided for 'spikes_by_distance' input"
         Xs = []
