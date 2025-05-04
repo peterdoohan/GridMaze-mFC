@@ -52,6 +52,7 @@ def _get_transformed_steps_to_goal(session, results_df, event, round_steps=False
 
 def decoding_accuracy_df(results_df, decoding_type="goal", alignment="timepoint"):
     """
+    TODO: fix duplicate entried ????
     alignment: "timepoint" or "steps_to_goal"
     """
     idx = results_df.groupby(["trial_unique_ID", alignment])[f"predicted_{decoding_type}_prob"].idxmax()

@@ -73,7 +73,7 @@ def test(
     for condition, input_type, training_trial_phases in zip(
         ["C1: spikes->goal", "C2:spikes_by_distance->goal", "C3:spikes->place_direction->goal"],
         ["spikes", "spikes_by_distance", "place_direction_prob"],
-        [["navigation", "reward_consumption", "ITI"], ["navigation"], ["navigation"]],
+        [["navigation"], ["navigation"], ["navigation"]],
     ):
         if verbose:
             print(condition)
@@ -90,7 +90,7 @@ def test(
             )
         )
     # run xvaled decoding for each condition aross folds
-    C1_dfs, C2_dfs, C3_dfs = [], [], []
+    C_dfs = ([], [], [])
     for fold in folds_df.columns.levels[0].unique():
         if verbose:
             print(fold)
@@ -98,9 +98,9 @@ def test(
         for condition, input_type, training_trial_phases, inv_alpha, dfs in zip(
             ["C1: spikes->goal", "C2:spikes_by_distance->goal", "C3:spikes->place_direction->goal"],
             ["spikes", "spikes_by_distance", "place_direction_prob"],
-            [["navigation", "reward_consumption", "ITI"], ["navigation"], ["navigation"]],
+            [["navigation"], ["navigation"], ["navigation"]],
             inv_alphas,
-            [C1_dfs, C2_dfs, C3_dfs],
+            C_dfs,
         ):
             if verbose:
                 print(condition)
@@ -118,10 +118,22 @@ def test(
             Yprobs = decoder.predict_proba(X_test)
             features = list(decoder.classes_)
             # get decoding results
-            C_df = _get_decoding_results_df(test_df, y_test, Yprobs, features, "goal")
-            C_df = C_df.with_columns(pl.lit(fold).alias("fold"))  # polars
+            C_df = _get_decoding_results_df(test_df, y_test, Yprobs, features, "goal", engine="pandas")
+            C_df["fold"] = fold
             dfs.append(C_df)
-    return C1_dfs, C2_dfs, C3_dfs
+    # combine folds
+    results_dfs = [pd.concat(_dfs, axis=0).reset_index(drop=True) for _dfs in C_dfs]
+    cue_aligned_accs, reward_aligned_accs = [], []
+    for df in results_dfs:
+        # predicted goal is max goal prob at each samle (ds window)
+        acc_df = df.loc[df.groupby("sample_index").predicted_goal_prob.idxmax()]
+        acc_df["test_acc"] = (df.true_goal == df.predicted_goal).astype(int)
+        for event, event_accs in zip(["cue", "reward"], [cue_aligned_accs, reward_aligned_accs]):
+            _df = acc_df[acc_df[f"{event}_aligned_time"].notna()]
+            event_accs.append(
+                _df.groupby(["trial_unique_ID", f"{event}_aligned_time"]).test_acc.mean().unstack().mean()
+            )
+    return cue_aligned_accs, reward_aligned_accs
 
 
 def get_predicted_place_directions(
@@ -262,7 +274,7 @@ def _evaluate_alpha(
     decoder.fit(X_train, y_train)
     Yprobs = decoder.predict_proba(X_test)
     features = list(decoder.classes_)
-    df = _get_decoding_results_df(test_df, y_test, Yprobs, features, output_type)
+    df = _get_decoding_results_df(test_df, y_test, Yprobs, features, output_type, engine="polars")
 
     if eval_metric == "expected_distance_error":
         cue_EDE_df, reward_EDE_edf = [
@@ -303,23 +315,50 @@ def _evaluate_alpha(
 # %% new polars eval functions
 
 
-def _get_decoding_results_df(test_df, y_test, Yprobs, features, output_type):
-    """
-    Note returns polar df
-    """
+def _get_decoding_results_df(test_df, y_test, Yprobs, features, output_type, engine="pandas"):
+    """ """
+    # define df columns
     n_samples, n_features = Yprobs.shape
-    df = pl.DataFrame(  # note use of polars df (big output dfs need something faster than pandas)
-        {
-            "trial_unique_ID": np.repeat(test_df.trial_unique_ID.values, n_features),
-            "cue_aligned_time": np.repeat(test_df.event_aligned_bin["cue"].values, n_features),
-            "reward_aligned_time": np.repeat(test_df.event_aligned_bin["reward"].values, n_features),
-            "trial_phase": np.repeat(test_df.trial_phase.values, n_features),
-            "steps_to_goal": np.repeat(test_df.steps_to_goal.future.values, n_features),
-            f"true_{output_type}": np.repeat(y_test, n_features),
-            f"predicted_{output_type}": np.tile(features, n_samples),
-            f"predicted_{output_type}_prob": Yprobs.ravel(),
-        }
-    )
+    sample_index = np.repeat(test_df.index.values, n_features)
+    train_unique_IDs = np.repeat(test_df.trial_unique_ID.values, n_features)
+    cue_aligned_times = np.repeat(test_df.event_aligned_bin["cue"].values, n_features)
+    reward_aligned_times = np.repeat(test_df.event_aligned_bin["reward"].values, n_features)
+    trial_phases = np.repeat(test_df.trial_phase.values, n_features)
+    steps_to_goals = np.repeat(test_df.steps_to_goal.future.values, n_features)
+    true = np.repeat(y_test, n_features)
+    predicted = np.tile(features, n_samples)
+    predicted_probs = Yprobs.ravel()
+    # create df
+    if engine == "polars":
+        df = pl.DataFrame(  # note use of polars df (big output dfs need something faster than pandas)
+            {
+                "sample_index": sample_index,
+                "trial_unique_ID": np.repeat(test_df.trial_unique_ID.values, n_features),
+                "cue_aligned_time": np.repeat(test_df.event_aligned_bin["cue"].values, n_features),
+                "reward_aligned_time": np.repeat(test_df.event_aligned_bin["reward"].values, n_features),
+                "trial_phase": np.repeat(test_df.trial_phase.values, n_features),
+                "steps_to_goal": np.repeat(test_df.steps_to_goal.future.values, n_features),
+                f"true_{output_type}": np.repeat(y_test, n_features),
+                f"predicted_{output_type}": np.tile(features, n_samples),
+                f"predicted_{output_type}_prob": Yprobs.ravel(),
+            }
+        )
+    elif engine == "pandas":
+        df = pd.DataFrame(
+            {
+                "sample_index": sample_index,
+                "trial_unique_ID": train_unique_IDs,
+                "cue_aligned_time": cue_aligned_times,
+                "reward_aligned_time": reward_aligned_times,
+                "trial_phase": trial_phases,
+                "steps_to_goal": steps_to_goals,
+                f"true_{output_type}": true,
+                f"predicted_{output_type}": predicted,
+                f"predicted_{output_type}_prob": predicted_probs,
+            }
+        )
+    else:
+        raise ValueError(f"Unknown engine {engine!r}")
     return df
 
 
