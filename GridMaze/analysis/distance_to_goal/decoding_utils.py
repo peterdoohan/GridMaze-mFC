@@ -279,8 +279,16 @@ def get_distance_aligned_input_data(
     return ds_nav_rates_df
 
 
-def _add_non_nav_distances(session, nav_info_df, ignore_last_n=2):
-    """ """
+def _add_non_nav_distances(
+    session,
+    nav_info_df,
+    ignore_last_n=0,
+    fill_first_last_trial=True,
+):
+    """
+    first/last trial can lack steps to goal bc/ no goal defined, fill_first_last_trial == True
+    sets np.nans to 0
+    """
     # load additional data
     trials_df = session.trials_df
     trials_df = trials_df.set_index(("trial", ""))
@@ -323,6 +331,8 @@ def _add_non_nav_distances(session, nav_info_df, ignore_last_n=2):
     # update distances and return
     out = nav_info_df[("steps_to_goal", "future")].copy()
     out.loc[valid.values] = computed
+    if fill_first_last_trial:
+        out.loc[out.isna()] = 0
     return out
 
 
@@ -395,7 +405,9 @@ def get_place_decoding_input_data(
     nav_info[("event_aligned_bin", "cue")] = cue_aligned_bins.apply(lambda x: x.mid).astype(float)
     nav_info[("event_aligned_bin", "reward")] = reward_aligned_bins.apply(lambda x: x.mid).astype(float)
     # add non nav distances
-    nav_info[("steps_to_goal", "future")] = _add_non_nav_distances(session, nav_info, ignore_last_n=0)
+    nav_info[("steps_to_goal", "future")] = _add_non_nav_distances(
+        session, nav_info, ignore_last_n=0, fill_first_last_trial=True
+    )
     # combine and remove out of trial times
     nav_rates_df = pd.concat([nav_info, spike_counts_df], axis=1)
     nav_rates_df = nav_rates_df[~nav_rates_df.trial.isna()]

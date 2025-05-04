@@ -39,7 +39,6 @@ def test(
     n_test_trials=None,
     n_bases=8,
     basis_type="gamma",
-    training_trial_phases=["navigation"],
     training_max_steps_to_goal=30,
     verbose=True,
 ):
@@ -61,7 +60,7 @@ def test(
         folds_df,
         simple_maze,
         inv_alpha="auto",
-        training_trial_phases=training_trial_phases,
+        training_trial_phases=["navigation"],
         verbose=verbose,
     )
     input_data = pd.concat([input_data, place_direction_probs_df], axis=1)
@@ -70,30 +69,65 @@ def test(
         n_bases=n_bases, basis=basis_type, max_steps=training_max_steps_to_goal, plot=False
     )
     # get optimal regularisation for each condition
-    C1_inv_alpha, C2_inv_alpga, C3_inv_alpha = [
-        get_opt_reg(
-            input_data,
-            folds_df["fold_0"],
-            simple_maze,
-            basis_fn,
-            input_type=input_type,
-            output_type="goal",
-            training_trial_phases=training_trial_phases,
-            eval_metric="decoding_accuracy",
-            eval_kwargs={"op": "sum", "dist_metric": "geodesic", "cue_window": (0, 0), "reward_window": (-1, 1)},
+    inv_alphas = []
+    for condition, input_type, training_trial_phases in zip(
+        ["C1: spikes->goal", "C2:spikes_by_distance->goal", "C3:spikes->place_direction->goal"],
+        ["spikes", "spikes_by_distance", "place_direction_prob"],
+        [["navigation", "reward_consumption", "ITI"], ["navigation"], ["navigation"]],
+    ):
+        if verbose:
+            print(condition)
+        inv_alphas.append(
+            get_opt_reg(
+                input_data,
+                folds_df["fold_0"],
+                simple_maze,
+                basis_fn,
+                input_type=input_type,
+                output_type="goal",
+                training_trial_phases=training_trial_phases,
+                eval_metric="expected_distance_error",
+            )
         )
-        for input_type in ["spikes", "spikes_by_distance", "place_direction_prob"]
-    ]
     # run xvaled decoding for each condition aross folds
+    C1_dfs, C2_dfs, C3_dfs = [], [], []
     for fold in folds_df.columns.levels[0].unique():
         if verbose:
             print(fold)
-        # CONDITION 1: spikes --(predict)--> goal
-        train_df, test_df = _get_test_train_dfs(input_data, folds_df[fold], training_trial_phases)
-        # get test and train arrays
-        X_train, X_test, y_train, y_test = _get_test_train_arrays(
-            train_df, test_df, input_type="spikes", output_type="goal", whiten_features=True
-        )
+        fold_df = folds_df[fold]
+        for condition, input_type, training_trial_phases, inv_alpha, dfs in zip(
+            ["C1: spikes->goal", "C2:spikes_by_distance->goal", "C3:spikes->place_direction->goal"],
+            ["spikes", "spikes_by_distance", "place_direction_prob"],
+            [["navigation", "reward_consumption", "ITI"], ["navigation"], ["navigation"]],
+            inv_alphas,
+            [C1_dfs, C2_dfs, C3_dfs],
+        ):
+            if verbose:
+                print(condition)
+            train_df, test_df = _get_test_train_dfs(input_data, fold_df, training_trial_phases=training_trial_phases)
+            X_train, X_test, y_train, y_test = _get_test_train_arrays(
+                train_df, test_df, input_type=input_type, output_type="goal", whiten_features=True, basis_fn=basis_fn
+            )
+            if np.isnan(X_train).any():
+                print("train")
+                return train_df, test_df
+            if np.isnan(X_test).any():
+                print("test")
+                return train_df, test_df
+            if inv_alpha is None:
+                decoder = LogisticRegression(penalty=None, max_iter=10_000, random_state=0)
+            else:
+                decoder = LogisticRegression(penalty="l2", C=inv_alpha, max_iter=10_000, random_state=0)
+            # train
+            decoder.fit(X_train, y_train)
+            # predict
+            Yprobs = decoder.predict_proba(X_test)
+            features = list(decoder.classes_)
+            # get decoding results
+            C_df = _get_decoding_results_df(test_df, y_test, Yprobs, features, "goal")
+            C_df = C_df.with_columns(pl.lit(fold).alias("fold"))  # polars
+            dfs.append(C_df)
+    return C1_dfs, C2_dfs, C3_dfs
 
 
 def get_predicted_place_directions(
@@ -228,9 +262,8 @@ def _evaluate_alpha(
     if inv_alpha is None:
         decoder = LogisticRegression(penalty=None, max_iter=10_000, random_state=0, class_weight="balanced")
     else:
-        decoder = LogisticRegression(
-            penalty="l2", C=inv_alpha, max_iter=10_000, random_state=0, class_weight="balanced"
-        )
+        cw = "balanced" if output_type in ["place", "place_direction"] else None
+        decoder = LogisticRegression(penalty="l2", C=inv_alpha, max_iter=10_000, random_state=0, class_weight=cw)
     # fit & get probs
     decoder.fit(X_train, y_train)
     Yprobs = decoder.predict_proba(X_test)
@@ -277,15 +310,18 @@ def _evaluate_alpha(
 
 
 def _get_decoding_results_df(test_df, y_test, Yprobs, features, output_type):
+    """
+    Note returns polar df
+    """
     n_samples, n_features = Yprobs.shape
     df = pl.DataFrame(  # note use of polars df (big output dfs need something faster than pandas)
         {
+            "trial_unique_ID": np.repeat(test_df.trial_unique_ID.values, n_features),
             "cue_aligned_time": np.repeat(test_df.event_aligned_bin["cue"].values, n_features),
             "reward_aligned_time": np.repeat(test_df.event_aligned_bin["reward"].values, n_features),
-            "steps_to_goal": np.repeat(test_df.steps_to_goal.future.values, n_features),
             "trial_phase": np.repeat(test_df.trial_phase.values, n_features),
+            "steps_to_goal": np.repeat(test_df.steps_to_goal.future.values, n_features),
             f"true_{output_type}": np.repeat(y_test, n_features),
-            "trial_unique_ID": np.repeat(test_df.trial_unique_ID.values, n_features),
             f"predicted_{output_type}": np.tile(features, n_samples),
             f"predicted_{output_type}_prob": Yprobs.ravel(),
         }
@@ -300,6 +336,8 @@ def decoding_accuracy_df_pl(
 ):
     """
     input polars df, output pandas df
+
+    permuted results not supported yet
     """
     prob_col = f"predicted_{decoding_type}_prob"
     true_col = f"true_{decoding_type}"
@@ -319,7 +357,8 @@ def decoding_accuracy_df_pl(
 
     # compute accuracy flag
     acc_df = df_best.with_columns((pl.col(true_col) == pl.col(pred_col)).cast(pl.Int8).alias("test_acc"))
-    return acc_df.to_pandas()
+    acc_df = acc_df[~acc_df[alignment].isna()]
+    return acc_df.set_index(["trial_unique_ID", alignment]).test_acc.sort_index()
 
 
 def get_expected_distance_error_pl(
