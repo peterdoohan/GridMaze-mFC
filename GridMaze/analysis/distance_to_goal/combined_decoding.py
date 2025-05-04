@@ -40,7 +40,8 @@ def test(
     n_bases=8,
     basis_type="gamma",
     training_trial_phases=["navigation"],
-    max_steps_to_goal=30,
+    max_steps_to_goal=20,
+    inv_alpha="auto",
     verbose=True,
 ):
     """
@@ -48,9 +49,15 @@ def test(
     CONDITION 2: spikes_by_distance --(predict)--> goal
     CONDITION 3: spikes --(predict)--> place_direction --(predict)--> goal (control)
 
+    Note deocders are trained on all data defined in training_trial_phases
+    not separate decoders for each timepoint aligned to trial events
     """
     # define conditions
-    conditions = ["C1: spikes->goal", "C2:spikes_by_distance->goal", "C3:spikes->place_direction->goal"]
+    conditions = [
+        "C1: spikes->goal",
+        "C2: spikes_by_distance->goal",
+        "C3: spikes->place_direction->goal",
+    ]
     simple_maze = session.simple_maze()
     # get downsampled input data containing behavioural info and spike data
     input_data = du.get_place_decoding_input_data(session, resolution, include_multi_units, window, permuted=False)
@@ -63,33 +70,37 @@ def test(
         input_data,
         folds_df,
         simple_maze,
-        inv_alpha="auto",
-        training_trial_phases=["navigation"],
+        inv_alpha=inv_alpha,
+        training_trial_phases=training_trial_phases,
         verbose=verbose,
     )
     input_data = pd.concat([input_data, place_direction_probs_df], axis=1)
     # get distance to goal basis functions (for spikes_by_distance condition)
     basis_fn = db.distance_basis_generator(n_bases=n_bases, basis=basis_type, max_steps=max_steps_to_goal, plot=False)
-    # get optimal regularisation for each condition
-    inv_alphas = []
-    for condition, input_type in zip(
-        conditions,
-        ["spikes", "spikes_by_distance", "place_direction_prob"],
-    ):
-        if verbose:
-            print(condition)
-        inv_alphas.append(
-            get_opt_reg(
-                input_data,
-                folds_df["fold_0"],
-                simple_maze,
-                basis_fn,
-                input_type=input_type,
-                output_type="goal",
-                training_trial_phases=training_trial_phases,
-                eval_metric="expected_distance_error",
+    if inv_alpha == "auto":
+        # get optimal regularisation for each condition
+        inv_alphas = []
+        for condition, input_type in zip(
+            conditions,
+            ["spikes", "spikes_by_distance", "place_direction_prob"],
+        ):
+            if verbose:
+                print(condition)
+            inv_alphas.append(
+                get_opt_reg(
+                    input_data,
+                    folds_df["fold_0"],
+                    simple_maze,
+                    basis_fn,
+                    max_steps_to_goal=max_steps_to_goal,
+                    input_type=input_type,
+                    output_type="goal",
+                    training_trial_phases=training_trial_phases,
+                    eval_metric="expected_distance_error",
+                )
             )
-        )
+    else:
+        inv_alphas = [inv_alpha] * len(conditions)
     # run xvaled decoding for each condition aross folds
     C_dfs = ([], [], [])
     for fold in folds_df.columns.levels[0].unique():
@@ -129,17 +140,30 @@ def test(
             dfs.append(C_df)
     # combine folds
     results_dfs = [pd.concat(_dfs, axis=0).reset_index(drop=True) for _dfs in C_dfs]
-    cue_aligned_accs, reward_aligned_accs = [], []
+    # translate output to accuracy metric and output
+    acc_dfs = []
     for df in results_dfs:
         # predicted goal is max goal prob at each samle (ds window)
         acc_df = df.loc[df.groupby("sample_index").predicted_goal_prob.idxmax()]
         acc_df["test_acc"] = (df.true_goal == df.predicted_goal).astype(int)
-        for event, event_accs in zip(["cue", "reward"], [cue_aligned_accs, reward_aligned_accs]):
-            _df = acc_df[acc_df[f"{event}_aligned_time"].notna()]
-            event_accs.append(
-                _df.groupby(["trial_unique_ID", f"{event}_aligned_time"]).test_acc.mean().unstack().mean()
-            )
-    return cue_aligned_accs, reward_aligned_accs
+        acc_dfs.append(acc_df)
+    quick_plot(acc_dfs)
+    return acc_dfs
+
+
+def quick_plot(acc_dfs):
+    cue_dfs, reward_time_reps = [], []
+    for df in acc_dfs:
+        for event, dfs in zip(["cue", "reward"], [cue_dfs, reward_time_reps]):
+            _df = df[~df[f"{event}_aligned_time"].isna()]
+            trial_df = _df.groupby(["trial_unique_ID", f"{event}_aligned_time"]).test_acc.mean().unstack()
+            dfs.append(trial_df.mean())
+    cue_acc = pd.concat(cue_dfs, axis=1)
+    cue_acc.plot()
+    plt.show()
+    reward_acc = pd.concat(reward_time_reps, axis=1)
+    reward_acc.plot()
+    plt.show()
 
 
 def get_predicted_place_directions(
@@ -229,7 +253,7 @@ def get_opt_reg(
     input_type="spikes",  # X
     output_type="place_direction",  # Y
     training_trial_phases=["navigation"],
-    reg_range=[None, 10, 50, 1e2, 5e2, 1e3, 1e4, 1e5],
+    reg_range=[None, 10, 50, 1e2, 5e2, 1e3],
     eval_metric="expected_distance_error",
     eval_kwargs={
         "op": "sum",
@@ -290,26 +314,27 @@ def _evaluate_alpha(
     df = _get_decoding_results_df(test_df, y_test, Yprobs, features, output_type, engine="polars")
 
     if eval_metric == "expected_distance_error":
-        cue_EDE_df, reward_EDE_edf = [
-            get_expected_distance_error_pl(
+        values = []
+        for event in ["cue", "reward"]:
+            EDE_df = get_expected_distance_error_pl(
                 df,
                 simple_maze,
                 op=eval_kwargs["op"],
                 decoding_type=output_type,
-                alignment=f"{event}_aligned_time",
                 permuted=False,
-                return_total_av=True,
-            )[eval_kwargs["dist_metric"]]
-            for event in ["cue", "reward"]
-        ]
-        windows = [eval_kwargs["cue_window"], eval_kwargs["reward_window"]]
-        values = np.concatenate(
-            [
-                _df[(_df.index > w[0]) & (_df.index < w[1])].values
-                for _df, w in zip([cue_EDE_df, reward_EDE_edf], windows)
-            ]
-        )
-        return values.mean()
+                return_as="timeseries",
+            )
+            window = eval_kwargs[f"{event}_window"]
+            dist_metric = eval_kwargs["dist_metric"]
+            event_ede_df = EDE_df[~EDE_df[f"{event}_aligned_time"].isna()]
+            av_ede = (
+                event_ede_df.groupby(["trial_unique_ID", f"{event}_aligned_time"])[f"{dist_metric}_ede"]
+                .mean()
+                .unstack()
+                .mean()
+            )
+            values.extend(av_ede[(av_ede.index > -2) & (av_ede.index < 2)].to_list())
+        return np.mean(values)
     elif eval_metric == "decoding_accuracy":
         accs = []
         for event in ["cue", "reward"]:
@@ -412,9 +437,8 @@ def get_expected_distance_error_pl(
     simple_maze,
     op="sum",
     decoding_type="goal",
-    alignment="timepoint",
     permuted=False,
-    return_total_av=True,
+    return_as="timeseries",
 ):
     """
     input polars df (need speed from polars for processing large outputs from permuted decodings)
@@ -431,64 +455,51 @@ def get_expected_distance_error_pl(
             (pl.col(f"predicted_{decoding_type}_prob") * pl.col("euc_dist")).alias("euc_weight_prob"),
         ]
     )
-
-    # pick your grouping keys
-    group_cols = ["trial_unique_ID", "permutation", alignment] if permuted else ["trial_unique_ID", alignment]
-
-    # aggregate per‐trial (sum or max)
+    group_cols = ["sample_index", "permutation"] if permuted else ["sample_index"]
+    # aggregate per‐sample (sum or max)
     if op == "sum":
-        trial_EDE = df.group_by(group_cols, maintain_order=True).agg(
-            [
-                pl.sum("geo_weight_prob").alias("geo_weight_prob"),
-                pl.sum("euc_weight_prob").alias("euc_weight_prob"),
-            ]
+        sample_EDE = (
+            df.group_by(group_cols, maintain_order=True)
+            .agg(
+                [
+                    pl.sum("geo_weight_prob").alias("geodesic_ede"),
+                    pl.sum("euc_weight_prob").alias("euclidean_ede"),
+                ]
+            )
+            .sort(group_cols)
         )
     elif op == "max":
-        trial_EDE = df.group_by(group_cols, maintain_order=True).agg(
-            [
-                pl.max("geo_weight_prob").alias("geo_weight_prob"),
-                pl.max("euc_weight_prob").alias("euc_weight_prob"),
-            ]
+        sample_EDE = (
+            df.group_by(group_cols, maintain_order=True)
+            .agg(
+                [
+                    pl.max("geo_weight_prob").alias("geodesic_ede"),
+                    pl.max("euc_weight_prob").alias("euclidean_ede"),
+                ]
+            )
+            .sort(group_cols)
         )
     else:
         raise ValueError(f"Unsupported op: {op!r}")
-
-    if not return_total_av:
-        # pivot alignment values out to columns
-        pivoted = trial_EDE.pivot(
-            values=["geo_weight_prob", "euc_weight_prob"],
-            index="trial_unique_ID",
-            on=alignment,
+    info_df = (
+        df.drop(
+            [
+                f"predicted_{decoding_type}",
+                f"predicted_{decoding_type}_prob",
+                "geo_dist",
+                "euc_dist",
+                f"geo_weight_prob",
+                f"euc_weight_prob",
+            ]
         )
-        # rename outer “geo_weight_prob → geodesic”, “euc_weight_prob → euclidean”
-        rename_map = {
-            c: c.replace("geo_weight_prob", "geodesic").replace("euc_weight_prob", "euclidean")
-            for c in pivoted.columns
-            if c != "trial_unique_ID"
-        }
-
-        pd_df = pivoted.rename(rename_map).to_pandas()
-        pd_df.set_index("trial_unique_ID", inplace=True)
-        # switch to multi-index
-        pd_df.columns = pd.MultiIndex.from_tuples(
-            [(c.split("_")[0], eval(c.split("_")[1])) if c.split("_")[1] != "NaN" else np.nan for c in pd_df.columns]
-        )
-        # remove NaN columns
-        pd_df = pd_df[pd_df.columns[~pd_df.columns.get_level_values(0).isna()]]
-        return pd_df
-
-    # 4b) otherwise return the average EDE across trials, grouped by alignment
-    av_EDE = trial_EDE.group_by(alignment, maintain_order=True).agg(
-        [
-            pl.mean("geo_weight_prob").alias("geodesic"),
-            pl.mean("euc_weight_prob").alias("euclidean"),
-        ]
+        .unique()
+        .sort(group_cols)
     )
-    pd_df = av_EDE.to_pandas()
-    pd_df.set_index(alignment, inplace=True)
-    # remove NaN columns
-    pd_df = pd_df.loc[~pd_df.index.isna()]
-    return pd_df
+    EDE_df = info_df.join(sample_EDE, on=group_cols, how="inner")
+    if return_as == "timeseries":
+        return EDE_df.to_pandas()
+    else:
+        NotImplementedError
 
 
 def _get_distance_cols_pl(results_df, simple_maze, output_type, round_euc=False):
@@ -577,10 +588,10 @@ def _get_test_train_arrays(
         assert max_steps_to_goal is not None, "max_steps_to_goal must be provided for 'spikes_by_distance' input"
         Xs = []
         for df in [train_df, test_df]:
-            distances = df.steps_to_goal.future.values
+            distances = df.steps_to_goal.future.copy()
             # cap distances to max_steps_to_goal, basis activations common after this max
-            distances.loc[distances.gt(max_steps_to_goal)] = max_steps_to_goal
-            basis_activations = basis_fn(df.steps_to_goal.future.values)
+            # distances.loc[distances.gt(max_steps_to_goal)] = max_steps_to_goal
+            basis_activations = basis_fn(distances.values)
             spikes = df.spike_count.values
             spikes_by_distance = (
                 spikes[:, :, None] * basis_activations[:, None, :]
