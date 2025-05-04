@@ -70,9 +70,20 @@ def test(
         n_bases=n_bases, basis=basis_type, max_steps=training_max_steps_to_goal, plot=False
     )
     # get optimal regularisation for each condition
-    C1_inv_alpha = None
-    C2_inv_alpha = None
-    C3_inv_alpha = None
+    C1_inv_alpha, C2_inv_alpga, C3_inv_alpha = [
+        get_opt_reg(
+            input_data,
+            folds_df["fold_0"],
+            simple_maze,
+            basis_fn,
+            input_type=input_type,
+            output_type="goal",
+            training_trial_phases=training_trial_phases,
+            eval_metric="decoding_accuracy",
+            eval_kwargs={"op": "sum", "dist_metric": "geodesic", "cue_window": (0, 0), "reward_window": (-1, 1)},
+        )
+        for input_type in ["spikes", "spikes_by_distance", "place_direction_prob"]
+    ]
     # run xvaled decoding for each condition aross folds
     for fold in folds_df.columns.levels[0].unique():
         if verbose:
@@ -171,7 +182,7 @@ def get_opt_reg(
     input_type="spikes",  # X
     output_type="place_direction",  # Y
     training_trial_phases=["navigation"],
-    reg_range=[None, 10, 50, 1e2, 5e2, 1e3],
+    reg_range=[None, 10, 50, 1e2, 5e2, 1e3, 1e4, 1e5],
     eval_metric="expected_distance_error",
     eval_kwargs={
         "op": "sum",
@@ -189,10 +200,7 @@ def get_opt_reg(
     # now parallel evaluate
     if verbose:
         print("Evaluating reg_range in parallel")
-        v = 5
-    else:
-        v = False
-    eval_metrics = Parallel(n_jobs=len(reg_range), verbose=v)(
+    eval_metrics = Parallel(n_jobs=len(reg_range), verbose=False)(
         delayed(_evaluate_alpha)(
             inv_alpha, X_train, y_train, X_test, y_test, test_df, simple_maze, eval_metric, eval_kwargs, output_type
         )
@@ -201,11 +209,16 @@ def get_opt_reg(
     eval_metrics = np.array(eval_metrics)
     # choose best
     if eval_metric == "expected_distance_error":
-        return reg_range[np.argmin(eval_metrics)]
+        opt_reg = reg_range[np.argmin(eval_metrics)]
     elif eval_metric == "decoding_accuracy":
-        return reg_range[np.argmax(eval_metrics)]
+        opt_reg = reg_range[np.argmax(eval_metrics)]
     else:
         raise ValueError(f"Unknown eval metric {eval_metric!r}")
+    if verbose:
+        print(f"reg_range: {reg_range}")
+        print(f"eval_metrics: {eval_metrics}")
+        print(f"opt_reg: {opt_reg}")
+    return opt_reg
 
 
 def _evaluate_alpha(
@@ -466,7 +479,7 @@ def _get_test_train_arrays(
         X_train, X_test = train_df.spike_count.values, test_df.spike_count.values
     elif input_type == "place_direction_prob":
         X_train, X_test = train_df.place_direction_prob.values, test_df.place_direction_prob.values
-    elif input_type == "place":
+    elif input_type == "place_probs":
         X_train, X_test = train_df.place_probs.values, test_df.place_probs.values
     elif input_type == "spikes_by_distance":
         assert basis_fn is not None, "basis_fn must be provided for 'spikes_by_distance' input"
