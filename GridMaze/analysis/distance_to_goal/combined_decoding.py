@@ -39,14 +39,18 @@ def test(
     n_test_trials=None,
     n_bases=8,
     basis_type="gamma",
-    training_max_steps_to_goal=30,
+    training_trial_phases=["navigation"],
+    max_steps_to_goal=30,
     verbose=True,
 ):
     """
     CONDITION 1: spikes --(predict)--> goal
     CONDITION 2: spikes_by_distance --(predict)--> goal
     CONDITION 3: spikes --(predict)--> place_direction --(predict)--> goal (control)
+
     """
+    # define conditions
+    conditions = ["C1: spikes->goal", "C2:spikes_by_distance->goal", "C3:spikes->place_direction->goal"]
     simple_maze = session.simple_maze()
     # get downsampled input data containing behavioural info and spike data
     input_data = du.get_place_decoding_input_data(session, resolution, include_multi_units, window, permuted=False)
@@ -65,15 +69,12 @@ def test(
     )
     input_data = pd.concat([input_data, place_direction_probs_df], axis=1)
     # get distance to goal basis functions (for spikes_by_distance condition)
-    basis_fn = db.distance_basis_generator(
-        n_bases=n_bases, basis=basis_type, max_steps=training_max_steps_to_goal, plot=False
-    )
+    basis_fn = db.distance_basis_generator(n_bases=n_bases, basis=basis_type, max_steps=max_steps_to_goal, plot=False)
     # get optimal regularisation for each condition
     inv_alphas = []
-    for condition, input_type, training_trial_phases in zip(
-        ["C1: spikes->goal", "C2:spikes_by_distance->goal", "C3:spikes->place_direction->goal"],
+    for condition, input_type in zip(
+        conditions,
         ["spikes", "spikes_by_distance", "place_direction_prob"],
-        [["navigation"], ["navigation"], ["navigation"]],
     ):
         if verbose:
             print(condition)
@@ -95,10 +96,9 @@ def test(
         if verbose:
             print(fold)
         fold_df = folds_df[fold]
-        for condition, input_type, training_trial_phases, inv_alpha, dfs in zip(
-            ["C1: spikes->goal", "C2:spikes_by_distance->goal", "C3:spikes->place_direction->goal"],
+        for condition, input_type, inv_alpha, dfs in zip(
+            conditions,
             ["spikes", "spikes_by_distance", "place_direction_prob"],
-            [["navigation"], ["navigation"], ["navigation"]],
             inv_alphas,
             C_dfs,
         ):
@@ -106,7 +106,13 @@ def test(
                 print(condition)
             train_df, test_df = _get_test_train_dfs(input_data, fold_df, training_trial_phases=training_trial_phases)
             X_train, X_test, y_train, y_test = _get_test_train_arrays(
-                train_df, test_df, input_type=input_type, output_type="goal", whiten_features=True, basis_fn=basis_fn
+                train_df,
+                test_df,
+                input_type=input_type,
+                output_type="goal",
+                whiten_features=True,
+                basis_fn=basis_fn,
+                max_steps_to_goal=max_steps_to_goal,
             )
             if inv_alpha is None:
                 decoder = LogisticRegression(penalty=None, max_iter=10_000, random_state=0)
@@ -219,6 +225,7 @@ def get_opt_reg(
     fold_df,
     simple_maze=None,
     basis_fn=None,
+    max_steps_to_goal=None,
     input_type="spikes",  # X
     output_type="place_direction",  # Y
     training_trial_phases=["navigation"],
@@ -235,7 +242,13 @@ def get_opt_reg(
     # prepare data exactly as before
     train_df, test_df = _get_test_train_dfs(input_data, fold_df, training_trial_phases)
     X_train, X_test, y_train, y_test = _get_test_train_arrays(
-        train_df, test_df, input_type, output_type, whiten_features=True, basis_fn=basis_fn
+        train_df,
+        test_df,
+        input_type,
+        output_type,
+        whiten_features=True,
+        basis_fn=basis_fn,
+        max_steps_to_goal=max_steps_to_goal,
     )
     # now parallel evaluate
     if verbose:
@@ -543,7 +556,13 @@ def _get_test_train_dfs(input_data, fold_df, training_trial_phases=["navigation"
 
 
 def _get_test_train_arrays(
-    train_df, test_df, input_type="spikes", output_type="goal", whiten_features=True, basis_fn=None
+    train_df,
+    test_df,
+    input_type="spikes",
+    output_type="goal",
+    whiten_features=True,
+    basis_fn=None,
+    max_steps_to_goal=None,
 ):
     """ """
     # process input data (X)
@@ -555,8 +574,12 @@ def _get_test_train_arrays(
         X_train, X_test = train_df.place_probs.values, test_df.place_probs.values
     elif input_type == "spikes_by_distance":
         assert basis_fn is not None, "basis_fn must be provided for 'spikes_by_distance' input"
+        assert max_steps_to_goal is not None, "max_steps_to_goal must be provided for 'spikes_by_distance' input"
         Xs = []
         for df in [train_df, test_df]:
+            distances = df.steps_to_goal.future.values
+            # cap distances to max_steps_to_goal, basis activations common after this max
+            distances.loc[distances.gt(max_steps_to_goal)] = max_steps_to_goal
             basis_activations = basis_fn(df.steps_to_goal.future.values)
             spikes = df.spike_count.values
             spikes_by_distance = (
