@@ -134,7 +134,7 @@ def plot_session_place_decoding(
 # %% Decoding
 
 
-def run_session_place_decoding2(
+def run_session_place_decoding(
     session,
     output_type,
     n_true=10,
@@ -143,7 +143,8 @@ def run_session_place_decoding2(
     verbose=True,
 ):
     """ """
-    if not isinstance(session, gs.MazeSession):  # optional input as tuple of strings for HPC
+    # check if session is a MazeSession object
+    if not isinstance(session, gs.MazeSession):
         if verbose:
             print(f"Getting session object for {session}")
         subject_ID, maze_name, day_on_maze = session
@@ -154,8 +155,15 @@ def run_session_place_decoding2(
             with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
             must_have_data=True,
         )
+    # update inputs
+    if training_trial_phases == "navigation":
+        _training_trial_phases = ["navigation"]
+    elif training_trial_phases == "all":
+        _training_trial_phases = ["navigation", "reward_consumption", "ITI"]
+    else:
+        raise ValueError("training_trial_phases must be 'navigation' or 'all'")
     # check if save path exists
-    save_path = RESULTS_DIR / output_type / f"{session.name}.parquet"
+    save_path = RESULTS_DIR / output_type / training_trial_phases / f"{session.name}.parquet"
     if save_path.exists():
         results_df = pd.read_parquet(save_path, engine="pyarrow", use_threads=True)
         return results_df
@@ -164,7 +172,7 @@ def run_session_place_decoding2(
         session,
         output_type=output_type,
         n_repeats=n_true,
-        training_trial_phases=training_trial_phases,
+        training_trial_phases=_training_trial_phases,
         permuted=False,
         verbose=verbose,
     )
@@ -172,7 +180,7 @@ def run_session_place_decoding2(
         session,
         output_type=output_type,
         n_repeats=n_permuted,
-        training_trial_phases=training_trial_phases,
+        training_trial_phases=_training_trial_phases,
         permuted=True,
         verbose=verbose,
     )

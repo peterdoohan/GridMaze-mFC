@@ -164,11 +164,11 @@ def goal_decoding_comparison(
     # combine folds and repeats
     results_dfs = [pd.concat(_dfs, axis=0).reset_index(drop=True) for _dfs in C_dfs]
     # save results
-    for result_df, save_path in zip(results_dfs, save_paths):
-        save_path.parent.mkdir(parents=True, exist_ok=True)
-        result_df.to_parquet(save_path, index=False)
-        if verbose:
-            print(f"Saved results to {save_path}")
+    # for result_df, save_path in zip(results_dfs, save_paths):
+    #     save_path.parent.mkdir(parents=True, exist_ok=True)
+    #     result_df.to_parquet(save_path, index=False)
+    #     if verbose:
+    #         print(f"Saved results to {save_path}")
     return results_dfs
 
 
@@ -226,6 +226,26 @@ def quick_plot(results_dfs):
     reward_acc = pd.concat(reward_time_reps, axis=1)
     reward_acc.plot()
     plt.show()
+
+
+def _get_decoding_acc_df_pl2(results_df, output_type):
+    """"""
+    # compute with polars
+    acc_df = (
+        results_df
+        # sort each group so the highest-prob row comes first
+        .sort(f"predicted_{output_type}_prob", descending=True)
+        .group_by(["sample_index", "repeat"], maintain_order=True)
+        .head(1)
+        .with_columns(
+            (pl.col(f"true_{output_type}") == pl.col(f"predicted_{output_type}")).cast(pl.Int8).alias("test_acc")
+        )
+    )
+    # return as pandas
+    acc_df = acc_df.to_pandas()
+    acc_df.sort_values(["sample_index", "repeat"], inplace=True)
+    acc_df.reset_index(drop=True, inplace=True)
+    return acc_df
 
 
 # %%
@@ -468,43 +488,11 @@ def _get_decoding_results_df(test_df, y_test, Yprobs, features, output_type, eng
     return df
 
 
-def decoding_accuracy_df_pl(
-    results_df,
-    decoding_type,
-    alignment,
-):
-    """
-    input polars df, output pandas df
-
-    permuted results not supported yet
-    """
-    prob_col = f"predicted_{decoding_type}_prob"
-    true_col = f"true_{decoding_type}"
-    pred_col = f"predicted_{decoding_type}"
-
-    # sort by (trial_unique_ID ↑, alignment ↑, prob ↓) so the max‐prob row is first in each group
-    df_sorted = results_df.sort(
-        by=["trial_unique_ID", alignment, prob_col],
-        descending=[False, False, True],
-    )
-
-    # pick the first row per (trial_unique_ID, alignment)
-    df_best = df_sorted.unique(
-        subset=["trial_unique_ID", alignment],
-        keep="first",
-    )
-
-    # compute accuracy flag
-    acc_df = df_best.with_columns((pl.col(true_col) == pl.col(pred_col)).cast(pl.Int8).alias("test_acc"))
-    acc_df = acc_df[~acc_df[alignment].isna()]
-    return acc_df.set_index(["trial_unique_ID", alignment]).test_acc.sort_index()
-
-
 def get_expected_distance_error_pl(
     results_df,
     simple_maze,
     op="sum",
-    decoding_type="goal",
+    output_type="goal",
     permuted=False,
     return_as="timeseries",
 ):
@@ -512,15 +500,15 @@ def get_expected_distance_error_pl(
     input polars df (need speed from polars for processing large outputs from permuted decodings)
     output pandas df
     """
-    # check decoding_type matches results df
-    du._check_decoding_type(results_df, decoding_type)
+    # check output_type matches results df
+    du._check_decoding_type(results_df, output_type)
     # add colums for distance to goal (geo or euc) for every true and predicted place/goal pair
-    df = results_df.with_columns(_get_distance_cols_pl(results_df, simple_maze, decoding_type, round_euc=False))
+    df = results_df.with_columns(_get_distance_cols_pl(results_df, simple_maze, output_type, round_euc=False))
     # calc weighted distance error
     df = df.with_columns(
         [
-            (pl.col(f"predicted_{decoding_type}_prob") * pl.col("geo_dist")).alias("geo_weight_prob"),
-            (pl.col(f"predicted_{decoding_type}_prob") * pl.col("euc_dist")).alias("euc_weight_prob"),
+            (pl.col(f"predicted_{output_type}_prob") * pl.col("geo_dist")).alias("geo_weight_prob"),
+            (pl.col(f"predicted_{output_type}_prob") * pl.col("euc_dist")).alias("euc_weight_prob"),
         ]
     )
     group_cols = ["sample_index", "permutation"] if permuted else ["sample_index"]
@@ -552,8 +540,8 @@ def get_expected_distance_error_pl(
     info_df = (
         df.drop(
             [
-                f"predicted_{decoding_type}",
-                f"predicted_{decoding_type}_prob",
+                f"predicted_{output_type}",
+                f"predicted_{output_type}_prob",
                 "geo_dist",
                 "euc_dist",
                 f"geo_weight_prob",
@@ -565,7 +553,10 @@ def get_expected_distance_error_pl(
     )
     EDE_df = info_df.join(sample_EDE, on=group_cols, how="inner")
     if return_as == "timeseries":
-        return EDE_df.to_pandas()
+        EDE_df = EDE_df.to_pandas()
+        EDE_df.sort_values(["sample_index", "trial_unique_ID"], inplace=True)
+        EDE_df.reset_index(drop=True, inplace=True)
+        return EDE_df
     else:
         NotImplementedError
 
