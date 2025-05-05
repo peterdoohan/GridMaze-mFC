@@ -43,9 +43,9 @@ def goal_decoding_comparison(
     n_bases=8,
     basis_type="gamma",
     training_trial_phases=["navigation"],
-    max_steps_to_goal=20,
+    max_steps_to_goal=30,
     inv_alpha="auto",
-    n_repeats=1,
+    n_repeats=5,
     verbose=True,
 ):
     """
@@ -60,6 +60,8 @@ def goal_decoding_comparison(
     """
     # get session object if strings input (when running jobs on HPC)
     if not isinstance(session, gs.MazeSession):
+        if verbose:
+            print(f"Getting session object for {session}")
         subject_ID, maze_name, day_on_maze = session
         session = gs.get_maze_sessions(
             subject_IDs=[subject_ID],
