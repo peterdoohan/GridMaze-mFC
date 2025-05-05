@@ -282,6 +282,57 @@ def run_session_place_decoding(
 # %% Decoding
 
 
+def run_session_place_decoding2(
+    session,
+    output_type,
+    n_true=10,
+    n_permuted=10,
+    training_trial_phases=["navigation"],
+    verbose=True,
+):
+    """ """
+    if not isinstance(session, gs.MazeSession):  # optional input as tuple of strings for HPC
+        if verbose:
+            print(f"Getting session object for {session}")
+        subject_ID, maze_name, day_on_maze = session
+        session = gs.get_maze_sessions(
+            subject_IDs=[subject_ID],
+            maze_names=[maze_name],
+            days_on_maze=[day_on_maze],
+            with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
+            must_have_data=True,
+        )
+    # check if save path exists
+    save_path = RESULTS_DIR / output_type / f"{session.name}.parquet"
+    if save_path.exists():
+        results_df = pd.read_parquet(save_path, engine="pyarrow", use_threads=True)
+        return results_df
+    # get expected distance error (EDE) for true and permuted data
+    true_EDE_df = get_place_decoding(
+        session,
+        output_type=output_type,
+        n_repeats=n_true,
+        training_trial_phases=training_trial_phases,
+        permuted=False,
+        verbose=verbose,
+    )
+    permuted_EDE_df = get_place_decoding(
+        session,
+        output_type=output_type,
+        n_repeats=n_permuted,
+        training_trial_phases=training_trial_phases,
+        permuted=True,
+        verbose=verbose,
+    )
+    # combine into one df
+    results_df = pd.concat([true_EDE_df, permuted_EDE_df], axis=0)
+    results_df.reset_index(drop=True, inplace=True)
+    # save results
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    results_df.to_parquet(save_path, index=False)
+    return results_df
+
+
 def get_place_decoding(
     session,
     output_type="place_direction",
