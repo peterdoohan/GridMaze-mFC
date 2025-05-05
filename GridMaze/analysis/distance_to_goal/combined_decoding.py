@@ -26,11 +26,14 @@ from GridMaze.analysis.distance_to_goal import bases as db
 
 # %% Global Variables
 
+from GridMaze.paths import RESULTS_PATH
+
+RESULTS_DIR = RESULTS_PATH / "distance_to_goal" / "goal_decoding_comparisons"
 
 # %% Functions
 
 
-def test(
+def goal_decoding_comparison(
     session,
     resolution=0.5,
     include_multi_units=True,
@@ -49,37 +52,59 @@ def test(
     CONDITION 1: spikes --(predict)--> goal
     CONDITION 2: spikes_by_distance --(predict)--> goal
     CONDITION 3: spikes --(predict)--> place_direction --(predict)--> goal (control)
+    CONDITION 4: spikes --(predict)--> place_direction_by_distance --(predict)--> goal (control)
+
 
     Note deocders are trained on all data defined in training_trial_phases
     not separate decoders for each timepoint aligned to trial events
     """
+    # get session object if strings input (when running jobs on HPC)
+    if not isinstance(session, gs.MazeSession):
+        subject_ID, maze_name, day_on_maze = session
+        session = gs.get_maze_sessions(
+            subject_IDs=[subject_ID],
+            maze_names=[maze_name],
+            days_on_maze=[day_on_maze],
+            with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
+            must_have_data=True,
+        )
     # define conditions
     conditions = [
-        "C1: spikes->goal",
-        "C2: spikes_by_distance->goal",
-        "C3: spikes->place_direction->goal",
+        "spikes",
+        "spikes_by_distance",
+        "place_direction",
+        "place_direction_by_distance",
     ]
+    # check if results already exist
+    session_name = session.name
+    save_paths = [RESULTS_DIR / session_name / f"{condition}.parquet" for condition in conditions]
+    if all([path.exists() for path in save_paths]):
+        print(f"Results already exist for {session_name}, skipping")
+        return [pd.read_parquet(path) for path in save_paths]
+
+    # else run analysis
     simple_maze = session.simple_maze()
     # get downsampled input data containing behavioural info and spike data
     input_data = du.get_place_decoding_input_data(session, resolution, include_multi_units, window, permuted=False)
-    C_dfs = ([], [], [])
+    C_dfs = ([], [], [], [])
     for n in range(n_repeats):
         # organise trials into test-train folds
         folds_df = du.get_folds_df(
             session, goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials
         )
-        # predict place direction probabilities from spike counts (for control condition)
+        # predict plce/place_direction probabilities from spike counts (for control conditions)
         if verbose:
-            print("Predicting place direction probabilities from spike counts")
-        place_direction_probs_df = get_predicted_place_directions(
+            print(f"Predicting place_direction probabilities from spike counts")
+        spatial_probs_df = get_predicted_spatial(
             input_data,
             folds_df,
             simple_maze,
+            output_type="place_direction",
             inv_alpha=inv_alpha,
             training_trial_phases=training_trial_phases,
             verbose=verbose,
         )
-        input_data = pd.concat([input_data, place_direction_probs_df], axis=1)
+        input_data = pd.concat([input_data, spatial_probs_df], axis=1)
         # get distance to goal basis functions (for spikes_by_distance condition)
         basis_fn = db.distance_basis_generator(
             n_bases=n_bases, basis=basis_type, max_steps=max_steps_to_goal, plot=False
@@ -89,7 +114,12 @@ def test(
             inv_alphas = []
             for condition, input_type in zip(
                 conditions,
-                ["spikes", "spikes_by_distance", "place_direction_prob"],
+                [
+                    "spikes",
+                    "spikes_by_distance",
+                    "place_direction_prob",
+                    "place_direction_prob_by_distance",
+                ],
             ):
                 if verbose:
                     print(condition)
@@ -99,7 +129,6 @@ def test(
                         folds_df["fold_0"],
                         simple_maze,
                         basis_fn,
-                        max_steps_to_goal=max_steps_to_goal,
                         input_type=input_type,
                         output_type="goal",
                         training_trial_phases=training_trial_phases,
@@ -115,7 +144,12 @@ def test(
             fold_df = folds_df[fold]
             for condition, input_type, inv_alpha, dfs in zip(
                 conditions,
-                ["spikes", "spikes_by_distance", "place_direction_prob"],
+                [
+                    "spikes",
+                    "spikes_by_distance",
+                    "place_direction_prob",
+                    "place_direction_prob_by_distance",
+                ],
                 inv_alphas,
                 C_dfs,
             ):
@@ -148,6 +182,12 @@ def test(
                 dfs.append(C_df)
     # combine folds and repeats
     results_dfs = [pd.concat(_dfs, axis=0).reset_index(drop=True) for _dfs in C_dfs]
+    # save results
+    for result_df, save_path in zip(results_dfs, save_paths):
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        result_df.to_parquet(save_path, index=False)
+        if verbose:
+            print(f"Saved results to {save_path}")
     return results_dfs
 
 
@@ -265,7 +305,7 @@ def get_opt_reg(
     input_type="spikes",  # X
     output_type="place_direction",  # Y
     training_trial_phases=["navigation"],
-    reg_range=[None, 10, 50, 1e2, 5e2, 1e3],
+    reg_range=[None, 1, 10, 50, 1e2, 5e2, 1e3],
     eval_metric="expected_distance_error",
     eval_kwargs={
         "op": "sum",
@@ -585,7 +625,11 @@ def _get_test_train_arrays(
     whiten_features=True,
     basis_fn=None,
 ):
-    """ """
+    """
+    TODO: abstract the by_distance functionality
+    """
+    if "by_distance" in input_type:
+        assert basis_fn is not None, "basis_fn must be provided for 'by_distance' input"
     # process input data (X)
     if input_type == "spikes":
         X_train, X_test = train_df.spike_count.values, test_df.spike_count.values
@@ -594,16 +638,34 @@ def _get_test_train_arrays(
     elif input_type == "place_probs":
         X_train, X_test = train_df.place_probs.values, test_df.place_probs.values
     elif input_type == "spikes_by_distance":
-        assert basis_fn is not None, "basis_fn must be provided for 'spikes_by_distance' input"
         Xs = []
         for df in [train_df, test_df]:
-            distances = df.steps_to_goal.future.copy()
-            basis_activations = basis_fn(distances.values)
+            basis_activations = basis_fn(df.steps_to_goal.future.values)
             spikes = df.spike_count.values
             spikes_by_distance = (
                 spikes[:, :, None] * basis_activations[:, None, :]
             )  # [n_timepoints, n_neurons, n_bases]
             Xs.append(spikes_by_distance.reshape(spikes.shape[0], -1))
+        X_train, X_test = Xs
+    elif input_type == "place_prob_by_distance":
+        Xs = []
+        for df in [train_df, test_df]:
+            basis_activations = basis_fn(df.steps_to_goal.future.values)
+            place_probs = df.place_probs.values
+            place_probs_by_distance = (
+                place_probs[:, :, None] * basis_activations[:, None, :]
+            )  # [n_timepoints, n_places, n_bases]
+            Xs.append(place_probs_by_distance.reshape(place_direction_probs.shape[0], -1))
+        X_train, X_test = Xs
+    elif input_type == "place_direction_prob_by_distance":
+        Xs = []
+        for df in [train_df, test_df]:
+            basis_activations = basis_fn(df.steps_to_goal.future.values)
+            place_direction_probs = df.place_direction_prob.values
+            place_direction_probs_by_distance = (
+                place_direction_probs[:, :, None] * basis_activations[:, None, :]
+            )  # [n_timepoints, n_place_directions, n_bases]
+            Xs.append(place_direction_probs_by_distance.reshape(place_direction_probs.shape[0], -1))
         X_train, X_test = Xs
     else:
         raise ValueError(f"Unknown input type {input_type!r}")
