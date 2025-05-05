@@ -564,8 +564,14 @@ def _downsample_data(navigation_df, spike_counts_df, resolution=0.2):
 
 def get_folds_df(session, goal_stratified=True, valid_trials=None, return_unique_IDs=True, n_test_trials=None):
     """ """
+    n_trials = session.trials_df.trial.max()
     if goal_stratified:
-        folds_df = _get_folds_goal_stratified(session, valid_trials, return_unique_IDs)
+        # check there are are enogh trials to stratify by goals if not split trials randomly
+        # only applies to early sessions
+        if n_trials < len(session.goals) * 2:
+            folds_df = _get_folds_non_stratified(session, valid_trials, n_test_trials=(n_trials // 5))
+        else:
+            folds_df = _get_folds_goal_stratified(session, valid_trials, return_unique_IDs)
     else:
         folds_df = _get_folds_non_stratified(session, valid_trials, n_test_trials, return_unique_IDs)
     return folds_df
@@ -600,6 +606,7 @@ def get_goals_df(session, valid_trials=None, return_unique_IDs=True):
     returns df with goals in index and corresponding session trials in columns
     """
     trials_df = session.trials_df
+    assert trials_df.trial.max() > len(session.goals), "Session does not have enough trials to stratify by goals"
     if valid_trials is not None:
         trials_df = trials_df[trials_df.trial.isin(valid_trials)].reset_index(drop=True)
     goal2trials = {}

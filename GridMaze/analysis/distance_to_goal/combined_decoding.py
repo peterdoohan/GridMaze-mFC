@@ -86,11 +86,10 @@ def goal_decoding_comparison(
 
     # else run analysis
     simple_maze = session.simple_maze()
-    # get downsampled input data containing behavioural info and spike data
-    input_data = du.get_place_decoding_input_data(session, resolution, include_multi_units, window, permuted=False)
-
     C_dfs = [[] for _ in conditions]  # store condition results here
     for n in range(n_repeats):
+        # get downsampled input data containing behavioural info and spike data
+        input_data = du.get_place_decoding_input_data(session, resolution, include_multi_units, window, permuted=False)
         # organise trials into test-train folds
         folds_df = du.get_folds_df(
             session, goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials
@@ -162,6 +161,7 @@ def goal_decoding_comparison(
         for cond_idx in range(len(conditions)):
             for fold_output in parallel_outputs:
                 C_dfs[cond_idx].extend(fold_output[cond_idx])
+        del parallel_outputs  # save memory
     # combine folds and repeats
     results_dfs = [pd.concat(_dfs, axis=0).reset_index(drop=True) for _dfs in C_dfs]
     # save results
