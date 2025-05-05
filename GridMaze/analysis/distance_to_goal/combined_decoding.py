@@ -42,6 +42,7 @@ def test(
     training_trial_phases=["navigation"],
     max_steps_to_goal=20,
     inv_alpha="auto",
+    n_repeats=1,
     verbose=True,
 ):
     """
@@ -61,97 +62,102 @@ def test(
     simple_maze = session.simple_maze()
     # get downsampled input data containing behavioural info and spike data
     input_data = du.get_place_decoding_input_data(session, resolution, include_multi_units, window, permuted=False)
-    # organise trials into test-train folds
-    folds_df = du.get_folds_df(session, goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials)
-    # predict place direction probabilities from spike counts (for control condition)
-    if verbose:
-        print("Predicting place direction probabilities from spike counts")
-    place_direction_probs_df = get_predicted_place_directions(
-        input_data,
-        folds_df,
-        simple_maze,
-        inv_alpha=inv_alpha,
-        training_trial_phases=training_trial_phases,
-        verbose=verbose,
-    )
-    input_data = pd.concat([input_data, place_direction_probs_df], axis=1)
-    # get distance to goal basis functions (for spikes_by_distance condition)
-    basis_fn = db.distance_basis_generator(n_bases=n_bases, basis=basis_type, max_steps=max_steps_to_goal, plot=False)
-    if inv_alpha == "auto":
-        # get optimal regularisation for each condition
-        inv_alphas = []
-        for condition, input_type in zip(
-            conditions,
-            ["spikes", "spikes_by_distance", "place_direction_prob"],
-        ):
+    C_dfs = ([], [], [])
+    for n in range(n_repeats):
+        # organise trials into test-train folds
+        folds_df = du.get_folds_df(
+            session, goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials
+        )
+        # predict place direction probabilities from spike counts (for control condition)
+        if verbose:
+            print("Predicting place direction probabilities from spike counts")
+        place_direction_probs_df = get_predicted_place_directions(
+            input_data,
+            folds_df,
+            simple_maze,
+            inv_alpha=inv_alpha,
+            training_trial_phases=training_trial_phases,
+            verbose=verbose,
+        )
+        input_data = pd.concat([input_data, place_direction_probs_df], axis=1)
+        # get distance to goal basis functions (for spikes_by_distance condition)
+        basis_fn = db.distance_basis_generator(
+            n_bases=n_bases, basis=basis_type, max_steps=max_steps_to_goal, plot=False
+        )
+        if inv_alpha == "auto":
+            # get optimal regularisation for each condition
+            inv_alphas = []
+            for condition, input_type in zip(
+                conditions,
+                ["spikes", "spikes_by_distance", "place_direction_prob"],
+            ):
+                if verbose:
+                    print(condition)
+                inv_alphas.append(
+                    get_opt_reg(
+                        input_data,
+                        folds_df["fold_0"],
+                        simple_maze,
+                        basis_fn,
+                        max_steps_to_goal=max_steps_to_goal,
+                        input_type=input_type,
+                        output_type="goal",
+                        training_trial_phases=training_trial_phases,
+                        eval_metric="expected_distance_error",
+                    )
+                )
+        else:
+            inv_alphas = [inv_alpha] * len(conditions)
+        # run xvaled decoding for each condition aross folds
+        for fold in folds_df.columns.levels[0].unique():
             if verbose:
-                print(condition)
-            inv_alphas.append(
-                get_opt_reg(
-                    input_data,
-                    folds_df["fold_0"],
-                    simple_maze,
-                    basis_fn,
-                    max_steps_to_goal=max_steps_to_goal,
+                print(fold)
+            fold_df = folds_df[fold]
+            for condition, input_type, inv_alpha, dfs in zip(
+                conditions,
+                ["spikes", "spikes_by_distance", "place_direction_prob"],
+                inv_alphas,
+                C_dfs,
+            ):
+                if verbose:
+                    print(condition)
+                train_df, test_df = _get_test_train_dfs(
+                    input_data, fold_df, training_trial_phases=training_trial_phases
+                )
+                X_train, X_test, y_train, y_test = _get_test_train_arrays(
+                    train_df,
+                    test_df,
                     input_type=input_type,
                     output_type="goal",
-                    training_trial_phases=training_trial_phases,
-                    eval_metric="expected_distance_error",
+                    whiten_features=True,
+                    basis_fn=basis_fn,
                 )
-            )
-    else:
-        inv_alphas = [inv_alpha] * len(conditions)
-    # run xvaled decoding for each condition aross folds
-    C_dfs = ([], [], [])
-    for fold in folds_df.columns.levels[0].unique():
-        if verbose:
-            print(fold)
-        fold_df = folds_df[fold]
-        for condition, input_type, inv_alpha, dfs in zip(
-            conditions,
-            ["spikes", "spikes_by_distance", "place_direction_prob"],
-            inv_alphas,
-            C_dfs,
-        ):
-            if verbose:
-                print(condition)
-            train_df, test_df = _get_test_train_dfs(input_data, fold_df, training_trial_phases=training_trial_phases)
-            X_train, X_test, y_train, y_test = _get_test_train_arrays(
-                train_df,
-                test_df,
-                input_type=input_type,
-                output_type="goal",
-                whiten_features=True,
-                basis_fn=basis_fn,
-                max_steps_to_goal=max_steps_to_goal,
-            )
-            if inv_alpha is None:
-                decoder = LogisticRegression(penalty=None, max_iter=10_000, random_state=0)
-            else:
-                decoder = LogisticRegression(penalty="l2", C=inv_alpha, max_iter=10_000, random_state=0)
-            # train
-            decoder.fit(X_train, y_train)
-            # predict
-            Yprobs = decoder.predict_proba(X_test)
-            features = list(decoder.classes_)
-            # get decoding results
-            C_df = _get_decoding_results_df(test_df, y_test, Yprobs, features, "goal", engine="pandas")
-            C_df["fold"] = fold
-            dfs.append(C_df)
-    # combine folds
+                if inv_alpha is None:
+                    decoder = LogisticRegression(penalty=None, max_iter=10_000, random_state=0)
+                else:
+                    decoder = LogisticRegression(penalty="l2", C=inv_alpha, max_iter=10_000, random_state=0)
+                # train
+                decoder.fit(X_train, y_train)
+                # predict
+                Yprobs = decoder.predict_proba(X_test)
+                features = list(decoder.classes_)
+                # get decoding results
+                C_df = _get_decoding_results_df(test_df, y_test, Yprobs, features, "goal", engine="pandas")
+                C_df["fold"] = fold
+                C_df["repeat"] = n
+                dfs.append(C_df)
+    # combine folds and repeats
     results_dfs = [pd.concat(_dfs, axis=0).reset_index(drop=True) for _dfs in C_dfs]
-    # translate output to accuracy metric and output
+    return results_dfs
+
+
+def quick_plot(results_dfs):
     acc_dfs = []
     for df in results_dfs:
         # predicted goal is max goal prob at each samle (ds window)
         acc_df = df.loc[df.groupby("sample_index").predicted_goal_prob.idxmax()]
         acc_df["test_acc"] = (df.true_goal == df.predicted_goal).astype(int)
         acc_dfs.append(acc_df)
-    quick_plot(acc_dfs)
-    return acc_dfs
-
-
-def quick_plot(acc_dfs):
     cue_dfs, reward_time_reps = [], []
     for df in acc_dfs:
         for event, dfs in zip(["cue", "reward"], [cue_dfs, reward_time_reps]):
@@ -166,10 +172,11 @@ def quick_plot(acc_dfs):
     plt.show()
 
 
-def get_predicted_place_directions(
+def get_predicted_spatial(
     input_data,
     folds_df,
     simple_maze,
+    output_type="place_direction",
     inv_alpha="auto",
     training_trial_phases=["navigation"],
     verbose=True,
@@ -184,14 +191,20 @@ def get_predicted_place_directions(
 
     W/ automatic regularisation optimisation
     """
-    # precompute all place_directions ("A1_N")
-    place_directions = mr.get_maze_place_direction_pairs(simple_maze)
-    place_directions = ["_".join(x) for x in place_directions]
+    if output_type == "place_direction":
+        # precompute all place_directions ("A1_N")
+        all_features = mr.get_maze_place_direction_pairs(simple_maze)
+        all_features = ["_".join(x) for x in all_features]
 
-    # add place_direction column to input_data
-    input_data[("place_direction", "")] = input_data.apply(
-        lambda x: f"{x[("maze_position", "simple")]}_{x[("cardinal_movement_direction", "")]}", axis=1
-    )
+        # add place_direction column to input_data
+        input_data[("place_direction", "")] = input_data.apply(
+            lambda x: f"{x[("maze_position", "simple")]}_{x[("cardinal_movement_direction", "")]}", axis=1
+        )
+    elif output_type == "place":
+        all_features = mr.get_maze_locations(simple_maze)
+    else:
+        raise ValueError(f"Unknown output type {output_type!r}")
+
     # get x-val optimal regularisation
     if inv_alpha == "auto":
         if verbose:
@@ -201,7 +214,7 @@ def get_predicted_place_directions(
             folds_df["fold_0"],
             simple_maze,
             input_type="spikes",
-            output_type="place_direction",
+            output_type=output_type,
             training_trial_phases=training_trial_phases,
             eval_metric="expected_distance_error",
         )
@@ -212,7 +225,7 @@ def get_predicted_place_directions(
             print(fold)
         train_df, test_df = _get_test_train_dfs(input_data, folds_df[fold], training_trial_phases)
         X_train, X_test, y_train, y_test = _get_test_train_arrays(
-            train_df, test_df, input_type="spikes", output_type="place_direction", whiten_features=True
+            train_df, test_df, input_type="spikes", output_type=output_type, whiten_features=True
         )
         if inv_alpha is None:
             decoder = LogisticRegression(penalty=None, max_iter=10_000, random_state=0, class_weight="balanced")
@@ -223,22 +236,22 @@ def get_predicted_place_directions(
         decoder.fit(X_train, y_train)
         Yprobs = decoder.predict_proba(X_test)
         features = list(decoder.classes_)
-        place_direction_probs_df = pd.DataFrame(
+        probs_df = pd.DataFrame(
             index=test_df.index,
-            columns=pd.MultiIndex.from_product([["place_direction_prob"], features]),
+            columns=pd.MultiIndex.from_product([[f"{output_type}_prob"], features]),
             data=Yprobs,
         )
         # check for missing place_directions and add columns with value 0
-        missing_directions = set(place_directions) - set(features)
-        if len(missing_directions) > 0:
-            for missing_direction in missing_directions:
-                place_direction_probs_df[("place_direction_prob", missing_direction)] = 0
-        dfs.append(place_direction_probs_df.sort_index(axis=1))
+        missing_features = set(all_features) - set(features)
+        if len(missing_features) > 0:
+            for missing_direction in missing_features:
+                probs_df[(f"{output_type}_prob", missing_direction)] = 0
+        dfs.append(probs_df.sort_index(axis=1))
     # combine folds and ensure index lines up with input_data
-    place_direction_probs_df = pd.concat(dfs, axis=0)
-    place_direction_probs_df.sort_index(axis=0, inplace=True)
-    assert place_direction_probs_df.index.equals(input_data.index)
-    return place_direction_probs_df
+    probs_df = pd.concat(dfs, axis=0)
+    probs_df.sort_index(axis=0, inplace=True)
+    assert probs_df.index.equals(input_data.index)
+    return probs_df
 
 
 # %%
@@ -249,7 +262,6 @@ def get_opt_reg(
     fold_df,
     simple_maze=None,
     basis_fn=None,
-    max_steps_to_goal=None,
     input_type="spikes",  # X
     output_type="place_direction",  # Y
     training_trial_phases=["navigation"],
@@ -272,7 +284,6 @@ def get_opt_reg(
         output_type,
         whiten_features=True,
         basis_fn=basis_fn,
-        max_steps_to_goal=max_steps_to_goal,
     )
     # now parallel evaluate
     if verbose:
@@ -573,7 +584,6 @@ def _get_test_train_arrays(
     output_type="goal",
     whiten_features=True,
     basis_fn=None,
-    max_steps_to_goal=None,
 ):
     """ """
     # process input data (X)
@@ -585,12 +595,9 @@ def _get_test_train_arrays(
         X_train, X_test = train_df.place_probs.values, test_df.place_probs.values
     elif input_type == "spikes_by_distance":
         assert basis_fn is not None, "basis_fn must be provided for 'spikes_by_distance' input"
-        assert max_steps_to_goal is not None, "max_steps_to_goal must be provided for 'spikes_by_distance' input"
         Xs = []
         for df in [train_df, test_df]:
             distances = df.steps_to_goal.future.copy()
-            # cap distances to max_steps_to_goal, basis activations common after this max
-            # distances.loc[distances.gt(max_steps_to_goal)] = max_steps_to_goal
             basis_activations = basis_fn(distances.values)
             spikes = df.spike_count.values
             spikes_by_distance = (
