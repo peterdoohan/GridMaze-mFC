@@ -293,74 +293,61 @@ def get_place_decoding(
     training_trial_phases=["navigation"],
     inv_alpha="auto",
     permuted=False,
+    n_repeats=10,
     verbose=True,
 ):
     """ """
     # load input data
     simple_maze = session.simple_maze()
-    input_data = du.get_place_decoding_input_data(session, resolution, include_multi_units, window, permuted=permuted)
-    if output_type == "place_direction":
-        input_data[("place_direction", "")] = input_data.apply(
-            lambda x: f"{x[("maze_position", "simple")]}_{x[("cardinal_movement_direction", "")]}", axis=1
+    EDE_dfs = []
+    for n in range(n_repeats):
+        input_data = du.get_place_decoding_input_data(
+            session, resolution, include_multi_units, window, permuted=permuted
         )
-    folds_df = du.get_folds_df(session, goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials)
-    # find optimal regularisation
-    if inv_alpha == "auto":
-        inv_alpha = cd.get_opt_reg(
-            input_data,
-            folds_df["fold_0"],
-            simple_maze,
-            input_type="spikes",
-            output_type=output_type,
-            training_trial_phases=training_trial_phases,
-            eval_metric="expected_distance_error",
+        if output_type == "place_direction":
+            input_data[("place_direction", "")] = input_data.apply(
+                lambda x: f"{x[("maze_position", "simple")]}_{x[("cardinal_movement_direction", "")]}", axis=1
+            )
+        folds_df = du.get_folds_df(
+            session, goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials
         )
+        # find optimal regularisation
+        if inv_alpha == "auto":
+            _inv_alpha = cd.get_opt_reg(
+                input_data,
+                folds_df["fold_0"],
+                simple_maze,
+                input_type="spikes",
+                output_type=output_type,
+                training_trial_phases=training_trial_phases,
+                eval_metric="expected_distance_error",
+            )
 
-    results_dfs = []
-    # get cross validated decoding across folds
-    folds = folds_df.columns.levels[0].unique()
-    results_dfs = Parallel(n_jobs=-1, verbose=10)(
-        delayed(_decode_place_fold)(
-            fold,
-            input_data,
-            folds_df,
-            simple_maze,
-            output_type,
-            inv_alpha,
-            training_trial_phases,
-            verbose,
-        )
-        for fold in folds
-    )
-    for fold in folds_df.columns.levels[0].unique():
-        if verbose:
-            print(fold)
-        fold_df = folds_df[fold]
-        train_df, test_df = cd._get_test_train_dfs(input_data, fold_df, training_trial_phases)
-        X_train, X_test, y_train, y_test = cd._get_test_train_arrays(
-            train_df,
-            test_df,
-            input_type="spikes",
-            output_type=output_type,
-            whiten_features=True,
-        )
-        if inv_alpha is None:
-            decoder = LogisticRegression(
-                penalty=None, max_iter=10_000, random_state=0, class_weight="balanced", verbose=False
+        results_dfs = []
+        # get cross validated decoding across folds
+        folds = folds_df.columns.levels[0].unique()
+        results_dfs = Parallel(n_jobs=len(folds), verbose=False)(
+            delayed(_decode_place_fold)(
+                fold,
+                input_data,
+                folds_df,
+                output_type,
+                _inv_alpha,
+                training_trial_phases,
+                verbose,
             )
-        else:
-            decoder = LogisticRegression(
-                penalty="l2", C=inv_alpha, max_iter=10_000, random_state=0, class_weight="balanced", verbose=False
-            )
-        decoder.fit(X_train, y_train)
-        Yprobs = decoder.predict_proba(X_test)
-        features = list(decoder.classes_)
-        df = cd._get_decoding_results_df(test_df, y_test, Yprobs, features, output_type, engine="polars")
-        df = df.with_columns(pl.lit(fold).alias("fold"))
-        results_dfs.append(df)
-    results_df = pl.concat(results_dfs, how="vertical")
-    # translate to EDE df reduce output df size
-    return results_df
+            for fold in folds
+        )
+        results_df = pl.concat(results_dfs, how="vertical")
+        # translate to EDE df reduce output df size
+        EDE_df = cd.get_expected_distance_error_pl(
+            results_df, simple_maze, op="sum", decoding_type="place_direction", permuted=False, return_as="timeseries"
+        )  # pandas output
+        EDE_df["repeat"] = n
+        EDE_df["permuted"] = permuted
+        EDE_dfs.append(EDE_df)
+    combined_EDE_df = pd.concat(EDE_dfs, axis=0)
+    return combined_EDE_df.reset_index(drop=True)
 
 
 # %%

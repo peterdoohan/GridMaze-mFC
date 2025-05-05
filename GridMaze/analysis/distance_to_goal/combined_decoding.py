@@ -18,7 +18,6 @@ from joblib import Parallel, delayed
 
 from GridMaze.maze import representations as mr
 from GridMaze.analysis.core import get_sessions as gs
-from GridMaze.analysis.distance_to_goal import place_decoding as dp
 from GridMaze.analysis.distance_to_goal import decoding_utils as du
 from GridMaze.analysis.distance_to_goal import goal_decoding as gd
 from GridMaze.analysis.distance_to_goal import bases as db
@@ -328,7 +327,7 @@ def get_opt_reg(
     eval_kwargs={
         "op": "sum",
         "dist_metric": "geodesic",
-        "cue_window": (-2, 2),
+        "cue_window": (0, 4),
         "reward_window": (-8, 0),
     },
     verbose=True,
