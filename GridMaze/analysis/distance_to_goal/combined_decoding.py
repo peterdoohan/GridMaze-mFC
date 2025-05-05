@@ -45,7 +45,7 @@ def goal_decoding_comparison(
     training_trial_phases=["navigation"],
     max_steps_to_goal=30,
     inv_alpha="auto",
-    n_repeats=5,
+    n_repeats=10,
     verbose=True,
 ):
     """
@@ -89,7 +89,7 @@ def goal_decoding_comparison(
     # get downsampled input data containing behavioural info and spike data
     input_data = du.get_place_decoding_input_data(session, resolution, include_multi_units, window, permuted=False)
 
-    C_dfs = [[]] * len(conditions)
+    C_dfs = [[] for _ in conditions]  # store condition results here
     for n in range(n_repeats):
         # organise trials into test-train folds
         folds_df = du.get_folds_df(
@@ -212,7 +212,7 @@ def quick_plot(results_dfs):
     acc_dfs = []
     for df in results_dfs:
         # predicted goal is max goal prob at each samle (ds window)
-        acc_df = df.loc[df.groupby("sample_index").predicted_goal_prob.idxmax()]
+        acc_df = df.loc[df.groupby(["sample_index", "repeat"]).predicted_goal_prob.idxmax()]
         acc_df["test_acc"] = (df.true_goal == df.predicted_goal).astype(int)
         acc_dfs.append(acc_df)
     cue_dfs, reward_time_reps = [], []

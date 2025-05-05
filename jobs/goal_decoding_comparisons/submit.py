@@ -29,6 +29,7 @@ def submit_all_jobs():
                 script_path = get_SLURM_script(subject, maze_name, day_on_maze)
                 os.system(f"chmod +x {script_path}")
                 os.system(f"sbatch {script_path}")
+                return
 
 
 def get_SLURM_script(subject, maze_name, day_on_maze):
@@ -39,7 +40,7 @@ def get_SLURM_script(subject, maze_name, day_on_maze):
 #SBATCH --output=jobs/goal_decoding_comparisons/out/{exp_name}.out
 #SBATCH --error=jobs/goal_decoding_comparisons/err/{exp_name}.err
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=12
 #SBATCH --mem=16GB
 #SBATCH --time=12:00:00
 
