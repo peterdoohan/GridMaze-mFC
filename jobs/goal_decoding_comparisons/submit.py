@@ -39,13 +39,11 @@ def get_SLURM_script(subject, maze_name, day_on_maze):
 #SBATCH --output=jobs/goal_decoding_comparisons/out/{exp_name}.out
 #SBATCH --error=jobs/goal_decoding_comparisons/err/{exp_name}.err
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=1
-#SBATCH --mem=8GB
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=16GB
 #SBATCH --time=12:00:00
 
 module load miniconda
-conda deactivate
-conda deactivate
 conda deactivate
 conda deactivate
 conda activate goalNav_mEC

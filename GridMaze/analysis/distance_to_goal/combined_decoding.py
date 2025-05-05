@@ -88,7 +88,8 @@ def goal_decoding_comparison(
     simple_maze = session.simple_maze()
     # get downsampled input data containing behavioural info and spike data
     input_data = du.get_place_decoding_input_data(session, resolution, include_multi_units, window, permuted=False)
-    C_dfs = ([], [], [], [])
+
+    C_dfs = [[]] * len(conditions)
     for n in range(n_repeats):
         # organise trials into test-train folds
         folds_df = du.get_folds_df(
@@ -140,48 +141,27 @@ def goal_decoding_comparison(
         else:
             inv_alphas = [inv_alpha] * len(conditions)
         # run xvaled decoding for each condition aross folds
-        for fold in folds_df.columns.levels[0].unique():
-            if verbose:
-                print(fold)
-            fold_df = folds_df[fold]
-            for condition, input_type, inv_alpha, dfs in zip(
+        folds = folds_df.columns.levels[0].unique()
+        if verbose:
+            print("Running condition decodings paralleised across folds")
+        parallel_outputs = Parallel(n_jobs=len(folds), verbose=False)(
+            delayed(_decode_fold_repeat)(
+                fold,
+                n,
+                input_data,
+                folds_df,
                 conditions,
-                [
-                    "spikes",
-                    "spikes_by_distance",
-                    "place_direction_prob",
-                    "place_direction_prob_by_distance",
-                ],
+                basis_fn,
                 inv_alphas,
-                C_dfs,
-            ):
-                if verbose:
-                    print(condition)
-                train_df, test_df = _get_test_train_dfs(
-                    input_data, fold_df, training_trial_phases=training_trial_phases
-                )
-                X_train, X_test, y_train, y_test = _get_test_train_arrays(
-                    train_df,
-                    test_df,
-                    input_type=input_type,
-                    output_type="goal",
-                    whiten_features=True,
-                    basis_fn=basis_fn,
-                )
-                if inv_alpha is None:
-                    decoder = LogisticRegression(penalty=None, max_iter=10_000, random_state=0)
-                else:
-                    decoder = LogisticRegression(penalty="l2", C=inv_alpha, max_iter=10_000, random_state=0)
-                # train
-                decoder.fit(X_train, y_train)
-                # predict
-                Yprobs = decoder.predict_proba(X_test)
-                features = list(decoder.classes_)
-                # get decoding results
-                C_df = _get_decoding_results_df(test_df, y_test, Yprobs, features, "goal", engine="pandas")
-                C_df["fold"] = fold
-                C_df["repeat"] = n
-                dfs.append(C_df)
+                training_trial_phases,
+                verbose,
+            )
+            for fold in folds
+        )
+        # parallel_outputs is a list of lists (fold × conditions), assign to C_dfs
+        for cond_idx in range(len(conditions)):
+            for fold_output in parallel_outputs:
+                C_dfs[cond_idx].extend(fold_output[cond_idx])
     # combine folds and repeats
     results_dfs = [pd.concat(_dfs, axis=0).reset_index(drop=True) for _dfs in C_dfs]
     # save results
@@ -191,6 +171,41 @@ def goal_decoding_comparison(
         if verbose:
             print(f"Saved results to {save_path}")
     return results_dfs
+
+
+def _decode_fold_repeat(
+    fold, repeat, input_data, folds_df, conditions, basis_fn, inv_alphas, training_trial_phases, verbose
+):
+    """
+    Run decoding for a single fold & repeat. Returns a list of DataFrames,
+    one per condition.
+    """
+    fold_df = folds_df[fold]
+    C_dfs = [[] for _ in conditions]
+    for cond_idx, (condition, input_type, inv_alpha) in enumerate(
+        zip(
+            conditions,
+            ["spikes", "spikes_by_distance", "place_direction_prob", "place_direction_prob_by_distance"],
+            inv_alphas,
+        )
+    ):
+        if verbose:
+            print(f"{fold}:{condition}")
+        train_df, test_df = _get_test_train_dfs(input_data, fold_df, training_trial_phases=training_trial_phases)
+        X_train, X_test, y_train, y_test = _get_test_train_arrays(
+            train_df, test_df, input_type=input_type, output_type="goal", whiten_features=True, basis_fn=basis_fn
+        )
+        if inv_alpha is None:
+            decoder = LogisticRegression(penalty=None, max_iter=10_000, random_state=0)
+        else:
+            decoder = LogisticRegression(penalty="l2", C=inv_alpha, max_iter=10_000, random_state=0)
+        decoder.fit(X_train, y_train)
+        Yprobs = decoder.predict_proba(X_test)
+        C_df = _get_decoding_results_df(test_df, y_test, Yprobs, list(decoder.classes_), "goal", engine="pandas")
+        C_df["fold"] = fold
+        C_df["repeat"] = repeat
+        C_dfs[cond_idx].append(C_df)
+    return C_dfs
 
 
 def quick_plot(results_dfs):
@@ -214,6 +229,7 @@ def quick_plot(results_dfs):
     plt.show()
 
 
+# %%
 def get_predicted_spatial(
     input_data,
     folds_df,
