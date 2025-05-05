@@ -8,17 +8,19 @@ aligned time. Uses util functions in ./decoding_utils.py
 import json
 import numpy as np
 import pandas as pd
+import polars as pl
 from sklearn.linear_model import LogisticRegression
 from matplotlib import pyplot as plt
 import seaborn as sns
 from scipy.stats import ttest_1samp
 from statsmodels.stats.multitest import multipletests
 from sklearn.preprocessing import StandardScaler
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from joblib import Parallel, delayed
 
 from GridMaze.analysis.core import get_sessions as gs
 from . import decoding_utils as du
 from . import bases as db
+from . import combined_decoding as cd
 
 # %% Global Variables
 from GridMaze.paths import RESULTS_PATH, EXPERIMENT_INFO_PATH
@@ -282,122 +284,66 @@ def run_session_place_decoding(
 
 def get_place_decoding(
     session,
-    input_type="place_direction",
+    output_type="place_direction",
     resolution=0.5,
     include_multi_units=True,
     window=(-10, 10),
     goal_stratified_validation=True,
     n_test_trials=None,
     training_trial_phases=["navigation"],
-    training_steps_to_goal_range=None,
-    whiten_features=True,
     inv_alpha="auto",
-    return_inv_alpha=False,
     permuted=False,
+    verbose=True,
 ):
     """ """
+    # load input data
     simple_maze = session.simple_maze()
     input_data = du.get_place_decoding_input_data(session, resolution, include_multi_units, window, permuted=permuted)
-    if input_type == "place_direction":
+    if output_type == "place_direction":
         input_data[("place_direction", "")] = input_data.apply(
             lambda x: f"{x[("maze_position", "simple")]}_{x[("cardinal_movement_direction", "")]}", axis=1
         )
     folds_df = du.get_folds_df(session, goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials)
-    results_dfs = []
-    for fold in folds_df.columns.levels[0].unique():
-        print(fold)
-        fold_df = folds_df[fold]
-        test_trials = [t for t in fold_df.test.values.flatten() if isinstance(t, str)]
-        train_trials = [t for t in fold_df.train.values.flatten() if isinstance(t, str)]
-        train_df = input_data[input_data.trial_unique_ID.isin(train_trials)]
-        # include only specified trial phases in training data
-        train_df = train_df[train_df.trial_phase.isin(training_trial_phases)]
-        # include only specified steps to goal in training data (check how this works with NaNs in other trial phases)
-        if training_steps_to_goal_range is not None:
-            train_df = train_df[train_df.steps_to_goal.future.between(*training_steps_to_goal_range)]
-        test_df = input_data[input_data.trial_unique_ID.isin(test_trials)]
-        if input_type == "place":
-            X_train, y_train = train_df.spike_count.values, train_df.maze_position.simple.values
-        elif input_type == "place_direction":
-            X_train, y_train = train_df.spike_count.values, train_df.place_direction.values
-        X_test, y_test = test_df.spike_count.values, test_df.maze_position.simple.values
-        if whiten_features:
-            scaler = StandardScaler()  # mean=0, std=1 per column
-            scaler.fit(X_train)  # learn stats on train
-            X_train = scaler.transform(X_train)
-            X_test = scaler.transform(X_test)
-
-        # get optimal regularization
-        if fold == "fold_0":
-            if inv_alpha == "auto":
-                opt_reg = get_opt_reg(
-                    test_df,
-                    X_train,
-                    X_test,
-                    y_train,
-                    y_test,
-                    input_type,
-                    simple_maze,
-                )
-            else:
-                opt_reg = inv_alpha
-
-        if opt_reg is None:
-            decoder = LogisticRegression(
-                penalty=None, max_iter=10_000, random_state=0, class_weight="balanced", verbose=False
-            )
-        else:
-            decoder = LogisticRegression(
-                penalty="l2", C=opt_reg, max_iter=10_000, random_state=0, class_weight="balanced", verbose=False
-            )
-        decoder.fit(X_train, y_train)
-        Pprobs = decoder.predict_proba(X_test)
-        n_samples, n_places = Pprobs.shape
-        places = list(decoder.classes_)
-        df = pd.DataFrame(
-            {
-                "cue_aligned_time": np.repeat(test_df.event_aligned_bin["cue"].values, n_places),
-                "reward_aligned_time": np.repeat(test_df.event_aligned_bin["reward"].values, n_places),
-                "steps_to_goal": np.repeat(test_df.steps_to_goal.future.values, n_places),
-                "trial_phase": np.repeat(test_df.trial_phase.values, n_places),
-                f"true_{input_type}": np.repeat(y_test, n_places),
-                "trial_unique_ID": np.repeat(test_df.trial_unique_ID.values, n_places),
-                f"predicted_{input_type}": np.tile(places, n_samples),
-                f"predicted_{input_type}_prob": Pprobs.ravel(),
-            }
+    # find optimal regularisation
+    if inv_alpha == "auto":
+        inv_alpha = cd.get_opt_reg(
+            input_data,
+            folds_df["fold_0"],
+            simple_maze,
+            input_type="spikes",
+            output_type=output_type,
+            training_trial_phases=training_trial_phases,
+            eval_metric="expected_distance_error",
         )
-        df["fold"] = fold
-        results_dfs.append(df)
-    results_df = pd.concat(results_dfs, axis=0)
-    results_df.reset_index(drop=True, inplace=True)
-    if return_inv_alpha:
-        return results_df, opt_reg
-    else:
-        return results_df
 
-
-# %%
-
-
-def get_opt_reg(
-    test_df,
-    X_train,
-    X_test,
-    y_train,
-    y_test,
-    input_type,
-    simple_maze,
-    reg_range=[None, 10, 50, 1e2, 5e2, 1e3, 1e4],
-    dist_metric="geodesic",
-    cue_window=(-2, 2),
-    reward_window=(-8, 0),
-):
-    """
-    Find optimal regularisation for Logistic regression by minimising expected distance error (EDE) on one
-    fold of test data
-    """
-    reg_EDE = []
-    for inv_alpha in reg_range:
+    results_dfs = []
+    # get cross validated decoding across folds
+    folds = folds_df.columns.levels[0].unique()
+    results_dfs = Parallel(n_jobs=-1, verbose=10)(
+        delayed(_decode_place_fold)(
+            fold,
+            input_data,
+            folds_df,
+            simple_maze,
+            output_type,
+            inv_alpha,
+            training_trial_phases,
+            verbose,
+        )
+        for fold in folds
+    )
+    for fold in folds_df.columns.levels[0].unique():
+        if verbose:
+            print(fold)
+        fold_df = folds_df[fold]
+        train_df, test_df = cd._get_test_train_dfs(input_data, fold_df, training_trial_phases)
+        X_train, X_test, y_train, y_test = cd._get_test_train_arrays(
+            train_df,
+            test_df,
+            input_type="spikes",
+            output_type=output_type,
+            whiten_features=True,
+        )
         if inv_alpha is None:
             decoder = LogisticRegression(
                 penalty=None, max_iter=10_000, random_state=0, class_weight="balanced", verbose=False
@@ -407,34 +353,51 @@ def get_opt_reg(
                 penalty="l2", C=inv_alpha, max_iter=10_000, random_state=0, class_weight="balanced", verbose=False
             )
         decoder.fit(X_train, y_train)
-        Pprobs = decoder.predict_proba(X_test)
-        n_samples, n_places = Pprobs.shape
-        places = list(decoder.classes_)
-        df = pd.DataFrame(
-            {
-                "cue_aligned_time": np.repeat(test_df.event_aligned_bin["cue"].values, n_places),
-                "reward_aligned_time": np.repeat(test_df.event_aligned_bin["reward"].values, n_places),
-                "steps_to_goal": np.repeat(test_df.steps_to_goal.future.values, n_places),
-                "trial_phase": np.repeat(test_df.trial_phase.values, n_places),
-                f"true_{input_type}": np.repeat(y_test, n_places),
-                "trial_unique_ID": np.repeat(test_df.trial_unique_ID.values, n_places),
-                f"predicted_{input_type}": np.tile(places, n_samples),
-                f"predicted_{input_type}_prob": Pprobs.ravel(),
-            }
+        Yprobs = decoder.predict_proba(X_test)
+        features = list(decoder.classes_)
+        df = cd._get_decoding_results_df(test_df, y_test, Yprobs, features, output_type, engine="polars")
+        df = df.with_columns(pl.lit(fold).alias("fold"))
+        results_dfs.append(df)
+    results_df = pl.concat(results_dfs, how="vertical")
+    # translate to EDE df reduce output df size
+    return results_df
+
+
+# %%
+def _decode_place_fold(
+    fold,
+    input_data,
+    folds_df,
+    output_type,
+    inv_alpha,
+    training_trial_phases,
+    verbose,
+):
+    """
+    Decode one fold of place (or place_direction) for get_place_decoding.
+    Returns a single Polars DataFrame.
+    """
+    if verbose:
+        print(f"Decoding {fold}")
+    fold_df = folds_df[fold]
+    train_df, test_df = cd._get_test_train_dfs(input_data, fold_df, training_trial_phases)
+    X_train, X_test, y_train, y_test = cd._get_test_train_arrays(
+        train_df,
+        test_df,
+        input_type="spikes",
+        output_type=output_type,
+        whiten_features=True,
+    )
+    if inv_alpha is None:
+        decoder = LogisticRegression(
+            penalty=None, max_iter=10_000, random_state=0, class_weight="balanced", verbose=False
         )
-        EDEs = []
-        for event, window in zip(["cue", "reward"], [cue_window, reward_window]):
-            ede_df = du.get_expected_distance_error_df(
-                df,
-                simple_maze,
-                op="sum",
-                decoding_type=input_type,
-                alignment=f"{event}_aligned_time",
-                permuted=False,
-                return_total_av=True,
-            )[dist_metric]
-            EDEs.extend(ede_df[(ede_df.index < window[1]) & (ede_df.index > window[0])].to_list())
-        reg_EDE.append(np.mean(EDEs))
-    reg_EDE = np.array(reg_EDE)
-    opt_reg = reg_range[np.argmin(reg_EDE)]
-    return opt_reg
+    else:
+        decoder = LogisticRegression(
+            penalty="l2", C=inv_alpha, max_iter=10_000, random_state=0, class_weight="balanced", verbose=False
+        )
+    decoder.fit(X_train, y_train)
+    Yprobs = decoder.predict_proba(X_test)
+    features = list(decoder.classes_)
+    df = cd._get_decoding_results_df(test_df, y_test, Yprobs, features, output_type, engine="polars")
+    return df.with_columns(pl.lit(fold).alias("fold"))
