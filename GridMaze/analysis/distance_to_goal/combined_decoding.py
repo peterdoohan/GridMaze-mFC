@@ -13,7 +13,6 @@ import polars as pl
 import networkx as nx
 from sklearn.linear_model import LogisticRegression
 from matplotlib import pyplot as plt
-from sklearn.preprocessing import StandardScaler
 from joblib import Parallel, delayed
 
 from GridMaze.maze import representations as mr
@@ -32,7 +31,7 @@ RESULTS_DIR = RESULTS_PATH / "distance_to_goal" / "goal_decoding_comparisons"
 # %% Functions
 
 
-def goal_decoding_comparison(
+def run_goal_decoding_comparison(
     session,
     resolution=0.5,
     include_multi_units=True,
@@ -70,18 +69,19 @@ def goal_decoding_comparison(
             must_have_data=True,
         )
     # define conditions
-    conditions = [
+    conditions = input_types = [
         "spikes",
         "spikes_by_distance",
-        "place_direction",
-        "place_direction_by_distance",
+        "place_direction_prob",
+        "place_direction_prob_by_distance",
     ]
     # check if results already exist
     session_name = session.name
-    save_paths = [RESULTS_DIR / session_name / f"{condition}.parquet" for condition in conditions]
-    if all([path.exists() for path in save_paths]):
-        print(f"Results already exist for {session_name}, skipping")
-        return [pd.read_parquet(path) for path in save_paths]
+    save_path = RESULTS_DIR / f"{session_name}.parquet"
+    if save_path.exists():
+        if verbose:
+            print(f"Loading results for {session_name} from disk")
+        return pd.read_parquet(save_path)
 
     # else run analysis
     simple_maze = session.simple_maze()
@@ -113,17 +113,9 @@ def goal_decoding_comparison(
         if inv_alpha == "auto":
             # get optimal regularisation for each condition
             inv_alphas = []
-            for condition, input_type in zip(
-                conditions,
-                [
-                    "spikes",
-                    "spikes_by_distance",
-                    "place_direction_prob",
-                    "place_direction_prob_by_distance",
-                ],
-            ):
+            for input_type in input_types:
                 if verbose:
-                    print(condition)
+                    print(input_type)
                 inv_alphas.append(
                     du.get_opt_reg(
                         input_data,
@@ -137,7 +129,7 @@ def goal_decoding_comparison(
                     )
                 )
         else:
-            inv_alphas = [inv_alpha] * len(conditions)
+            inv_alphas = [inv_alpha] * len(input_types)
         # run xvaled decoding for each condition aross folds
         folds = folds_df.columns.levels[0].unique()
         if verbose:
@@ -148,7 +140,7 @@ def goal_decoding_comparison(
                 n,
                 input_data,
                 folds_df,
-                conditions,
+                input_types,
                 basis_fn,
                 inv_alphas,
                 training_trial_phases,
@@ -157,39 +149,40 @@ def goal_decoding_comparison(
             for fold in folds
         )
         # parallel_outputs is a list of lists (fold × conditions), assign to C_dfs
-        for cond_idx in range(len(conditions)):
+        for cond_idx in range(len(input_types)):
             for fold_output in parallel_outputs:
                 C_dfs[cond_idx].extend(fold_output[cond_idx])
         del parallel_outputs  # save memory
     # combine folds and repeats
-    results_dfs = [pd.concat(_dfs, axis=0).reset_index(drop=True) for _dfs in C_dfs]
-    # save results
-    # for result_df, save_path in zip(results_dfs, save_paths):
-    #     save_path.parent.mkdir(parents=True, exist_ok=True)
-    #     result_df.to_parquet(save_path, index=False)
-    #     if verbose:
-    #         print(f"Saved results to {save_path}")
-    return results_dfs
+    results_dfs = [pl.concat(_dfs, how="vertical") for _dfs in C_dfs]
+    # calculate test_acc and expecte distance error over every xvaled sample-repeat
+    decoding_metric_dfs = []
+    for df, condition in zip(results_dfs, conditions):
+        metrics_df = du.get_decoding_metrics_df(df, simple_maze, output_type="goal")  # output pandas
+        metrics_df["condition"] = condition
+        decoding_metric_dfs.append(metrics_df)
+    # combine decoding metrics across conditions
+    output_df = pd.concat(decoding_metric_dfs, axis=0)
+    # save results to disk
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    output_df.to_parquet(save_path, index=False)
+    if verbose:
+        print(f"Saved results to {save_path}")
+    return output_df
 
 
 def _decode_fold_repeat(
-    fold, repeat, input_data, folds_df, conditions, basis_fn, inv_alphas, training_trial_phases, verbose
+    fold, repeat, input_data, folds_df, input_types, basis_fn, inv_alphas, training_trial_phases, verbose
 ):
     """
-    Run decoding for a single fold & repeat. Returns a list of DataFrames,
+    Run decoding for a single fold & repeat. Returns a list of pl.DataFrames,
     one per condition.
     """
     fold_df = folds_df[fold]
-    C_dfs = [[] for _ in conditions]
-    for cond_idx, (condition, input_type, inv_alpha) in enumerate(
-        zip(
-            conditions,
-            ["spikes", "spikes_by_distance", "place_direction_prob", "place_direction_prob_by_distance"],
-            inv_alphas,
-        )
-    ):
+    C_dfs = [[] for _ in input_types]
+    for cond_idx, (input_type, inv_alpha) in enumerate(zip(input_types, inv_alphas)):
         if verbose:
-            print(f"{fold}:{condition}")
+            print(f"{fold}-{repeat}:{input_type}")
         train_df, test_df = du._get_test_train_dfs(input_data, fold_df, training_trial_phases=training_trial_phases)
         X_train, X_test, y_train, y_test = du._get_test_train_arrays(
             train_df, test_df, input_type=input_type, output_type="goal", whiten_features=True, basis_fn=basis_fn
@@ -200,32 +193,27 @@ def _decode_fold_repeat(
             decoder = LogisticRegression(penalty="l2", C=inv_alpha, max_iter=10_000, random_state=0)
         decoder.fit(X_train, y_train)
         Yprobs = decoder.predict_proba(X_test)
-        C_df = du.get_decoding_results_df(test_df, y_test, Yprobs, list(decoder.classes_), "goal", engine="pandas")
-        C_df["fold"] = fold
-        C_df["repeat"] = repeat
+        C_df = du.get_decoding_results_df(
+            test_df, y_test, Yprobs, list(decoder.classes_), output_type="goal", engine="polars"
+        )
+        assert isinstance(C_df, pl.DataFrame)
+        C_df = C_df.with_columns([pl.lit(repeat).alias("repeat"), pl.lit(fold).alias("fold")])
         C_dfs[cond_idx].append(C_df)
     return C_dfs
 
 
-def quick_plot(results_dfs):
-    acc_dfs = []
-    for df in results_dfs:
-        # predicted goal is max goal prob at each samle (ds window)
-        acc_df = df.loc[df.groupby(["sample_index", "repeat"]).predicted_goal_prob.idxmax()]
-        acc_df["test_acc"] = (df.true_goal == df.predicted_goal).astype(int)
-        acc_dfs.append(acc_df)
-    cue_dfs, reward_time_reps = [], []
-    for df in acc_dfs:
-        for event, dfs in zip(["cue", "reward"], [cue_dfs, reward_time_reps]):
-            _df = df[~df[f"{event}_aligned_time"].isna()]
-            trial_df = _df.groupby(["trial_unique_ID", f"{event}_aligned_time"]).test_acc.mean().unstack()
-            dfs.append(trial_df.mean())
-    cue_acc = pd.concat(cue_dfs, axis=1)
-    cue_acc.plot()
-    plt.show()
-    reward_acc = pd.concat(reward_time_reps, axis=1)
-    reward_acc.plot()
-    plt.show()
+def quick_plot(df, axes=None, metric="test_acc", cue_window=(-5, 10), reward_window=(-10, 5)):
+    if axes is None:
+        fig, axes = plt.subplots(1, 2, figsize=(10, 5), sharey=True)
+    conditions = df.condition.unique()
+    for condition in conditions:
+        _df = df[df.condition == condition]
+        for event, ax, window in zip(["cue", "reward"], axes, [cue_window, reward_window]):
+            _df = _df[_df[f"{event}_aligned_time"].between(*window)]
+            trial_df = _df.groupby(["trial_unique_ID", f"{event}_aligned_time"])[metric].mean().unstack()
+            mean = trial_df.mean()
+            ax.plot(mean.index, mean.values, label=condition)
+    axes[0].legend()
 
 
 # %%

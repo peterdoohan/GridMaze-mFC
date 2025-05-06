@@ -326,7 +326,7 @@ def _get_distance_cols_pl(results_df, simple_maze, output_type, round_euc=False)
     return [pl.Series("geo_dist", geo_dist), pl.Series("euc_dist", euc_dist)]
 
 
-def get_decoding_results_df(test_df, y_test, Yprobs, features, output_type, engine="pandas"):
+def get_decoding_results_df(test_df, y_test, Yprobs, features, output_type, engine="polars"):
     """
     Organises output of decoding analyses to be read into get_decoding_metrics_df
     """

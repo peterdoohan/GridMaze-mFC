@@ -210,7 +210,7 @@ def get_place_decoding(
     """ """
     # load input data
     simple_maze = session.simple_maze()
-    EDE_dfs = []
+    dfs = []
     for n in range(n_repeats):
         input_data = du.get_place_decoding_input_data(
             session, resolution, include_multi_units, window, permuted=permuted
@@ -250,10 +250,11 @@ def get_place_decoding(
             for fold in folds
         )
         results_df = pl.concat(results_dfs, how="vertical")
+        # results_df = results_df.with_columns(pl.lit(repeat).alias("repeat"))
+        dfs.append(pl.concat(results_dfs, how="vertical"))
+
         # translate to EDE df reduce output df size
-        EDE_df = cd.get_expected_distance_error_pl(
-            results_df, simple_maze, op="sum", decoding_type="place_direction", permuted=False, return_as="timeseries"
-        )  # pandas output
+        EDE_df = du.get_decoding_metrics_df(results_df, simple_maze, output_type=output_type)
         EDE_df["repeat"] = n
         EDE_df["permuted"] = permuted
         EDE_dfs.append(EDE_df)
