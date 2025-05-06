@@ -15,7 +15,9 @@ from scipy.ndimage import gaussian_filter1d
 
 def plot_session_distance_to_goal_tuning(session, metrics=("distance_to_goal", "geodesic"), goal_stratified=False):
     navigation_rates_df = session.get_navigation_activity_df(type="rates", cluster_kwargs={"single_units": True})
-    distance_info = navigation_rates_df[[("goal", ""), ("trial", ""), ("moving", ""), metrics]]
+    distance_info = navigation_rates_df[
+        [("goal", ""), ("trial", ""), ("moving", ""), ("steps_to_goal", "future"), metrics]
+    ]
     distance_info = distance_info.droplevel(1, axis=1)
     cluster_unique_IDs = navigation_rates_df.firing_rate.columns.to_numpy()
     for cluster in cluster_unique_IDs:
@@ -26,7 +28,12 @@ def plot_session_distance_to_goal_tuning(session, metrics=("distance_to_goal", "
 
 
 def get_distance_to_goal_tuning_df(
-    distance_rates_df, metrics=("distance_to_goal", "geodesic"), bin_spacing=0.04, n_bins=40, moving_only=False
+    distance_rates_df,
+    metrics=("distance_to_goal", "geodesic"),
+    bin_spacing=0.04,
+    n_bins=40,
+    max_steps_to_goal=30,
+    moving_only=False,
 ):
     """ """
     distance_rates_df = distance_rates_df.copy()
@@ -34,6 +41,8 @@ def get_distance_to_goal_tuning_df(
     # deal with moving only
     if moving_only:
         distance_rates_df = distance_rates_df[distance_rates_df.moving]
+    if max_steps_to_goal is not None:
+        distance_rates_df = distance_rates_df[distance_rates_df.steps_to_goal < max_steps_to_goal]
     # remove frames where distance is above max (treat as outliers)
     if metrics[0] == "distance_to_goal":
         max_distance = get_distance_percentile(metrics, 0.85)
