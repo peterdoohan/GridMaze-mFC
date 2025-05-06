@@ -228,7 +228,7 @@ def quick_plot(results_dfs):
     plt.show()
 
 
-def _get_decoding_acc_df_pl2(results_df, output_type):
+def get_decoding_acc_df_pl(results_df, output_type):
     """"""
     # compute with polars
     acc_df = (
@@ -408,7 +408,7 @@ def _evaluate_alpha(
                 df,
                 simple_maze,
                 op=eval_kwargs["op"],
-                decoding_type=output_type,
+                output_type=output_type,
                 permuted=False,
                 return_as="timeseries",
             )
