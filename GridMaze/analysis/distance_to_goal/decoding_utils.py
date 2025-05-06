@@ -230,33 +230,6 @@ def _check_decoding_type(results_df, decoding_type):
 # %% OLD FUNCTIONS
 
 
-def get_decoding_probability_mass_df(results_df, simple_maze, decoding_type="goal", return_trial_av=True):
-    """
-    TODO: update to polars
-    NOTWORKING
-    decoding_type in ["goal", "place"]
-    """
-    # check decoding_type matches results df
-    _check_decoding_type(results_df, decoding_type)
-    # add colums for distance to goal (geo or euc) for every true and predicted place/goal pair
-    # results_df = _add_distance_cols(results_df, simple_maze, decoding_type, round_euc=True)
-    # calc prob mass over distances fro predictions
-    prob_mass_curves = []
-    for dist in ["euc_dist", "geo_dist"]:
-        prob_mass_trial = results_df.groupby(["trial_unique_ID", dist]).predicted_goal_prob.mean().unstack()
-        if return_trial_av:
-            prob_mass_trial.columns = pd.MultiIndex.from_product([[dist], prob_mass_trial.columns])
-            prob_mass_curves.append(prob_mass_trial)
-        else:
-            prob_mass_curves.append(prob_mass_trial.mean())
-    if return_trial_av:
-        return pd.concat(prob_mass_curves, axis=1)
-    else:
-        dist_prob_mass = pd.concat(prob_mass_curves, axis=1)
-        dist_prob_mass.columns = ["euc_dist", "geo_dist"]
-        return dist_prob_mass
-
-
 def get_sessions_for_analysis(subject_IDs, maze_names, goal_subsets):
     """ """
     days_on_maze = "late" if "all" in goal_subsets else "all"
