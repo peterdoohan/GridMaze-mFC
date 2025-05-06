@@ -10,7 +10,9 @@ import os
 import json
 
 # %% Global Variables
-from GridMaze.paths import EXPERIMENT_INFO_PATH
+from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
+
+RESULTS_DIR = RESULTS_PATH / "distance_to_goal" / "goal_decoding_comparisons"
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
@@ -26,6 +28,10 @@ def submit_all_jobs():
     for subject in SUBJECT_IDS:
         for maze_name in MAZE_DAY2DATE.keys():
             for day_on_maze in [int(d) for d in MAZE_DAY2DATE[maze_name].keys()]:
+                date = MAZE_DAY2DATE[maze_name][str(day_on_maze)]
+                save_path = RESULTS_DIR / f"{subject}.{date}.maze.parquet"
+                if save_path.exists():
+                    continue
                 script_path = get_SLURM_script(subject, maze_name, day_on_maze)
                 os.system(f"chmod +x {script_path}")
                 os.system(f"sbatch {script_path}")
@@ -42,7 +48,7 @@ def get_SLURM_script(subject, maze_name, day_on_maze):
 #SBATCH --cpus-per-task=12
 #SBATCH -p gpu
 #SBATCH --mem=16GB
-#SBATCH --time=2:00:00
+#SBATCH --time=12:00:00
 
 module load miniconda
 conda deactivate
