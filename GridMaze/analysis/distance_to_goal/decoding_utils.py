@@ -4,9 +4,9 @@ Refactoring goal_decoding.py / gd2.py to include a separate utils supporing lib 
 
 # %% Imports
 import json
-from turtle import update
 import numpy as np
 import pandas as pd
+import polars as pl
 import networkx as nx
 from matplotlib import pyplot as plt
 
@@ -40,18 +40,206 @@ GOAL_SETS = ["subset_1", "subset_2", "all"]
 # %%
 
 
-# %%
+def get_decoding_metrics_df(results_df, simple_maze, output_type="goal", ede_op="sum"):
+    _check_decoding_type(results_df, output_type)
+    metrics_df = _get_decoding_acc(results_df, output_type)
+    EDEs = _get_expected_distance_error(results_df, simple_maze, output_type=output_type, op=ede_op)
+    metrics_df = metrics_df.join(EDEs, on=["sample_index", "repeat"], how="inner")
+    # return as pandas
+    metrics_df = metrics_df.to_pandas()
+    metrics_df.reset_index(drop=True, inplace=True)
+    return metrics_df
+
+
+def _get_decoding_acc(results_df, output_type):
+    """"""
+    # compute with polars
+    acc_df = (
+        results_df
+        # sort each group so the highest-prob row comes first
+        .sort(f"predicted_{output_type}_prob", descending=True)
+        .group_by(["sample_index", "repeat"], maintain_order=True)
+        .head(1)
+        .with_columns(
+            (pl.col(f"true_{output_type}") == pl.col(f"predicted_{output_type}")).cast(pl.Int8).alias("test_acc")
+        )
+    )
+    acc_df = acc_df.sort(by=["sample_index", "repeat"])
+    return acc_df
+
+
+def _get_expected_distance_error(
+    results_df,
+    simple_maze,
+    op="sum",
+    output_type="goal",
+):
+    """
+    input polars df (need speed from polars for processing large outputs from permuted decodings)
+    output pandas df
+    """
+    # add colums for distance to goal (geo or euc) for every true and predicted place/goal pair
+    df = results_df.with_columns(_get_distance_cols_pl(results_df, simple_maze, output_type, round_euc=False))
+    # calc weighted distance error
+    df = df.with_columns(
+        [
+            (pl.col(f"predicted_{output_type}_prob") * pl.col("geo_dist")).alias("geo_weight_prob"),
+            (pl.col(f"predicted_{output_type}_prob") * pl.col("euc_dist")).alias("euc_weight_prob"),
+        ]
+    )
+    group_cols = ["sample_index", "repeat"]
+    # aggregate per‐sample (sum or max)
+    if op == "sum":
+        sample_EDE = (
+            df.group_by(group_cols, maintain_order=True)
+            .agg(
+                [
+                    pl.sum("geo_weight_prob").alias("geodesic_ede"),
+                    pl.sum("euc_weight_prob").alias("euclidean_ede"),
+                ]
+            )
+            .sort(group_cols)
+        )
+    elif op == "max":
+        sample_EDE = (
+            df.group_by(group_cols, maintain_order=True)
+            .agg(
+                [
+                    pl.max("geo_weight_prob").alias("geodesic_ede"),
+                    pl.max("euc_weight_prob").alias("euclidean_ede"),
+                ]
+            )
+            .sort(group_cols)
+        )
+    else:
+        raise ValueError(f"Unsupported op: {op!r}")
+    return sample_EDE
+
+
+def _get_distance_cols_pl(results_df, simple_maze, output_type, round_euc=False):
+    """
+    input must be a Polars DataFrame
+    Vectorized version in Polars: builds NxN distance matrices once,
+    then does batch lookups for all rows in results_df.
+    """
+    if output_type == "place_direction":
+        # add true_place and predicted_place columns
+        results_df = results_df.with_columns(
+            [
+                pl.col("true_place_direction").str.split("_").list.get(0).alias("true_place"),
+                pl.col("predicted_place_direction").str.split("_").list.get(0).alias("predicted_place"),
+            ]
+        )
+        output_type = "place"
+    # Build label→coord and label→idx
+    label2coord = mr.get_maze_label2coord(simple_maze)
+    labels = list(label2coord.keys())
+    label2idx = {lab: i for i, lab in enumerate(labels)}
+    n_labels = len(labels)
+
+    # Build geodesic distance matrix
+    ext_maze = mr.get_extended_simple_maze(simple_maze)
+    raw_geo = dict(nx.all_pairs_dijkstra_path_length(ext_maze, weight="weight"))
+    geo_mat = np.empty((n_labels, n_labels), dtype=float)
+    for i, lab_i in enumerate(labels):
+        base_coord = label2coord[lab_i]
+        row_dist = raw_geo[base_coord]
+        for j, lab_j in enumerate(labels):
+            geo_mat[i, j] = row_dist[label2coord[lab_j]]
+
+    # Build “center” coords for Euclidean
+    centers = np.vstack(
+        [np.mean(c, axis=0) if isinstance(c[0], tuple) else np.array(c) for c in label2coord.values()]
+    )  # shape (n_labels, 2)
+
+    # Extract the integer indices from the Polars cols into NumPy arrays
+    true_idxs = np.vectorize(label2idx.__getitem__)(results_df[f"true_{output_type}"].to_numpy())
+    pred_idxs = np.vectorize(label2idx.__getitem__)(results_df[f"predicted_{output_type}"].to_numpy())
+
+    # 5) Lookup geodesic and compute Euclidean
+    geo_dist = geo_mat[true_idxs, pred_idxs]
+    diffs = centers[true_idxs] - centers[pred_idxs]
+    euc_dist = np.linalg.norm(diffs, axis=1) * 2
+    if round_euc:
+        euc_dist = np.rint(euc_dist).astype(int)
+
+    return [pl.Series("geo_dist", geo_dist), pl.Series("euc_dist", euc_dist)]
+
+
+def get_decoding_results_df(test_df, y_test, Yprobs, features, output_type, engine="pandas"):
+    """
+    Organises output of decoding analyses to be read into get_decoding_metrics_df
+    """
+    # define df columns
+    n_samples, n_features = Yprobs.shape
+    sample_index = np.repeat(test_df.index.values, n_features)
+    train_unique_IDs = np.repeat(test_df.trial_unique_ID.values, n_features)
+    cue_aligned_times = np.repeat(test_df.event_aligned_bin["cue"].values, n_features)
+    reward_aligned_times = np.repeat(test_df.event_aligned_bin["reward"].values, n_features)
+    trial_phases = np.repeat(test_df.trial_phase.values, n_features)
+    steps_to_goals = np.repeat(test_df.steps_to_goal.future.values, n_features)
+    true = np.repeat(y_test, n_features)
+    predicted = np.tile(features, n_samples)
+    predicted_probs = Yprobs.ravel()
+    # create df
+    if engine == "polars":
+        df = pl.DataFrame(  # note use of polars df (big output dfs need something faster than pandas)
+            {
+                "sample_index": sample_index,
+                "trial_unique_ID": np.repeat(test_df.trial_unique_ID.values, n_features),
+                "cue_aligned_time": np.repeat(test_df.event_aligned_bin["cue"].values, n_features),
+                "reward_aligned_time": np.repeat(test_df.event_aligned_bin["reward"].values, n_features),
+                "trial_phase": np.repeat(test_df.trial_phase.values, n_features),
+                "steps_to_goal": np.repeat(test_df.steps_to_goal.future.values, n_features),
+                f"true_{output_type}": np.repeat(y_test, n_features),
+                f"predicted_{output_type}": np.tile(features, n_samples),
+                f"predicted_{output_type}_prob": Yprobs.ravel(),
+            }
+        )
+    elif engine == "pandas":
+        df = pd.DataFrame(
+            {
+                "sample_index": sample_index,
+                "trial_unique_ID": train_unique_IDs,
+                "cue_aligned_time": cue_aligned_times,
+                "reward_aligned_time": reward_aligned_times,
+                "trial_phase": trial_phases,
+                "steps_to_goal": steps_to_goals,
+                f"true_{output_type}": true,
+                f"predicted_{output_type}": predicted,
+                f"predicted_{output_type}_prob": predicted_probs,
+            }
+        )
+    else:
+        raise ValueError(f"Unknown engine {engine!r}")
+    return df
+
+
+def _check_decoding_type(results_df, decoding_type):
+    """ """
+    if decoding_type == "goal":
+        assert "predicted_goal" in results_df.columns, "results_df does not contain goal decoding"
+    elif decoding_type == "place":
+        assert "predicted_place" in results_df.columns, "results_df does not contain place decoding"
+    elif decoding_type == "place_direction":
+        assert "predicted_place_direction" in results_df.columns, "results_df does not contain place direction decoding"
+    else:
+        raise ValueError(f"Unknown decoding type {decoding_type}")
+
+
+# %% OLD FUNCTIONS
 
 
 def get_decoding_probability_mass_df(results_df, simple_maze, decoding_type="goal", return_trial_av=True):
     """
     TODO: update to polars
+    NOTWORKING
     decoding_type in ["goal", "place"]
     """
     # check decoding_type matches results df
     _check_decoding_type(results_df, decoding_type)
     # add colums for distance to goal (geo or euc) for every true and predicted place/goal pair
-    results_df = _add_distance_cols(results_df, simple_maze, decoding_type, round_euc=True)
+    # results_df = _add_distance_cols(results_df, simple_maze, decoding_type, round_euc=True)
     # calc prob mass over distances fro predictions
     prob_mass_curves = []
     for dist in ["euc_dist", "geo_dist"]:
@@ -67,21 +255,6 @@ def get_decoding_probability_mass_df(results_df, simple_maze, decoding_type="goa
         dist_prob_mass = pd.concat(prob_mass_curves, axis=1)
         dist_prob_mass.columns = ["euc_dist", "geo_dist"]
         return dist_prob_mass
-
-
-def _check_decoding_type(results_df, decoding_type):
-    """ """
-    if decoding_type == "goal":
-        assert "predicted_goal" in results_df.columns, "results_df does not contain goal decoding"
-    elif decoding_type == "place":
-        assert "predicted_place" in results_df.columns, "results_df does not contain place decoding"
-    elif decoding_type == "place_direction":
-        assert "predicted_place_direction" in results_df.columns, "results_df does not contain place direction decoding"
-    else:
-        raise ValueError(f"Unknown decoding type {decoding_type}")
-
-
-# %% get sessions
 
 
 def get_sessions_for_analysis(subject_IDs, maze_names, goal_subsets):
