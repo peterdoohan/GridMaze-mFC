@@ -34,6 +34,20 @@ with open(EXPERIMENT_INFO_PATH / "maze_day2date.json", "r") as input_file:
 # %% Plot summary figures
 
 
+def quick_plot(df, axes=None, metric="geodesic_ede", cue_window=(-5, 10), reward_window=(-10, 5)):
+    """ """
+    if axes is None:
+        fig, axes = plt.subplots(1, 2, figsize=(10, 5), sharey=True)
+    for permuted in [True, False]:
+        _df = df[df.permuted == permuted]
+        for event, ax, window in zip(["cue", "reward"], axes, [cue_window, reward_window]):
+            _df = _df[_df[f"{event}_aligned_time"].between(*window)]
+            trial_df = _df.groupby(["trial_unique_ID", f"{event}_aligned_time"])[metric].mean().unstack()
+            mean = trial_df.mean()
+            ax.plot(mean.index, mean.values, label=f"permuted={permuted}")
+    axes[0].legend()
+
+
 # %% Decoding
 
 
@@ -41,8 +55,8 @@ def run_session_place_decoding(
     session,
     output_type="place_direction",
     training_trial_phases="navigation",
-    n_true=10,
-    n_permuted=10,
+    n_true=15,
+    n_permuted=15,
     verbose=True,
 ):
     """ """
