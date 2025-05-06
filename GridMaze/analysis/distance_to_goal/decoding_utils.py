@@ -37,7 +37,7 @@ MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
 GOAL_SETS = ["subset_1", "subset_2", "all"]
 
 
-# %%
+# %% test train split functions
 
 
 def _get_test_train_dfs(input_data, fold_df, training_trial_phases=["navigation"]):
@@ -71,35 +71,20 @@ def _get_test_train_arrays(
         X_train, X_test = train_df.place_direction_prob.values, test_df.place_direction_prob.values
     elif input_type == "place_probs":
         X_train, X_test = train_df.place_probs.values, test_df.place_probs.values
-    elif input_type == "spikes_by_distance":
+    elif "by_distance" in input_type:
         Xs = []
         for df in [train_df, test_df]:
             basis_activations = basis_fn(df.steps_to_goal.future.values)
-            spikes = df.spike_count.values
-            spikes_by_distance = (
-                spikes[:, :, None] * basis_activations[:, None, :]
-            )  # [n_timepoints, n_neurons, n_bases]
-            Xs.append(spikes_by_distance.reshape(spikes.shape[0], -1))
-        X_train, X_test = Xs
-    elif input_type == "place_prob_by_distance":
-        Xs = []
-        for df in [train_df, test_df]:
-            basis_activations = basis_fn(df.steps_to_goal.future.values)
-            place_probs = df.place_probs.values
-            place_probs_by_distance = (
-                place_probs[:, :, None] * basis_activations[:, None, :]
-            )  # [n_timepoints, n_places, n_bases]
-            Xs.append(place_probs_by_distance.reshape(place_direction_probs.shape[0], -1))
-        X_train, X_test = Xs
-    elif input_type == "place_direction_prob_by_distance":
-        Xs = []
-        for df in [train_df, test_df]:
-            basis_activations = basis_fn(df.steps_to_goal.future.values)
-            place_direction_probs = df.place_direction_prob.values
-            place_direction_probs_by_distance = (
-                place_direction_probs[:, :, None] * basis_activations[:, None, :]
-            )  # [n_timepoints, n_place_directions, n_bases]
-            Xs.append(place_direction_probs_by_distance.reshape(place_direction_probs.shape[0], -1))
+            if "spikes" in input_type:
+                F = df.spike_count.values
+            elif "place_probs" in input_type:
+                F = df.place_probs.values
+            elif "place_direction_prob" in input_type:
+                F = df.place_direction_prob.values
+            else:
+                raise ValueError(f"Unknown input type {input_type!r}")
+            F_by_distance = F[:, :, None] * basis_activations[:, None, :]  # [n_timepoints, n_neurons, n_bases]
+            Xs.append(F_by_distance.reshape(F.shape[0], -1))
         X_train, X_test = Xs
     else:
         raise ValueError(f"Unknown input type {input_type!r}")
@@ -400,7 +385,7 @@ def _check_decoding_type(results_df, decoding_type):
         raise ValueError(f"Unknown decoding type {decoding_type}")
 
 
-# %% OLD FUNCTIONS
+# %% get sessions
 
 
 def get_sessions_for_analysis(subject_IDs, maze_names, goal_subsets):
@@ -568,7 +553,7 @@ def _get_event_aligned_times(nav_info, trials_df, event):
     return nav_info["time"] - event_times
 
 
-# %%
+# %% place decoding input data
 
 
 def get_place_decoding_input_data(
