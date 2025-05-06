@@ -133,10 +133,10 @@ def plot_session_place_decoding(
 
 def run_session_place_decoding(
     session,
-    output_type,
+    output_type="place_direction",
+    training_trial_phases="navigation",
     n_true=10,
     n_permuted=10,
-    training_trial_phases="navigation",
     verbose=True,
 ):
     """ """
@@ -207,7 +207,7 @@ def get_place_decoding(
     """ """
     # load input data
     simple_maze = session.simple_maze()
-    results_dfs = []
+    all_repeat_dfs = []
     for n in range(n_repeats):
         input_data = du.get_place_decoding_input_data(
             session, resolution, include_multi_units, window, permuted=permuted
@@ -234,7 +234,7 @@ def get_place_decoding(
         results_dfs = []
         # get cross validated decoding across folds
         folds = folds_df.columns.levels[0].unique()
-        results_dfs = Parallel(n_jobs=len(folds), verbose=False)(
+        fold_dfs = Parallel(n_jobs=len(folds), verbose=False)(
             delayed(_decode_place_fold)(
                 n,
                 fold,
@@ -247,9 +247,10 @@ def get_place_decoding(
             )
             for fold in folds
         )
-        df = pl.concat(results_dfs, how="vertical")
-        results_dfs.append(df)
-    decoding_df = pl.concat(results_dfs, how="vertical")
+        repeat_df = pl.concat(fold_dfs, how="vertical")
+        all_repeat_dfs.append(repeat_df)
+    # now combine **all** repeats
+    decoding_df = pl.concat(all_repeat_dfs, how="vertical")
     metrics_df = du.get_decoding_metrics_df(decoding_df, simple_maze, output_type=output_type)
     metrics_df["permuted"] = permuted
     return metrics_df
