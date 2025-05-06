@@ -14,13 +14,10 @@ from matplotlib import pyplot as plt
 import seaborn as sns
 from scipy.stats import ttest_1samp
 from statsmodels.stats.multitest import multipletests
-from sklearn.preprocessing import StandardScaler
 from joblib import Parallel, delayed
 
 from GridMaze.analysis.core import get_sessions as gs
 from . import decoding_utils as du
-from . import bases as db
-from . import combined_decoding as cd
 
 # %% Global Variables
 from GridMaze.paths import RESULTS_PATH, EXPERIMENT_INFO_PATH
@@ -139,7 +136,7 @@ def run_session_place_decoding(
     output_type,
     n_true=10,
     n_permuted=10,
-    training_trial_phases=["navigation"],
+    training_trial_phases="navigation",
     verbose=True,
 ):
     """ """
@@ -168,7 +165,7 @@ def run_session_place_decoding(
         results_df = pd.read_parquet(save_path, engine="pyarrow", use_threads=True)
         return results_df
     # get expected distance error (EDE) for true and permuted data
-    true_EDE_df = get_place_decoding(
+    true_metrics_df = get_place_decoding(
         session,
         output_type=output_type,
         n_repeats=n_true,
@@ -176,7 +173,7 @@ def run_session_place_decoding(
         permuted=False,
         verbose=verbose,
     )
-    permuted_EDE_df = get_place_decoding(
+    permuted_metrics_df = get_place_decoding(
         session,
         output_type=output_type,
         n_repeats=n_permuted,
@@ -185,7 +182,7 @@ def run_session_place_decoding(
         verbose=verbose,
     )
     # combine into one df
-    results_df = pd.concat([true_EDE_df, permuted_EDE_df], axis=0)
+    results_df = pd.concat([true_metrics_df, permuted_metrics_df], axis=0)
     results_df.reset_index(drop=True, inplace=True)
     # save results
     save_path.parent.mkdir(parents=True, exist_ok=True)
@@ -210,7 +207,7 @@ def get_place_decoding(
     """ """
     # load input data
     simple_maze = session.simple_maze()
-    dfs = []
+    results_dfs = []
     for n in range(n_repeats):
         input_data = du.get_place_decoding_input_data(
             session, resolution, include_multi_units, window, permuted=permuted
@@ -224,7 +221,7 @@ def get_place_decoding(
         )
         # find optimal regularisation
         if inv_alpha == "auto":
-            _inv_alpha = cd.get_opt_reg(
+            _inv_alpha = du.get_opt_reg(
                 input_data,
                 folds_df["fold_0"],
                 simple_maze,
@@ -239,6 +236,7 @@ def get_place_decoding(
         folds = folds_df.columns.levels[0].unique()
         results_dfs = Parallel(n_jobs=len(folds), verbose=False)(
             delayed(_decode_place_fold)(
+                n,
                 fold,
                 input_data,
                 folds_df,
@@ -249,21 +247,17 @@ def get_place_decoding(
             )
             for fold in folds
         )
-        results_df = pl.concat(results_dfs, how="vertical")
-        # results_df = results_df.with_columns(pl.lit(repeat).alias("repeat"))
-        dfs.append(pl.concat(results_dfs, how="vertical"))
-
-        # translate to EDE df reduce output df size
-        EDE_df = du.get_decoding_metrics_df(results_df, simple_maze, output_type=output_type)
-        EDE_df["repeat"] = n
-        EDE_df["permuted"] = permuted
-        EDE_dfs.append(EDE_df)
-    combined_EDE_df = pd.concat(EDE_dfs, axis=0)
-    return combined_EDE_df.reset_index(drop=True)
+        df = pl.concat(results_dfs, how="vertical")
+        results_dfs.append(df)
+    decoding_df = pl.concat(results_dfs, how="vertical")
+    metrics_df = du.get_decoding_metrics_df(decoding_df, simple_maze, output_type=output_type)
+    metrics_df["permuted"] = permuted
+    return metrics_df
 
 
 # %%
 def _decode_place_fold(
+    repeat,
     fold,
     input_data,
     folds_df,
@@ -279,8 +273,8 @@ def _decode_place_fold(
     if verbose:
         print(f"Decoding {fold}")
     fold_df = folds_df[fold]
-    train_df, test_df = cd._get_test_train_dfs(input_data, fold_df, training_trial_phases)
-    X_train, X_test, y_train, y_test = cd._get_test_train_arrays(
+    train_df, test_df = du._get_test_train_dfs(input_data, fold_df, training_trial_phases)
+    X_train, X_test, y_train, y_test = du._get_test_train_arrays(
         train_df,
         test_df,
         input_type="spikes",
@@ -298,5 +292,6 @@ def _decode_place_fold(
     decoder.fit(X_train, y_train)
     Yprobs = decoder.predict_proba(X_test)
     features = list(decoder.classes_)
-    df = cd._get_decoding_results_df(test_df, y_test, Yprobs, features, output_type, engine="polars")
-    return df.with_columns(pl.lit(fold).alias("fold"))
+    df = du.get_decoding_results_df(test_df, y_test, Yprobs, features, output_type, engine="polars")
+    df = df.with_columns([pl.lit(fold).alias("fold"), pl.lit(repeat).alias("repeat")])
+    return df
