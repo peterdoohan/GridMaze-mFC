@@ -24,9 +24,79 @@ from GridMaze.analysis.distance_to_goal import bases as db
 
 # %% Global Variables
 
-from GridMaze.paths import RESULTS_PATH
+from GridMaze.paths import RESULTS_PATH, EXPERIMENT_INFO_PATH
 
 RESULTS_DIR = RESULTS_PATH / "distance_to_goal" / "goal_decoding_comparisons"
+
+with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
+    SUBJECT_IDS = json.load(input_file)
+
+
+# %%
+
+
+def plot_decoding_comparisons(metric="test_acc", cue_window=(-5, 10), reward_window=(-10, 5), axes=None):
+    """ """
+    if axes is None:
+        fig, axes = plt.subplots(1, 2, figsize=(10, 5), sharey=True)
+
+    event2valid_trial_phases = {
+        "cue": ["ITI", "navigation"],
+        "reward": ["navigation", "reward_consumption"],
+    }
+    all_cue_aligned_perf, all_reward_aligned_perf = [], []
+    for subject_ID in SUBJECT_IDS:
+        print(subject_ID)
+        sessions = gs.get_maze_sessions(
+            subject_IDs=[subject_ID],
+            maze_names="all",
+            days_on_maze="late",
+            goal_subsets=["subset_1", "subset_2"],
+            with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
+            must_have_data=True,
+        )
+        cue_aligned_perf, reward_aligned_perf = [], []
+        for s in sessions:
+            try:
+                decoding_df = run_goal_decoding_comparison(s, verbose=False, load_only=True)
+            except FileNotFoundError as e:
+                print(e)
+                continue
+            for event, window, perf_df in zip(
+                ["cue", "reward"], [cue_window, reward_window], [cue_aligned_perf, reward_aligned_perf]
+            ):
+                _df = decoding_df[
+                    (decoding_df[f"{event}_aligned_time"].between(*window))
+                    & (decoding_df.trial_phase.isin(event2valid_trial_phases[event]))
+                ]
+                perf_df.append(
+                    _df.groupby(["condition", "trial_unique_ID", f"{event}_aligned_time"])[metric].mean().unstack()
+                )  # conditions_by_trials x timepoints (average over repeats)
+        for _df, all_dfs in zip(
+            [cue_aligned_perf, reward_aligned_perf], [all_cue_aligned_perf, all_reward_aligned_perf]
+        ):
+            df = pd.concat(_df, axis=0)  # next average trials over conditions
+            df = df.groupby("condition").mean().T.reset_index()
+            df["subject_ID"] = subject_ID
+            all_dfs.append(df)
+    # plot
+    fig, axes = plt.subplots(1, 2, figsize=(10, 5), sharey=True)
+    conditions = ["spikes", "spikes_by_distance", "place_direction_prob", "place_direction_prob_by_distance"]
+    for event, _df, ax in zip(["cue", "reward"], [all_cue_aligned_perf, all_reward_aligned_perf], axes):
+        df = pd.concat(_df, axis=0).reset_index(drop=True)
+        df = df.set_index(["subject_ID", f"{event}_aligned_time"])
+        subject_grouped_df = df.groupby(f"{event}_aligned_time")
+        mean_df = subject_grouped_df.mean()
+        sem_df = subject_grouped_df.sem()
+        for condition in conditions:
+            mean = mean_df[condition]
+            sem = sem_df[condition]
+            ax.plot(mean.index, mean.values, label=condition)
+            ax.fill_between(mean.index, mean - sem, mean + sem, alpha=0.2)
+    axes[0].legend()
+
+    return all_cue_aligned_perf, all_reward_aligned_perf
+
 
 # %% Functions
 
@@ -45,6 +115,7 @@ def run_goal_decoding_comparison(
     inv_alpha="auto",
     n_repeats=10,
     verbose=True,
+    load_only=False,
 ):
     """
     CONDITION 1: spikes --(predict)--> goal
@@ -82,8 +153,13 @@ def run_goal_decoding_comparison(
         if verbose:
             print(f"Loading results for {session_name} from disk")
         return pd.read_parquet(save_path)
-
+    else:
+        if load_only:
+            raise FileNotFoundError(f"Results for {session_name} not found on disk")
     # else run analysis
+
+    # get distance to goal basis functions (for spikes_by_distance condition)
+    basis_fn = db.distance_basis_generator(n_bases=n_bases, basis=basis_type, max_steps=max_steps_to_goal, plot=False)
     simple_maze = session.simple_maze()
     C_dfs = [[] for _ in conditions]  # store condition results here
     for n in range(n_repeats):
@@ -100,16 +176,14 @@ def run_goal_decoding_comparison(
             input_data,
             folds_df,
             simple_maze,
+            basis_fn=basis_fn,
+            input_type="spikes_by_distance",
             output_type="place_direction",
             inv_alpha=inv_alpha,
             training_trial_phases=training_trial_phases,
             verbose=verbose,
         )
         input_data = pd.concat([input_data, spatial_probs_df], axis=1)
-        # get distance to goal basis functions (for spikes_by_distance condition)
-        basis_fn = db.distance_basis_generator(
-            n_bases=n_bases, basis=basis_type, max_steps=max_steps_to_goal, plot=False
-        )
         if inv_alpha == "auto":
             # get optimal regularisation for each condition
             inv_alphas = []
@@ -221,6 +295,8 @@ def get_predicted_spatial(
     input_data,
     folds_df,
     simple_maze,
+    basis_fn=None,
+    input_type="spikes",
     output_type="place_direction",
     inv_alpha="auto",
     training_trial_phases=["navigation"],
@@ -258,7 +334,8 @@ def get_predicted_spatial(
             input_data,
             folds_df["fold_0"],
             simple_maze,
-            input_type="spikes",
+            basis_fn=basis_fn,
+            input_type=input_type,
             output_type=output_type,
             training_trial_phases=training_trial_phases,
             eval_metric="expected_distance_error",
@@ -270,7 +347,7 @@ def get_predicted_spatial(
             print(fold)
         train_df, test_df = du._get_test_train_dfs(input_data, folds_df[fold], training_trial_phases)
         X_train, X_test, y_train, y_test = du._get_test_train_arrays(
-            train_df, test_df, input_type="spikes", output_type=output_type, whiten_features=True
+            train_df, test_df, input_type=input_type, output_type=output_type, whiten_features=True, basis_fn=basis_fn
         )
         if inv_alpha is None:
             decoder = LogisticRegression(penalty=None, max_iter=10_000, random_state=0, class_weight="balanced")
