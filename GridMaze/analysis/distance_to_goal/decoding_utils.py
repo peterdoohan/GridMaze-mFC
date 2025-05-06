@@ -9,6 +9,9 @@ import pandas as pd
 import polars as pl
 import networkx as nx
 from matplotlib import pyplot as plt
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+from joblib import Parallel, delayed
 
 
 from GridMaze.analysis.core import get_sessions as gs
@@ -16,7 +19,6 @@ from GridMaze.analysis.core import get_clusters as gc
 from GridMaze.analysis.core import convert
 from GridMaze.analysis.core import permute
 from GridMaze.maze import representations as mr
-from scipy.spatial.distance import euclidean
 
 
 # %% Global Variables
@@ -34,10 +36,181 @@ FRAME_RATE = 60
 MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
 GOAL_SETS = ["subset_1", "subset_2", "all"]
 
-# %% results crunching functions
-
 
 # %%
+
+
+def _get_test_train_dfs(input_data, fold_df, training_trial_phases=["navigation"]):
+    """ """
+    test_trials = [t for t in fold_df.test.values.flatten() if isinstance(t, str)]
+    train_trials = [t for t in fold_df.train.values.flatten() if isinstance(t, str)]
+    train_df = input_data[input_data.trial_unique_ID.isin(train_trials)]
+    # include only specified trial phases in training data
+    train_df = train_df[train_df.trial_phase.isin(training_trial_phases)]
+    test_df = input_data[input_data.trial_unique_ID.isin(test_trials)]
+    return train_df, test_df
+
+
+def _get_test_train_arrays(
+    train_df,
+    test_df,
+    input_type="spikes",
+    output_type="goal",
+    whiten_features=True,
+    basis_fn=None,
+):
+    """
+    TODO: abstract the by_distance functionality
+    """
+    if "by_distance" in input_type:
+        assert basis_fn is not None, "basis_fn must be provided for 'by_distance' input"
+    # process input data (X)
+    if input_type == "spikes":
+        X_train, X_test = train_df.spike_count.values, test_df.spike_count.values
+    elif input_type == "place_direction_prob":
+        X_train, X_test = train_df.place_direction_prob.values, test_df.place_direction_prob.values
+    elif input_type == "place_probs":
+        X_train, X_test = train_df.place_probs.values, test_df.place_probs.values
+    elif input_type == "spikes_by_distance":
+        Xs = []
+        for df in [train_df, test_df]:
+            basis_activations = basis_fn(df.steps_to_goal.future.values)
+            spikes = df.spike_count.values
+            spikes_by_distance = (
+                spikes[:, :, None] * basis_activations[:, None, :]
+            )  # [n_timepoints, n_neurons, n_bases]
+            Xs.append(spikes_by_distance.reshape(spikes.shape[0], -1))
+        X_train, X_test = Xs
+    elif input_type == "place_prob_by_distance":
+        Xs = []
+        for df in [train_df, test_df]:
+            basis_activations = basis_fn(df.steps_to_goal.future.values)
+            place_probs = df.place_probs.values
+            place_probs_by_distance = (
+                place_probs[:, :, None] * basis_activations[:, None, :]
+            )  # [n_timepoints, n_places, n_bases]
+            Xs.append(place_probs_by_distance.reshape(place_direction_probs.shape[0], -1))
+        X_train, X_test = Xs
+    elif input_type == "place_direction_prob_by_distance":
+        Xs = []
+        for df in [train_df, test_df]:
+            basis_activations = basis_fn(df.steps_to_goal.future.values)
+            place_direction_probs = df.place_direction_prob.values
+            place_direction_probs_by_distance = (
+                place_direction_probs[:, :, None] * basis_activations[:, None, :]
+            )  # [n_timepoints, n_place_directions, n_bases]
+            Xs.append(place_direction_probs_by_distance.reshape(place_direction_probs.shape[0], -1))
+        X_train, X_test = Xs
+    else:
+        raise ValueError(f"Unknown input type {input_type!r}")
+
+    # process output data (y)
+    if output_type == "place_direction":
+        y_train, y_test = train_df.place_direction.values, test_df.place_direction.values
+    elif output_type == "goal":
+        y_train, y_test = train_df.goal.values, test_df.goal.values
+    elif output_type == "place":
+        y_train, y_test = train_df.maze_position.simple.values, test_df.maze_position.simple.values
+    else:
+        raise ValueError(f"Unknown output type {output_type!r}")
+
+    if whiten_features:
+        scaler = StandardScaler()  # mean=0, std=1 per column
+        scaler.fit(X_train)  # learn stats on train
+        X_train = scaler.transform(X_train)
+        X_test = scaler.transform(X_test)
+
+    return X_train, X_test, y_train, y_test
+
+
+# %% auto opt regularisation
+
+
+def get_opt_reg(
+    input_data,
+    fold_df,
+    simple_maze=None,
+    basis_fn=None,
+    input_type="spikes",  # X
+    output_type="place_direction",  # Y
+    training_trial_phases=["navigation"],
+    reg_range=[None, 1, 10, 50, 1e2, 5e2, 1e3],
+    eval_metric="expected_distance_error",
+    eval_kwargs={
+        "op": "sum",
+        "dist_metric": "geodesic",
+        "cue_window": (0, 4),
+        "reward_window": (-8, 0),
+    },
+    verbose=True,
+):
+    # prepare data exactly as before
+    train_df, test_df = _get_test_train_dfs(input_data, fold_df, training_trial_phases)
+    X_train, X_test, y_train, y_test = _get_test_train_arrays(
+        train_df,
+        test_df,
+        input_type,
+        output_type,
+        whiten_features=True,
+        basis_fn=basis_fn,
+    )
+    # now parallel evaluate
+    if verbose:
+        print("Evaluating reg_range in parallel")
+    eval_metrics = Parallel(n_jobs=len(reg_range), verbose=False)(
+        delayed(_evaluate_alpha)(
+            inv_alpha, X_train, y_train, X_test, y_test, test_df, simple_maze, eval_metric, eval_kwargs, output_type
+        )
+        for inv_alpha in reg_range
+    )
+    eval_metrics = np.array(eval_metrics)
+    # choose best
+    if eval_metric == "expected_distance_error":
+        opt_reg = reg_range[np.argmin(eval_metrics)]
+    elif eval_metric == "decoding_accuracy":
+        opt_reg = reg_range[np.argmax(eval_metrics)]
+    else:
+        raise ValueError(f"Unknown eval metric {eval_metric!r}")
+    if verbose:
+        print(f"reg_range: {reg_range}")
+        print(f"eval_metrics: {eval_metrics}")
+        print(f"opt_reg: {opt_reg}")
+    return opt_reg
+
+
+def _evaluate_alpha(
+    inv_alpha, X_train, y_train, X_test, y_test, test_df, simple_maze, eval_metric, eval_kwargs, output_type
+):
+    # instantiate decoder
+    if inv_alpha is None:
+        decoder = LogisticRegression(penalty=None, max_iter=10_000, random_state=0, class_weight="balanced")
+    else:
+        cw = "balanced" if output_type in ["place", "place_direction"] else None
+        decoder = LogisticRegression(penalty="l2", C=inv_alpha, max_iter=10_000, random_state=0, class_weight=cw)
+    # fit & get probs
+    decoder.fit(X_train, y_train)
+    Yprobs = decoder.predict_proba(X_test)
+    features = list(decoder.classes_)
+    df = get_decoding_results_df(test_df, y_test, Yprobs, features, output_type, engine="polars")
+    decoding_metrics_df = get_decoding_metrics_df(df, simple_maze, output_type=output_type)
+    if eval_metric == "expected_distance_error":
+        metric = f"{eval_kwargs["dist_metric"]}_ede"
+    elif eval_metric == "decoding_accuracy":
+        metric = "test_acc"
+    else:
+        raise ValueError(f"Unknown eval metric {eval_metric!r}")
+    values = []
+    for event in ["cue", "reward"]:
+        window = eval_kwargs[f"{event}_window"]
+        _df = decoding_metrics_df[decoding_metrics_df[f"{event}_aligned_time"].between(*window)]
+        mean_window_ede = (
+            _df.groupby(["trial_unique_ID", f"{event}_aligned_time"])[metric].mean().unstack().mean().to_list()
+        )
+        values.extend(mean_window_ede)
+    return np.mean(values)
+
+
+# %% decoding metrics (polars)
 
 
 def get_decoding_metrics_df(results_df, simple_maze, output_type="goal", ede_op="sum"):

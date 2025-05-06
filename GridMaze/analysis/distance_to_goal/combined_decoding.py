@@ -399,43 +399,23 @@ def _evaluate_alpha(
     decoder.fit(X_train, y_train)
     Yprobs = decoder.predict_proba(X_test)
     features = list(decoder.classes_)
-    df = _get_decoding_results_df(test_df, y_test, Yprobs, features, output_type, engine="polars")
-
+    df = du.get_decoding_results_df(test_df, y_test, Yprobs, features, output_type, engine="polars")
+    decoding_metrics_df = du.get_decoding_metrics_df(df, simple_maze, output_type=output_type)
     if eval_metric == "expected_distance_error":
-        values = []
-        for event in ["cue", "reward"]:
-            EDE_df = get_expected_distance_error_pl(
-                df,
-                simple_maze,
-                op=eval_kwargs["op"],
-                output_type=output_type,
-                permuted=False,
-                return_as="timeseries",
-            )
-            window = eval_kwargs[f"{event}_window"]
-            dist_metric = eval_kwargs["dist_metric"]
-            event_ede_df = EDE_df[~EDE_df[f"{event}_aligned_time"].isna()]
-            av_ede = (
-                event_ede_df.groupby(["trial_unique_ID", f"{event}_aligned_time"])[f"{dist_metric}_ede"]
-                .mean()
-                .unstack()
-                .mean()
-            )
-            values.extend(av_ede[(av_ede.index > -2) & (av_ede.index < 2)].to_list())
-        return np.mean(values)
+        metric = f"{eval_kwargs["dist_metric"]}_ede"
     elif eval_metric == "decoding_accuracy":
-        accs = []
-        for event in ["cue", "reward"]:
-            acc_df = decoding_accuracy_df_pl(
-                df,
-                decoding_type=output_type,
-                alignment=f"{event}_aligned_time",
-            )
-            window = eval_kwargs[f"{event}_window"]
-            accs.extend(acc_df[acc_df.cue_aligned_time.between(*window)].test_acc.to_list())
-        return np.mean(accs)
+        metric = "test_acc"
     else:
         raise ValueError(f"Unknown eval metric {eval_metric!r}")
+    values = []
+    for event in ["cue", "reward"]:
+        window = eval_kwargs[f"{event}_window"]
+        _df = decoding_metrics_df[decoding_metrics_df[f"{event}_aligned_time"].between(*window)]
+        mean_window_ede = (
+            _df.groupby(["trial_unique_ID", f"{event}_aligned_time"])[metric].mean().unstack().mean().to_list()
+        )
+        values.extend(mean_window_ede)
+    return np.mean(values)
 
 
 # %% new polars eval functions
