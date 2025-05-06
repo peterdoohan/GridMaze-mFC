@@ -177,6 +177,7 @@ def _evaluate_alpha(
     Yprobs = decoder.predict_proba(X_test)
     features = list(decoder.classes_)
     df = get_decoding_results_df(test_df, y_test, Yprobs, features, output_type, engine="polars")
+    df = df.with_columns(pl.lit(0).alias("repeat"))
     decoding_metrics_df = get_decoding_metrics_df(df, simple_maze, output_type=output_type)
     if eval_metric == "expected_distance_error":
         metric = f"{eval_kwargs["dist_metric"]}_ede"
@@ -199,6 +200,7 @@ def _evaluate_alpha(
 
 
 def get_decoding_metrics_df(results_df, simple_maze, output_type="goal", ede_op="sum"):
+    assert isinstance(results_df, pl.DataFrame), "results_df must be a Polars DataFrame"
     _check_decoding_type(results_df, output_type)
     metrics_df = _get_decoding_acc(results_df, output_type)
     EDEs = _get_expected_distance_error(results_df, simple_maze, output_type=output_type, op=ede_op)
