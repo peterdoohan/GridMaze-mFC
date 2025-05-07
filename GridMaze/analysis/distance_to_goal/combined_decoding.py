@@ -80,7 +80,6 @@ def plot_decoding_comparisons(metric="test_acc", cue_window=(-5, 10), reward_win
             df["subject_ID"] = subject_ID
             all_dfs.append(df)
     # plot
-    fig, axes = plt.subplots(1, 2, figsize=(10, 5), sharey=True)
     conditions = ["spikes", "spikes_by_distance", "place_direction_prob", "place_direction_prob_by_distance"]
     for event, _df, ax in zip(["cue", "reward"], [all_cue_aligned_perf, all_reward_aligned_perf], axes):
         df = pd.concat(_df, axis=0).reset_index(drop=True)
