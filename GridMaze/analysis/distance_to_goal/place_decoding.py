@@ -82,7 +82,7 @@ def run_session_place_decoding(
     else:
         raise ValueError("training_trial_phases must be 'navigation' or 'all'")
     # check if save path exists
-    save_path = RESULTS_DIR / output_type / training_trial_phases / f"{session.name}.parquet"
+    save_path = RESULTS_DIR / input_type / output_type / training_trial_phases / f"{session.name}.parquet"
     if save_path.exists():
         results_df = pd.read_parquet(save_path, engine="pyarrow", use_threads=True)
         return results_df
