@@ -48,7 +48,7 @@ def get_SLURM_script(subject, maze_name, day_on_maze):
 #SBATCH --cpus-per-task=12
 #SBATCH -p gpu
 #SBATCH --mem=16GB
-#SBATCH --time=12:00:00
+#SBATCH --time=4:00:00
 
 module load miniconda
 conda deactivate

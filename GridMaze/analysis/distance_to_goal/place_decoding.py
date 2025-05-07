@@ -17,7 +17,8 @@ from statsmodels.stats.multitest import multipletests
 from joblib import Parallel, delayed
 
 from GridMaze.analysis.core import get_sessions as gs
-from . import decoding_utils as du
+from GridMaze.analysis.distance_to_goal import decoding_utils as du
+from GridMaze.analysis.distance_to_goal import bases as db
 
 # %% Global Variables
 from GridMaze.paths import RESULTS_PATH, EXPERIMENT_INFO_PATH
@@ -53,10 +54,11 @@ def quick_plot(df, axes=None, metric="geodesic_ede", cue_window=(-5, 10), reward
 
 def run_session_place_decoding(
     session,
+    input_type="spikes",
     output_type="place_direction",
     training_trial_phases="navigation",
-    n_true=15,
-    n_permuted=15,
+    n_true=10,
+    n_permuted=10,
     verbose=True,
 ):
     """ """
@@ -87,6 +89,7 @@ def run_session_place_decoding(
     # get expected distance error (EDE) for true and permuted data
     true_metrics_df = get_place_decoding(
         session,
+        input_type=input_type,
         output_type=output_type,
         n_repeats=n_true,
         training_trial_phases=_training_trial_phases,
@@ -95,6 +98,7 @@ def run_session_place_decoding(
     )
     permuted_metrics_df = get_place_decoding(
         session,
+        input_type=input_type,
         output_type=output_type,
         n_repeats=n_permuted,
         training_trial_phases=_training_trial_phases,
@@ -105,6 +109,8 @@ def run_session_place_decoding(
     results_df = pd.concat([true_metrics_df, permuted_metrics_df], axis=0)
     results_df.reset_index(drop=True, inplace=True)
     # save results
+    if verbose:
+        print(f"Saving results to {save_path}")
     save_path.parent.mkdir(parents=True, exist_ok=True)
     results_df.to_parquet(save_path, index=False)
     return results_df
@@ -112,6 +118,7 @@ def run_session_place_decoding(
 
 def get_place_decoding(
     session,
+    input_type="spikes",
     output_type="place_direction",
     resolution=0.5,
     include_multi_units=True,
@@ -119,14 +126,21 @@ def get_place_decoding(
     goal_stratified_validation=True,
     n_test_trials=None,
     training_trial_phases=["navigation"],
+    n_bases=8,
+    basis_type="gamma",
+    max_steps_to_goal=30,
     inv_alpha="auto",
     permuted=False,
     n_repeats=10,
     verbose=True,
 ):
     """ """
+    # check input_types
+    assert input_type in ["spikes", "spikes_by_distance"]
+    assert output_type in ["place_direction", "place"]
     # load input data
     simple_maze = session.simple_maze()
+    basis_fn = db.distance_basis_generator(n_bases=n_bases, basis=basis_type, max_steps=max_steps_to_goal, plot=False)
     all_repeat_dfs = []
     for n in range(n_repeats):
         input_data = du.get_place_decoding_input_data(
@@ -145,13 +159,13 @@ def get_place_decoding(
                 input_data,
                 folds_df["fold_0"],
                 simple_maze,
-                input_type="spikes",
+                basis_fn=basis_fn,
+                input_type=input_type,
                 output_type=output_type,
                 training_trial_phases=training_trial_phases,
                 eval_metric="expected_distance_error",
             )
 
-        results_dfs = []
         # get cross validated decoding across folds
         folds = folds_df.columns.levels[0].unique()
         fold_dfs = Parallel(n_jobs=len(folds), verbose=False)(
@@ -160,9 +174,11 @@ def get_place_decoding(
                 fold,
                 input_data,
                 folds_df,
+                input_type,
                 output_type,
                 _inv_alpha,
                 training_trial_phases,
+                basis_fn,
                 verbose,
             )
             for fold in folds
@@ -182,9 +198,11 @@ def _decode_place_fold(
     fold,
     input_data,
     folds_df,
+    input_type,
     output_type,
     inv_alpha,
     training_trial_phases,
+    basis_fn,
     verbose,
 ):
     """
@@ -198,9 +216,10 @@ def _decode_place_fold(
     X_train, X_test, y_train, y_test = du._get_test_train_arrays(
         train_df,
         test_df,
-        input_type="spikes",
+        input_type=input_type,
         output_type=output_type,
         whiten_features=True,
+        basis_fn=basis_fn,
     )
     if inv_alpha is None:
         decoder = LogisticRegression(

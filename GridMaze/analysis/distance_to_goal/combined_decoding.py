@@ -120,8 +120,8 @@ def run_goal_decoding_comparison(
     """
     CONDITION 1: spikes --(predict)--> goal
     CONDITION 2: spikes_by_distance --(predict)--> goal
-    CONDITION 3: spikes --(predict)--> place_direction --(predict)--> goal (control)
-    CONDITION 4: spikes --(predict)--> place_direction_by_distance --(predict)--> goal (control)
+    CONDITION 3: spikes_by_distance --(predict)--> place_direction --(predict)--> goal (control)
+    CONDITION 4: spikes_by_distance --(predict)--> place_direction_by_distance --(predict)--> goal (control)
 
 
     Note deocders are trained on all data defined in training_trial_phases
