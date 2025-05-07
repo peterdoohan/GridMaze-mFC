@@ -7,6 +7,7 @@ about distance to goal while controlling for place coding in the neuronal popula
 # %% Imports
 
 import json
+from tkinter import font
 import numpy as np
 import pandas as pd
 import polars as pl
@@ -14,6 +15,8 @@ import networkx as nx
 from sklearn.linear_model import LogisticRegression
 from matplotlib import pyplot as plt
 from joblib import Parallel, delayed
+from scipy.stats import ttest_1samp
+from statsmodels.stats.multitest import multipletests
 
 from GridMaze.maze import representations as mr
 from GridMaze.analysis.core import get_sessions as gs
@@ -35,16 +38,78 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 # %%
 
 
-def plot_decoding_comparisons(metric="test_acc", cue_window=(-5, 10), reward_window=(-10, 5), axes=None):
+def plot_decoding_comparisons(summary_df, metric="test_acc", chance=1 / 12, cmap="Set1", axes=None):
     """ """
+    # set up figure
     if axes is None:
-        fig, axes = plt.subplots(1, 2, figsize=(10, 5), sharey=True)
+        fig, axes = plt.subplots(1, 2, figsize=(6, 3), sharey=True)
+    for ax in axes:
+        ax.axvline(0, color="k", linestyle="--", alpha=0.5)
+        if metric == "test_acc":
+            ax.axhline(chance, color="k", linestyle="--", alpha=0.5)
+    axes[0].spines[["top", "right"]].set_visible(False)
+    axes[1].spines[["top", "right", "left"]].set_visible(False)
+    axes[0].set_ylabel(metric)
 
+    # plot conditions
+    conditions = [
+        "spikes_by_distance",
+        "place_direction_prob_by_distance",
+    ]  # ["spikes", "spikes_by_distance", "place_direction_prob", "place_direction_prob_by_distance"]
+    cmap = plt.get_cmap(cmap, len(conditions))
+    for event, ax in zip(["cue", "reward"], axes):
+        df = summary_df[summary_df.event == event]
+        df = df.set_index(["subject_ID", "aligned_time"])[conditions]
+        subject_grouped_df = df.groupby("aligned_time")
+        mean_df = subject_grouped_df.mean()
+        sem_df = subject_grouped_df.sem()
+        for i, condition in enumerate(conditions):
+            color = cmap(i)
+            mean = mean_df[condition]
+            sem = sem_df[condition]
+            ax.plot(mean.index, mean.values, label=condition, color=color)
+            ax.fill_between(mean.index, mean - sem, mean + sem, alpha=0.2, color=color)
+        ax.set_xlabel(f"{event} (s)")
+    axes[0].legend(fontsize=8, loc="center left")
+
+    # run stats
+    for ax, event in zip(axes, ["cue", "reward"]):
+        spikes_by_distance_df = pd.DataFrame()
+        residuals_df = pd.DataFrame()
+        for subject in SUBJECT_IDS:
+            df = summary_df[(summary_df.event == event) & (summary_df.subject_ID == subject)]
+            df = df.set_index(["aligned_time"])
+            spikes_by_distance_df[subject] = df["spikes_by_distance"]
+            residuals_df[subject] = df["spikes_by_distance"] - df["place_direction_prob_by_distance"]
+        _plot_p_values(ax, spikes_by_distance_df.T, height=0.46, color="k", chance=chance)
+        _plot_p_values(ax, residuals_df.T, height=0.47, color="red", chance=0)
+
+
+def _plot_p_values(ax, df, height, color, chance=0):
+    """"""
+    p_values = []
+    x = df.columns
+    for i in x:
+        t_stat, p_val = ttest_1samp(df[i], popmean=chance, alternative="greater")
+        p_values.append(p_val)
+    reject, pvals_corrected, _, _ = multipletests(p_values, alpha=0.05, method="fdr_bh")
+    # indicate significant timepoints with line
+    sig_idx = np.where(reject)[0]
+    runs = np.split(sig_idx, np.where(np.diff(sig_idx) != 1)[0] + 1)
+    for run in runs:
+        if run.size > 0:
+            x_run = x[run]
+            y_run = np.full_like(x_run, height - 0.04, dtype=float)
+            ax.plot(x_run, y_run, color=color, linewidth=2)
+
+
+def get_decoding_comparisons_summary_df(metric="test_acc", cue_window=(-5, 10), reward_window=(-10, 5)):
+    """ """
     event2valid_trial_phases = {
         "cue": ["ITI", "navigation"],
         "reward": ["navigation", "reward_consumption"],
     }
-    all_cue_aligned_perf, all_reward_aligned_perf = [], []
+    all_dfs = []
     for subject_ID in SUBJECT_IDS:
         print(subject_ID)
         sessions = gs.get_maze_sessions(
@@ -72,29 +137,15 @@ def plot_decoding_comparisons(metric="test_acc", cue_window=(-5, 10), reward_win
                 perf_df.append(
                     _df.groupby(["condition", "trial_unique_ID", f"{event}_aligned_time"])[metric].mean().unstack()
                 )  # conditions_by_trials x timepoints (average over repeats)
-        for _df, all_dfs in zip(
-            [cue_aligned_perf, reward_aligned_perf], [all_cue_aligned_perf, all_reward_aligned_perf]
-        ):
+        for _df, event in zip([cue_aligned_perf, reward_aligned_perf], ["cue", "reward"]):
             df = pd.concat(_df, axis=0)  # next average trials over conditions
             df = df.groupby("condition").mean().T.reset_index()
+            df = df.rename(columns={f"{event}_aligned_time": "aligned_time"})
+            df["event"] = event
             df["subject_ID"] = subject_ID
             all_dfs.append(df)
-    # plot
-    conditions = ["spikes", "spikes_by_distance", "place_direction_prob", "place_direction_prob_by_distance"]
-    for event, _df, ax in zip(["cue", "reward"], [all_cue_aligned_perf, all_reward_aligned_perf], axes):
-        df = pd.concat(_df, axis=0).reset_index(drop=True)
-        df = df.set_index(["subject_ID", f"{event}_aligned_time"])
-        subject_grouped_df = df.groupby(f"{event}_aligned_time")
-        mean_df = subject_grouped_df.mean()
-        sem_df = subject_grouped_df.sem()
-        for condition in conditions:
-            mean = mean_df[condition]
-            sem = sem_df[condition]
-            ax.plot(mean.index, mean.values, label=condition)
-            ax.fill_between(mean.index, mean - sem, mean + sem, alpha=0.2)
-    axes[0].legend()
-
-    return all_cue_aligned_perf, all_reward_aligned_perf
+    summary_df = pd.concat(all_dfs, axis=0).reset_index(drop=True)
+    return summary_df
 
 
 # %% Functions
