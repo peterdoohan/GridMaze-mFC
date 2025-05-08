@@ -53,13 +53,9 @@ python - <<'PYCODE'
 from GridMaze.analysis.distance_to_goal import place_decoding as dp
 
 params = ('{subject}', '{maze_name}', {day_on_maze})
-dp.run_session_place_decoding(params, 'spikes', 'place', 'all')
 dp.run_session_place_decoding(params, 'spikes', 'place', 'navigation')
-dp.run_session_place_decoding(params, 'spikes', 'place_direction', 'all')
 dp.run_session_place_decoding(params, 'spikes', 'place_direction', 'navigation')
-dp.run_session_place_decoding(params, 'spikes_by_distance', 'place', 'all')
 dp.run_session_place_decoding(params, 'spikes_by_distance', 'place', 'navigation')
-dp.run_session_place_decoding(params, 'spikes_by_distance', 'place_direction', 'all')
 dp.run_session_place_decoding(params, 'spikes_by_distance', 'place_direction', 'navigation')
 PYCODE
 """
