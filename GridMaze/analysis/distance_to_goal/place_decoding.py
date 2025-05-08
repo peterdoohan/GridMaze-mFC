@@ -49,6 +49,67 @@ def quick_plot(df, axes=None, metric="geodesic_ede", cue_window=(-5, 10), reward
     axes[0].legend()
 
 
+# %% Summary df
+
+
+def get_place_decoding_summary_df(
+    output_type="place_direction",
+    training_trial_phases="navigation",
+    metric="geodesic_ede",
+):
+    """ """
+    all_dfs = []
+    for subject_ID in SUBJECT_IDS:
+        print(subject_ID)
+        sessions = gs.get_maze_sessions(
+            subject_IDs=[subject_ID],
+            maze_names="all",
+            days_on_maze="late",
+            goal_subsets=["subset_1", "subset_2"],
+            with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
+            must_have_data=True,
+        )
+        for input_type in ["spikes", "spikes_by_distance"]:
+            cue_aligned_perf, reward_aligned_perf = [], []
+            for session in sessions:
+                try:
+                    decoding_df = run_session_place_decoding(
+                        session,
+                        input_type=input_type,
+                        output_type=output_type,
+                        training_trial_phases=training_trial_phases,
+                        load_only=True,
+                    )
+                except FileNotFoundError as e:
+                    print(e)
+                    continue
+                for event, dfs in zip(["cue", "reward"], [cue_aligned_perf, reward_aligned_perf]):
+                    _time = f"{event}_aligned_time"
+                    if event == "cue":
+                        df = decoding_df[~decoding_df[_time].isna()]
+                        df = df[  # only include ITI before cue and navigation time after cue
+                            ((df[_time].le(0)) & (df.trial_phase == "ITI"))
+                            | (df[_time].gt(0)) & (df.trial_phase == "navigation")
+                        ]
+                    else:  # reward
+                        df = decoding_df[~decoding_df[_time].isna()]
+                        df = df[
+                            ((df[_time].gt(0)) & (df.trial_phase == "reward_consumption"))
+                            | (df[_time].le(0)) & (df.trial_phase == "navigation")
+                        ]
+                    dfs.append(df.groupby(["permuted", "trial_unique_ID", _time])[metric].mean().unstack())
+            for event, df in zip(["cue", "reward"], [cue_aligned_perf, reward_aligned_perf]):
+                _df = pd.concat(df, axis=0).sort_index()  # always False, True in permuted col
+                ede_df = _df.groupby("permuted").mean().T.reset_index()
+                ede_df.columns = ["aligned_time", "true", "permuted"]
+                ede_df["subject_ID"] = subject_ID
+                ede_df["event"] = event
+                ede_df["input_type"] = input_type
+                all_dfs.append(ede_df)
+    summary_df = pd.concat(all_dfs, axis=0)
+    return summary_df
+
+
 # %% Decoding
 
 
@@ -60,6 +121,7 @@ def run_session_place_decoding(
     n_true=10,
     n_permuted=10,
     verbose=True,
+    load_only=False,
 ):
     """ """
     # check if session is a MazeSession object
@@ -86,6 +148,9 @@ def run_session_place_decoding(
     if save_path.exists():
         results_df = pd.read_parquet(save_path, engine="pyarrow", use_threads=True)
         return results_df
+    else:
+        if load_only:
+            raise FileNotFoundError(f"File {save_path} does not exist. Set load_only=False to run decoding.")
     # get expected distance error (EDE) for true and permuted data
     true_metrics_df = get_place_decoding(
         session,
