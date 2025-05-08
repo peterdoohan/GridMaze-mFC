@@ -49,6 +49,64 @@ def quick_plot(df, axes=None, metric="geodesic_ede", cue_window=(-5, 10), reward
     axes[0].legend()
 
 
+# %% Summary plot
+
+
+def plot_place_decoding(
+    summary_df,
+    metric="geodesic_ede",
+    chance_subtracted=True,
+    cue_window=(-5, 10),
+    reward_window=(-10, 5),
+    axes=None,
+):
+    """ """
+    # set up fig
+    if axes is None:
+        fig, axes = plt.subplots(1, 2, figsize=(6, 3), sharey=True)
+    for ax in axes:
+        ax.axvline(0, color="k", linestyle="--", alpha=0.5)
+    axes[0].spines[["top", "right"]].set_visible(False)
+    axes[1].spines[["top", "right", "left"]].set_visible(False)
+    axes[0].set_ylabel(metric)
+    # process
+    for ax, event, window in zip(axes, ["cue", "reward"], [cue_window, reward_window]):
+        for input_type in ["spikes", "spikes_by_distance"]:
+            df = summary_df[(summary_df.event == event) & (summary_df.input_type == input_type)]
+            subject_mean_df = df.groupby(["subject_ID", "aligned_time"])[["true", "permuted"]].mean().unstack()
+            if chance_subtracted:
+                subject_norm_df = subject_mean_df["true"] - subject_mean_df["permuted"]
+                mean = subject_norm_df.mean()
+                sem = subject_norm_df.sem()
+                ax.plot(mean.index, mean.values, label=f"{input_type}")
+                ax.fill_between(
+                    mean.index,
+                    mean.values - sem.values,
+                    mean.values + sem.values,
+                    alpha=0.2,
+                )
+            else:
+                mean_df = subject_mean_df.mean()
+                sem_df = subject_mean_df.sem()
+                for c in ["true", "permuted"]:
+                    mean = mean_df.loc[c]
+                    sem = sem_df.loc[c]
+                    ax.plot(mean.index, mean.values, label=f"{input_type}_{c}")
+                    ax.fill_between(
+                        mean.index,
+                        mean.values - sem.values,
+                        mean.values + sem.values,
+                        alpha=0.2,
+                    )
+        ax.set_xlim(window)
+        ax.set_xlabel(f"{event}(s)")
+        if chance_subtracted:
+            ax.axhline(0, color="k", linestyle="--", alpha=0.5)
+    axes[0].legend(fontsize=8)
+
+    return
+
+
 # %% Summary df
 
 
