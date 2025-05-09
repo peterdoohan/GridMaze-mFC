@@ -12,6 +12,7 @@ from matplotlib import pyplot as plt
 from GridMaze.maze import plotting as mp
 
 # %% Global Variables
+
 from GridMaze.paths import EXPERIMENT_INFO_PATH
 
 with open(EXPERIMENT_INFO_PATH / "maze_measurements.json", "r") as input_file:
@@ -22,6 +23,7 @@ TOWER_DIST = MAZE_MEASUREMENTS["distance_between_node_centers"]
 TOWER_WIDTH = MAZE_MEASUREMENTS["tower_width"]
 _MIN = MAZE_MEASUREMENTS["lower_left_node_cartesian_center"][0] - TOWER_WIDTH / 2
 _MAX = D * TOWER_DIST + 0.025
+
 # %% Functions
 
 
@@ -66,6 +68,9 @@ def get_AB_split(simple_maze, s=3, plot=False):
     if plot:
         plot_simple_maze_split(simple_maze, A, B, s)
     return A, B
+
+
+# %% Supporting Functions
 
 
 def _get_checker_board_split(n):

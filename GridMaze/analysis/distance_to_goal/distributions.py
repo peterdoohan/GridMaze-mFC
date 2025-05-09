@@ -7,16 +7,69 @@ and saves them to analysis info.
 import json
 import pandas as pd
 import numpy as np
+import seaborn as sns
 from matplotlib import pyplot as plt
 
+from GridMaze.maze import partitions as mt
 from GridMaze.analysis.core import get_sessions as gs
-from . import distributions as dd
+
+from GridMaze.analysis.distance_to_goal import decoding_utils as du
 
 # %% Global Variables
 from GridMaze.paths import ANALYSIS_INFO_PATH
 
 
-# %% Utility Functions
+# %% Look at distance-to-goal distributions stratified by goal in differnet maze partitions
+
+
+def plot_test_not_train_AB_splits(session, s=3, max_steps_to_goal=30):
+    """ """
+    simple_maze = session.simple_maze()
+    A_locs, B_locs = mt.get_AB_split(simple_maze, s=s, plot=True)
+
+    input_data = du.get_place_decoding_input_data(session, resolution=0.5)
+    input_data = input_data[input_data.steps_to_goal.future.le(max_steps_to_goal)]
+    folds_df = du.get_folds_df(session, goal_stratified=True)
+    folds = folds_df.columns.get_level_values(0).unique()
+    goal_distance_count_dfs = []
+    for fold in folds:
+        fold_df = folds_df[fold]
+        train_df, test_df = du._get_test_train_dfs(input_data, fold_df, training_trial_phases=["navigation"])
+        train_A_df, train_B_df = (
+            train_df[train_df.maze_position.simple.isin(A_locs)],
+            train_df[train_df.maze_position.simple.isin(B_locs)],
+        )
+        test_A_df, test_B_df = (
+            test_df[test_df.maze_position.simple.isin(A_locs)],
+            test_df[test_df.maze_position.simple.isin(B_locs)],
+        )
+        train_dfs = []
+        for df in [train_A_df, train_B_df]:
+            counts_df = df.groupby([("goal", ""), ("steps_to_goal", "future")]).time.count().unstack()
+            counts_df = counts_df.replace({np.nan: 0})
+            train_dfs.append(counts_df)
+        train_A_counts, train_B_counts = train_dfs
+
+        test_dfs = []
+        for df in [test_A_df, test_B_df]:
+            counts_df = df.groupby([("goal", ""), ("steps_to_goal", "future")]).time.count().unstack()
+            test_dfs.append(counts_df)
+        test_A_counts, test_B_counts = test_dfs
+
+        for train_counts, test_counts in zip([train_A_counts, train_B_counts], [test_B_counts, test_A_counts]):
+            r = train_counts.lt(1) & test_counts.gt(0)  # instances with no training data where the test data is
+            r.infer_objects(copy=True)
+            r = r.fillna(False)
+            r = r.astype(int)
+            goal_distance_count_dfs.append(r)
+    df = pd.concat(goal_distance_count_dfs, axis=0)
+    df = df.groupby(df.index).mean()
+    f, ax = plt.subplots()
+    sns.heatmap(df, ax=ax)
+    return df
+
+
+# %% distance metric distributions
 
 
 def get_distance_percentile(distance_metric, percentile):
@@ -73,60 +126,38 @@ def bin_distribution_evenly(
     counts = data["counts"]
     if max_distance is None:
         max_distance = max(bin_edges)
-
-    # Adjust the distribution to account for the max_distance
     if bin_edges[-1] > max_distance:
-        # Remove counts beyond max_distance
         bin_edges = [edge for edge in bin_edges if edge <= max_distance]
         counts = counts[: len(bin_edges) - 1]
-
-    # Compute the cumulative distribution up to max_distance
     cumulative_counts = [0] + list(np.cumsum(counts))
     total_counts = cumulative_counts[-1]
-
-    # Target count per bin
     counts_per_bin = total_counts / n_bins
-
-    # Calculate the bin edges for even splitting
     new_bin_edges = [bin_edges[0]]
     current_cumulative_target = counts_per_bin
     for i in range(1, len(bin_edges)):
         while current_cumulative_target <= cumulative_counts[i]:
-            # Interpolate the exact edge for the current cumulative target
             fraction_within_bin = (current_cumulative_target - cumulative_counts[i - 1]) / (
                 cumulative_counts[i] - cumulative_counts[i - 1]
             )
             new_bin_edge = bin_edges[i - 1] + fraction_within_bin * (bin_edges[i] - bin_edges[i - 1])
-
-            # Ensure new bin edge does not exceed max_distance
             if new_bin_edge > max_distance:
                 new_bin_edge = max_distance
-
-            # If the last bin is being added, make sure to stop at max_distance
             if len(new_bin_edges) == n_bins and new_bin_edge != max_distance:
                 new_bin_edge = max_distance
 
             new_bin_edges.append(new_bin_edge)
             current_cumulative_target += counts_per_bin
-
-        # Stop if enough edges are found
         if len(new_bin_edges) == n_bins + 1:
             break
-
-    # Ensure the last bin edge matches the original upper bound or max_distance
     if len(new_bin_edges) < n_bins + 1:
-        # Add max_distance only if the last edge hasn't been set already
         if new_bin_edges[-1] < max_distance:
             new_bin_edges.append(max_distance)
-
     if plot:
-        # Plot distribution with new bin edges marked
         f, ax = plt.subplots()
         _plot_hist(data, ax=ax, n_bins=False)
         ax.vlines(new_bin_edges, 0, max(counts), color="red")
         if max_distance:
             ax.set_xlim(0, max_distance)
-
     return new_bin_edges
 
 
