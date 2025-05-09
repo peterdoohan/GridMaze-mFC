@@ -23,13 +23,15 @@ from GridMaze.paths import ANALYSIS_INFO_PATH
 
 
 def plot_test_not_train_AB_splits(session, s=3, max_steps_to_goal=30):
-    """ """
+    """
+    results: think it will be ok, especially if only holding out a few trials.
+    """
     simple_maze = session.simple_maze()
     A_locs, B_locs = mt.get_AB_split(simple_maze, s=s, plot=True)
 
     input_data = du.get_place_decoding_input_data(session, resolution=0.5)
     input_data = input_data[input_data.steps_to_goal.future.le(max_steps_to_goal)]
-    folds_df = du.get_folds_df(session, goal_stratified=True)
+    folds_df = du.get_folds_df(session, goal_stratified=False, n_test_trials=1)
     folds = folds_df.columns.get_level_values(0).unique()
     goal_distance_count_dfs = []
     for fold in folds:
