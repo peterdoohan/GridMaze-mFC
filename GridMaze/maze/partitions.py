@@ -31,8 +31,14 @@ _MAX = D * TOWER_DIST + 0.025
 
 
 def get_AB_split(simple_maze, s=3, plot=False):
-    """ """
+    """
+    Takes a simple_maze and divides it into an s,s grid, then splits the grid into
+    a checkerboard pattern. and splits the maze into two sets of locations A and B,
+    based on this checkerboard pattern.
 
+    Note: only works for s = 2, 3 or 4
+    """
+    assert s in [2, 3, 4], "s only tested for 2, 3 or 4"
     x_edges = y_edges = np.linspace(_MIN, _MAX, s + 1)
     grid_limits = {}
     for row in range(s):
@@ -42,9 +48,8 @@ def get_AB_split(simple_maze, s=3, plot=False):
             x_min = x_edges[col]
             x_max = x_edges[col + 1]
             grid_limits[(row, col)] = {"xlim": (x_min, x_max), "ylim": (y_min, y_max)}
-    return grid_limits
 
-    A_cells, B_cells = _get_AB_cells(s, by="diag")
+    A_cells, B_cells = _get_checker_board_split(s)
     A_cell2lims = {idx: lim for idx, lim in grid_limits.items() if idx in A_cells}
     B_cell2lims = {idx: lim for idx, lim in grid_limits.items() if idx in B_cells}
 
@@ -77,27 +82,6 @@ def _get_checker_board_split(n):
                 A.append((i, j))
             else:
                 B.append((i, j))
-    return A, B
-
-
-def _get_AB_cells(s, by="diag"):
-    """ """
-    grid = [[i * s + j for j in range(s)] for i in range(s)]
-    n = len(grid)
-    if by == "diag":
-        diag = []
-        for i in range(n):
-            diag.append(grid[i][i])
-            diag.append(grid[i][n - 1 - i])
-        diag = list(set(diag))
-        A = diag
-        B = [x for x in range(s * s) if x not in diag]
-    elif by == "row":
-        A = [cell for i, row in enumerate(grid) if i % 2 == 0 for cell in row]
-        B = [cell for i, row in enumerate(grid) if i % 2 != 0 for cell in row]
-    elif by == "col":
-        A = [cell for row in grid for idx, cell in enumerate(row) if idx % 2 == 0]
-        B = [cell for row in grid for idx, cell in enumerate(row) if idx % 2 != 0]
     return A, B
 
 
