@@ -5,16 +5,11 @@ analyses.
 """
 
 # %% Imports
-from cProfile import label
 import json
 import numpy as np
 import networkx as nx
 from matplotlib import pyplot as plt
-from regex import B
-
-from GridMaze.maze import representations as mr
 from GridMaze.maze import plotting as mp
-
 
 # %% Global Variables
 from GridMaze.paths import EXPERIMENT_INFO_PATH
