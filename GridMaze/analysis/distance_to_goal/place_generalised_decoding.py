@@ -26,6 +26,34 @@ RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 # %% Populate results
 
 
+def populate_decoding_results(subject_ID):
+    """ """
+    sessions = gs.get_maze_sessions(
+        subject_IDs=[subject_ID],
+        maze_names="all",
+        days_on_maze="late",
+        goal_subsets=["subset_1", "subset_2"],
+        with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
+        must_have_data=True,
+    )
+
+    def _run_with_exception(resolution, n_partitions):
+        try:
+            run_place_generalised_goal_decoding(session, resolution=resolution, n_partitions=n_partitions)
+        except Exception as e:
+            print(f"Error processing session {session}: {e}")
+            pass
+
+    for session in sessions:
+        print(session)
+        for resolution in [0.2, 0.4]:
+            _run_with_exception(resolution, n_partitions=4)
+        for n_partitions in [3, 4]:
+            _run_with_exception(resolution=0.4, n_partitions=n_partitions)
+
+    return
+
+
 # %% Main functions
 
 
@@ -68,7 +96,7 @@ def run_place_generalised_goal_decoding(
 
     # check if results already saved on disk
     session_name = session.name
-    save_path = RESULTS_DIR / f"{session_name}.parquet"
+    save_path = RESULTS_DIR / f"{n_partitions}x{n_partitions}" / f"res_{resolution}" / f"{session_name}.parquet"
     if save_path.exists():
         if verbose:
             print(f"Loading results for {session_name} from disk")
