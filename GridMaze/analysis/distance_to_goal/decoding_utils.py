@@ -119,7 +119,7 @@ def get_opt_reg(
     input_type="spikes",  # X
     output_type="place_direction",  # Y
     training_trial_phases=["navigation"],
-    reg_range=[None, 1, 10, 50, 1e2, 5e2, 1e3],
+    reg_range=[None, 1, 10, 50, 1e2, 5e2, 1e3, 5e3, 1e4],
     eval_metric="expected_distance_error",
     eval_kwargs={
         "op": "sum",
