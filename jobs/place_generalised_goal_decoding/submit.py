@@ -16,7 +16,6 @@ def submit_all_jobs():
     for subject in SUBJECT_IDS:
         script_path = get_SLURM_script(subject)
         os.system(f"chmod +x {script_path}")
-        return script_path
         os.system(f"sbatch {script_path}")
 
 
