@@ -4,6 +4,7 @@ from training data that only includes half of the places on the maze.
 """
 
 # %% Imports
+import pandas as pd
 import polars as pl
 from matplotlib import pyplot as plt
 
@@ -11,18 +12,27 @@ from sklearn.linear_model import LogisticRegression
 from joblib import Parallel, delayed
 
 from GridMaze.maze import partitions as mt
+from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.distance_to_goal import decoding_utils as du
 from GridMaze.analysis.distance_to_goal import bases as db
 
 # %% Global Variables
+from GridMaze.paths import RESULTS_PATH
+
+RESULTS_DIR = RESULTS_PATH / "distance_to_goal" / "place_generalised_goal_decoding"
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+# %% Populate results
 
 
 # %% Main functions
 
 
-def test(
+def run_place_generalised_goal_decoding(
     session,
     input_types=["spikes", "spikes_by_distance"],
+    n_partitions=4,
     resolution=0.4,
     include_multi_units=True,
     window=(-10, 10),
@@ -34,11 +44,40 @@ def test(
     training_steps_tol=1,
     max_steps_to_goal=30,
     inv_alpha="auto",
-    s_ab_split=4,
     verbose=True,
-    n_repeats=10,
+    n_repeats=5,
     max_jobs=10,
+    load_only=False,
 ):
+    """
+    n_partitions: number of partitions to split the maze into for cross-space decoding
+    (see GridMaze.maze.paritions.get_AB_split)
+    """
+    # check input types (if tuples convert to session obj)
+    if not isinstance(session, gs.MazeSession):
+        if verbose:
+            print(f"Getting session object for {session}")
+        subject_ID, maze_name, day_on_maze = session
+        session = gs.get_maze_sessions(
+            subject_IDs=[subject_ID],
+            maze_names=[maze_name],
+            days_on_maze=[day_on_maze],
+            with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
+            must_have_data=True,
+        )
+
+    # check if results already saved on disk
+    session_name = session.name
+    save_path = RESULTS_DIR / f"{session_name}.parquet"
+    if save_path.exists():
+        if verbose:
+            print(f"Loading results for {session_name} from disk")
+        return pd.read_parquet(save_path)
+    else:
+        if load_only:
+            raise FileNotFoundError(f"Results for {session_name} not found on disk")
+
+    # MAIN ANALYSIS
     # Prepare shared resources
     input_data = du.get_place_decoding_input_data(session, resolution, include_multi_units, window, permuted=False)
     basis_fn = db.distance_basis_generator(
@@ -47,10 +86,12 @@ def test(
         max_steps=max_steps_to_goal,
     )
     simple_maze = session.simple_maze()
-    A_locs, B_locs = mt.get_AB_split(simple_maze, s=s_ab_split)
+    A_locs, B_locs = mt.get_AB_split(simple_maze, s=n_partitions)
 
     all_results = []
     for r in range(n_repeats):
+        if verbose:
+            print(f"Repeat {r + 1} of {n_repeats}")
         folds_df = du.get_folds_df(
             session,
             goal_stratified_validation,
@@ -61,6 +102,8 @@ def test(
         folds = folds_df.columns.get_level_values(0).unique()
 
         if inv_alpha == "auto":
+            if verbose:
+                print("Calculating optimal regularisation parameter for each input type")
             inv_alphas = [
                 du.get_opt_reg(
                     input_data,
@@ -102,6 +145,11 @@ def test(
     flat_results = [df for fold_res in all_results for df in fold_res]
     results_df = pl.concat(flat_results, how="vertical")
     metrics_df = du.get_decoding_metrics_df(results_df, simple_maze, output_type="goal")
+    # save results to disk
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    metrics_df.to_parquet(save_path, index=False)
+    if verbose:
+        print(f"Results saved to {save_path}")
     return metrics_df
 
 
@@ -139,6 +187,7 @@ def _process_fold(
     test_A = has_training_data(train_B, test_A, tol=tol)
     test_B = has_training_data(train_A, test_B, tol=tol)
 
+    fold_results = []
     for itype, inv_alpha in zip(input_types, inv_alphas):
         # Build arrays for decoding
         Xa_t, Xa_e, ya_t, ya_e = du._get_test_train_arrays(
@@ -172,8 +221,7 @@ def _process_fold(
         A_dec.fit(Xa_t, ya_t)
         B_dec.fit(Xb_t, yb_t)
 
-        # Collect results
-        fold_results = []
+        # run place-generalised test decoding
         for dec, dtype, test_df_loc, X_e, y_e in zip(
             [A_dec, B_dec],
             ["A", "B"],
@@ -221,11 +269,15 @@ def has_training_data(train_df, test_df, tol=1):
 def quick_plot(df, axes=None, metric="test_acc", cue_window=(-5, 10), reward_window=(-10, 5)):
     if axes is None:
         fig, axes = plt.subplots(1, 2, figsize=(6, 3), sharey=True)
-    for event, ax, window in zip(["cue", "reward"], axes, [cue_window, reward_window]):
-        _df = df[df[f"{event}_aligned_time"].between(*window)]
-        trial_df = _df.groupby(["trial_unique_ID", f"{event}_aligned_time"])[metric].mean().unstack()
-        mean = trial_df.mean()
-        ax.plot(mean.index, mean.values)
+    input_types = df.input_type.unique()
+    for itype in input_types:
+        itype_df = df[df.input_type == itype]
+        for event, ax, window in zip(["cue", "reward"], axes, [cue_window, reward_window]):
+            _df = itype_df[itype_df[f"{event}_aligned_time"].between(*window)]
+            trial_df = _df.groupby(["trial_unique_ID", f"{event}_aligned_time"])[metric].mean().unstack()
+            mean = trial_df.mean()
+            ax.plot(mean.index, mean.values, label=itype)
+    ax.legend(fontsize=8)
 
 
 # %%
