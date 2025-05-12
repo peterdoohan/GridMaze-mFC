@@ -140,10 +140,8 @@ def populate_decoding_results(subject_ID):
     for session in sessions:
         print(session)
         for resolution in [0.2, 0.4]:
-            _run_with_exception(resolution, n_partitions=4)
-        for n_partitions in [3, 4]:
-            _run_with_exception(resolution=0.4, n_partitions=n_partitions)
-
+            for n_partitions in [3, 4]:
+                _run_with_exception(resolution, n_partitions)
     return
 
 
