@@ -571,6 +571,7 @@ def get_place_decoding_input_data(
     """
     # load data
     session_info = session.session_info
+    simple_maze = session.simple_maze()
     trials_df = session.trials_df
     navigation_df = session.navigation_df
     spike_counts_df = session.navigation_spike_counts_df.reset_index(drop=True)
@@ -602,14 +603,28 @@ def get_place_decoding_input_data(
     reward_aligned_bins = pd.cut(nav_info[("event_aligned_time", "reward")], bins=bins)
     nav_info[("event_aligned_bin", "cue")] = cue_aligned_bins.apply(lambda x: x.mid).astype(float)
     nav_info[("event_aligned_bin", "reward")] = reward_aligned_bins.apply(lambda x: x.mid).astype(float)
-    # add non nav distances
-    nav_info[("steps_to_goal", "future")] = _add_non_nav_distances(
-        session, nav_info, ignore_last_n=0, fill_first_last_trial=True
-    )
     # combine and remove out of trial times
     nav_rates_df = pd.concat([nav_info, spike_counts_df], axis=1)
     nav_rates_df = nav_rates_df[~nav_rates_df.trial.isna()]
+    # add non nav distances
+    nav_rates_df[("steps_to_goal", "future")] = update_non_nav_distances(nav_rates_df, simple_maze)
     return nav_rates_df
+
+
+def update_non_nav_distances(nav_info, simple_maze):
+    """ """
+    # precompute distances
+    extended = mr.get_extended_simple_maze(simple_maze)
+    raw_dist = dict(nx.all_pairs_dijkstra_path_length(extended, weight="weight"))
+    label2coord = mr.get_maze_label2coord(simple_maze)
+    # Build dense N×N matrix for fast look ups
+    valid = nav_info.trial_phase.isin(["reward_consumption", "ITI"])
+    src_coords = nav_info.loc[valid, ("maze_position", "simple")].map(label2coord)
+    dst_coords = nav_info.loc[valid, ("goal", "")].map(label2coord)
+    updated_distances = [raw_dist[src][dst] for src, dst in zip(src_coords, dst_coords)]
+    out = nav_info[("steps_to_goal", "future")].copy()
+    out.loc[valid.values] = updated_distances
+    return out
 
 
 def update_trial_ID(
