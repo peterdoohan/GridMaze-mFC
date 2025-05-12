@@ -4,6 +4,7 @@ from training data that only includes half of the places on the maze.
 """
 
 # %% Imports
+import json
 import pandas as pd
 import polars as pl
 from matplotlib import pyplot as plt
@@ -17,10 +18,102 @@ from GridMaze.analysis.distance_to_goal import decoding_utils as du
 from GridMaze.analysis.distance_to_goal import bases as db
 
 # %% Global Variables
-from GridMaze.paths import RESULTS_PATH
+from GridMaze.paths import RESULTS_PATH, EXPERIMENT_INFO_PATH
 
 RESULTS_DIR = RESULTS_PATH / "distance_to_goal" / "place_generalised_goal_decoding"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
+    SUBJECT_IDS = json.load(input_file)
+
+# %% Load results
+
+
+def plot_place_generalised_goal_decoding(
+    summary_df,
+    metric="test_acc",
+    cue_window=(-5, 10),
+    reward_window=(-10, 5),
+    chance=1 / 12,
+    axes=None,
+):
+    # set up fig
+    if axes is None:
+        fig, axes = plt.subplots(1, 2, figsize=(6, 3), sharey=True)
+    for ax in axes:
+        ax.axvline(0, color="k", linestyle="--", alpha=0.5)
+        ax.axhline(chance, color="k", linestyle="--", alpha=0.5)
+    axes[0].spines[["top", "right"]].set_visible(False)
+    axes[1].spines[["top", "right", "left"]].set_visible(False)
+    axes[0].set_ylabel(metric)
+    # process
+    for ax, event, window in zip(axes, ["cue", "reward"], [cue_window, reward_window]):
+        df = summary_df[summary_df.event == event]
+        subject_mean_df = df.groupby(["subject_ID", "aligned_time"])[["spikes", "spikes_by_distance"]].mean().unstack()
+        mean_df = subject_mean_df.mean()
+        sem_df = subject_mean_df.sem()
+        for i in ["spikes", "spikes_by_distance"]:
+            mean = mean_df.loc[i]
+            sem = sem_df.loc[i]
+            ax.plot(mean.index, mean.values, label=i)
+            ax.fill_between(
+                mean.index,
+                mean.values - sem.values,
+                mean.values + sem.values,
+                alpha=0.2,
+            )
+        ax.set_xlim(window)
+        ax.set_ylim(0, 0.2)
+        ax.set_xlabel(f"{event}(s)")
+    axes[0].legend(fontsize=8)
+
+
+def get_decoding_summary_df(metric="test_acc", n_partitions=4, resolution=0.4):
+    """ """
+    all_dfs = []
+    for subject_ID in SUBJECT_IDS:
+        print(subject_ID)
+        sessions = gs.get_maze_sessions(
+            subject_IDs=[subject_ID],
+            maze_names="all",
+            days_on_maze="late",
+            goal_subsets=["subset_1", "subset_2"],
+            with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
+            must_have_data=True,
+        )
+        cue_aligned_perf, reward_aligned_perf = [], []
+        for s in sessions:
+            try:
+                decoding_df = run_place_generalised_goal_decoding(
+                    s, n_partitions=n_partitions, resolution=resolution, verbose=False, load_only=True
+                )
+            except Exception as e:
+                print(e)
+                continue
+            for event, dfs in zip(["cue", "reward"], [cue_aligned_perf, reward_aligned_perf]):
+                _time = f"{event}_aligned_time"
+                if event == "cue":
+                    df = decoding_df[~decoding_df[_time].isna()]
+                    df = df[  # only include ITI before cue and navigation time after cue
+                        ((df[_time].le(0)) & (df.trial_phase == "ITI"))
+                        | (df[_time].gt(0)) & (df.trial_phase == "navigation")
+                    ]
+                else:  # reward
+                    df = decoding_df[~decoding_df[_time].isna()]
+                    df = df[
+                        ((df[_time].gt(0)) & (df.trial_phase == "reward_consumption"))
+                        | (df[_time].le(0)) & (df.trial_phase == "navigation")
+                    ]
+                dfs.append(df.groupby(["input_type", "trial_unique_ID", _time])[metric].mean().unstack())
+        for event, df in zip(["cue", "reward"], [cue_aligned_perf, reward_aligned_perf]):
+            _df = pd.concat(df, axis=0).sort_index()
+            mean_df = _df.groupby("input_type").mean().T.reset_index()
+            mean_df = mean_df.rename(columns={f"{event}_aligned_time": "aligned_time"})
+            mean_df["subject_ID"] = subject_ID
+            mean_df["event"] = event
+            all_dfs.append(mean_df)
+    summary_df = pd.concat(all_dfs, axis=0)
+    return summary_df
 
 
 # %% Populate results
