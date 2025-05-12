@@ -588,8 +588,11 @@ def get_place_decoding_input_data(
     # downsample data
     nav_info, spike_counts_df = _downsample_data(navigation_df, spike_counts_df, resolution)
     # update trial definitions to start in previous ITI
-    nav_info["trial"] = update_trial_ID(nav_info, trials_df)
-    nav_info["trial_unique_ID"] = convert.trial2trial_unique_ID(session_info, nav_info["trial"])
+    nav_info[("trial", "")] = update_trial_ID(nav_info, trials_df)
+    nav_info[("trial_unique_ID", "")] = convert.trial2trial_unique_ID(session_info, nav_info["trial"])
+    # match goal to updated trial 1D
+    trial2goal = trials_df.set_index("trial")[("goal", "")].to_dict()
+    nav_info[("goal", "")] = nav_info.trial.map(trial2goal)
     # add event aligned time
     nav_info[("event_aligned_time", "cue")] = _get_event_aligned_times(nav_info, trials_df, "cue")
     nav_info[("event_aligned_time", "reward")] = _get_event_aligned_times(nav_info, trials_df, "reward")

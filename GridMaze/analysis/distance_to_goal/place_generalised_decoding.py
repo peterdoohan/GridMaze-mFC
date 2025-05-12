@@ -166,7 +166,7 @@ def run_place_generalised_goal_decoding(
     max_steps_to_goal=30,
     inv_alpha="auto",
     verbose=True,
-    n_repeats=5,
+    n_repeats=10,
     max_jobs=10,
     load_only=False,
 ):
