@@ -612,7 +612,11 @@ def get_place_decoding_input_data(
 
 
 def update_non_nav_distances(nav_info, simple_maze):
-    """ """
+    """
+    Note different to _update_non_nav_distances(), as this fn expects
+    trial and goal columns to have been updated so that ITI defines start
+    of trial.
+    """
     # precompute distances
     extended = mr.get_extended_simple_maze(simple_maze)
     raw_dist = dict(nx.all_pairs_dijkstra_path_length(extended, weight="weight"))
