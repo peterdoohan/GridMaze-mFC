@@ -20,15 +20,23 @@ from GridMaze.analysis.cluster_tuning.spatial import _get_place_direction_df
 # %% Functions
 
 
-def get_test_sessions(subject_ID="m3", maze_name="maze_1"):
-    """ """
-    return gs.get_maze_sessions(
+def get_heldout_sessions(session):
+    """
+    Gets late sessions for same subject and maze, with without the input session.
+    Used to calculate place-direction bases, without information from the current session.
+    """
+    subject_ID = session.subject_ID
+    maze_name = session.maze_name
+    sessions = gs.get_maze_sessions(
         subject_IDs=[subject_ID],
         maze_names=[maze_name],
         days_on_maze="late",
         with_data=["navigation_df", "cluster_metrics", "navigation_spike_rates_df"],
-        must_have_data=False,
+        must_have_data=True,
     )
+    # remove inptut session
+    sessions = [s for s in sessions if s.day_on_maze != session.day_on_maze]
+    return sessions
 
 
 def get_place_direction_bases(
