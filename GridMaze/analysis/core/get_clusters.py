@@ -213,6 +213,8 @@ class Cluster:
                 "navigation_only": True,
                 "moving_only": True,
                 "exclude_time_at_goal": False,
+                "fixed_vmin": False,
+                "colormap": "heat",
             }
 
         elif feature == "head_direction":
@@ -379,7 +381,14 @@ class Cluster:
                 return None
             # process data
             navigation_rates_df = pd.concat((navigation_df, navigation_spike_rates_df.reset_index(drop=True)), axis=1)
-            place_direction_df = spatial._get_place_direction_df(simple_maze, navigation_rates_df, **feature_kwargs)
+            place_direction_df = spatial._get_place_direction_df(
+                simple_maze,
+                navigation_rates_df,
+                navigation_only=feature_kwargs["navigation_only"],
+                moving_only=feature_kwargs["moving_only"],
+                exclude_time_at_goal=feature_kwargs["exclude_time_at_goal"],
+                minimum_occupancy=feature_kwargs["minimum_occupancy"],
+            )
             return (simple_maze, place_direction_df.loc[self.cluster_unique_ID])
 
         elif feature == "head_direction":
@@ -461,7 +470,9 @@ class Cluster:
         elif feature == "place":
             spatial.plot_place_tuning(*tuning_data, ax=ax)
         elif feature == "place_direction":
-            spatial.plot_place_direction_tuning(*tuning_data, ax=ax)
+            spatial.plot_place_direction_tuning(
+                *tuning_data, colormap=feature_kwargs["colormap"], fixed_vmin=feature_kwargs["fixed_vmin"], ax=ax
+            )
         elif feature == "head_direction":
             head_direction.plot_head_direction_tuning(
                 *tuning_data,

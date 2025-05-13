@@ -41,13 +41,14 @@ def plot_session_place_direction_tuning(session):
     return
 
 
-def plot_place_direction_tuning(simple_maze, place_direction_tuning_df, ax=None):
+def plot_place_direction_tuning(simple_maze, place_direction_tuning_df, colormap="heat", fixed_vmin=False, ax=None):
     if ax is None:
         f, ax = plt.subplots(1, 1, figsize=(5, 5), clear=True)
     mp.plot_directed_heatmap(
         simple_maze,
         place_direction_tuning_df,
-        colormap="heat",
+        colormap=colormap,
+        fixed_vmin=fixed_vmin,
         silhouette_node_size=650,
         silhouette_edge_size=13,
         star_base_length=0.05,
@@ -117,7 +118,7 @@ def plot_session_place_tuning(session):
 
 def plot_place_tuning(simple_maze, place_tuning_df, goals=None, ax=None):
     if ax is None:
-        f, ax = plt.subplots(1, 1, figsize=(3, 3), clear=True)
+        f, ax = plt.subplots(1, 1, figsize=(4, 4), clear=True)
     mp.plot_simple_heatmap(
         simple_maze,
         place_tuning_df,
