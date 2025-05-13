@@ -11,6 +11,21 @@ from GridMaze.analysis.core import convert
 # %% Global Vairiables
 
 
+# %% test train splits functions
+
+
+def _get_test_train_dfs(input_data, fold_df, training_trial_phases=["navigation"]):
+    """ """
+    test_trials = [t for t in fold_df.test.values.flatten() if isinstance(t, str)]
+    train_trials = [t for t in fold_df.train.values.flatten() if isinstance(t, str)]
+    train_df = input_data[input_data.trial_unique_ID.isin(train_trials)]
+    # include only specified trial phases in training data
+    if training_trial_phases:
+        train_df = train_df[train_df.trial_phase.isin(training_trial_phases)]
+        test_df = input_data[input_data.trial_unique_ID.isin(test_trials)]
+    return train_df, test_df
+
+
 # %% session level validation folds
 
 

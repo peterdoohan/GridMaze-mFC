@@ -308,7 +308,7 @@ def _decode_fold_repeat(
     for cond_idx, (input_type, inv_alpha) in enumerate(zip(input_types, inv_alphas)):
         if verbose:
             print(f"{fold}-{repeat}:{input_type}")
-        train_df, test_df = du._get_test_train_dfs(input_data, fold_df, training_trial_phases=training_trial_phases)
+        train_df, test_df = folds._get_test_train_dfs(input_data, fold_df, training_trial_phases=training_trial_phases)
         X_train, X_test, y_train, y_test = du._get_test_train_arrays(
             train_df, test_df, input_type=input_type, output_type="goal", whiten_features=True, basis_fn=basis_fn
         )
@@ -396,7 +396,7 @@ def get_predicted_spatial(
     for fold in folds_df.columns.levels[0].unique():
         if verbose:
             print(fold)
-        train_df, test_df = du._get_test_train_dfs(input_data, folds_df[fold], training_trial_phases)
+        train_df, test_df = folds._get_test_train_dfs(input_data, folds_df[fold], training_trial_phases)
         X_train, X_test, y_train, y_test = du._get_test_train_arrays(
             train_df, test_df, input_type=input_type, output_type=output_type, whiten_features=True, basis_fn=basis_fn
         )

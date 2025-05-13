@@ -9,6 +9,7 @@ import pandas as pd
 
 from GridMaze.analysis.core import get_clusters as gc
 from GridMaze.analysis.core import downsample as ds
+from GridMaze.analysis.core import folds
 
 from GridMaze.analysis.place_direction import bases as pdb
 from GridMaze.analysis.distance_to_goal import bases as db
@@ -22,22 +23,36 @@ def test(
     session,
     resolution=0.5,
     distance_metrics=("steps_to_goal", "future"),
+    goal_stratified_validation=True,
+    n_test_trials=None,
     trial_phases=["navigation"],
     max_steps_to_goal=30,
     pd_bases_kwargs={"n_bases": 8, "dim_red": "nmf"},
     dtg_bases_kwargs={"n_bases": 4, "basis": "gamma"},
+    verbose=True,
 ):
     """ """
+    if verbose:
+        print(f"Loading basis functions")
     # get place-direction bases
     pd_bases = pdb.get_place_direction_bases(pdb.get_heldout_sessions(session), **pd_bases_kwargs)
     # get distance to goal bases
     dist_bases = db.distance_basis_generator(
         **dtg_bases_kwargs, btype=distance_metrics[0].split("_")[0], max_steps=max_steps_to_goal
     )
+    if verbose:
+        print(f"Loading input data")
     # get downsampled input data
-    input_data = get_input_data(session, resolution)
+    input_data = get_input_data(session, resolution, trial_phases=trial_phases, distance_metrics=distance_metrics)
     # get folds df
-    return
+    folds_df = folds.get_folds_df(
+        session, goal_stratified=goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials
+    )
+    _folds = folds_df.columns.get_level_values(0).unique()
+    for fold in _folds:
+        fold_df = folds_df[fold]
+
+    return pd_bases, dist_bases, input_data, folds_df
 
 
 def get_input_data(

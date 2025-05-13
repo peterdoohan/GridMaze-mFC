@@ -336,7 +336,7 @@ def _decode_place_fold(
     if verbose:
         print(f"Decoding {fold}")
     fold_df = folds_df[fold]
-    train_df, test_df = du._get_test_train_dfs(input_data, fold_df, training_trial_phases)
+    train_df, test_df = folds._get_test_train_dfs(input_data, fold_df, training_trial_phases)
     X_train, X_test, y_train, y_test = du._get_test_train_arrays(
         train_df,
         test_df,
