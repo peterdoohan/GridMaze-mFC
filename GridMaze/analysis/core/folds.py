@@ -22,7 +22,7 @@ def _get_test_train_dfs(input_data, fold_df, training_trial_phases=["navigation"
     # include only specified trial phases in training data
     if training_trial_phases:
         train_df = train_df[train_df.trial_phase.isin(training_trial_phases)]
-        test_df = input_data[input_data.trial_unique_ID.isin(test_trials)]
+    test_df = input_data[input_data.trial_unique_ID.isin(test_trials)]
     return train_df, test_df
 
 
