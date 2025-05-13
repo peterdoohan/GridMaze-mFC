@@ -70,6 +70,8 @@ def test(
     }
     model2opt_alphas = {}
     for model, regressor_classes in model2regressor_classes.items():
+        if verbose:
+            print(f"{model}: {regressor_classes}")
         opt_alphas = opt_population_alpha(
             folds_df["fold_0"],
             input_data,
