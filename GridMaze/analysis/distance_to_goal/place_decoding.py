@@ -17,6 +17,7 @@ from statsmodels.stats.multitest import multipletests
 from joblib import Parallel, delayed
 
 from GridMaze.analysis.core import get_sessions as gs
+from GridMaze.analysis.core import folds
 from GridMaze.analysis.distance_to_goal import decoding_utils as du
 from GridMaze.analysis.distance_to_goal import bases as db
 
@@ -273,7 +274,7 @@ def get_place_decoding(
             input_data[("place_direction", "")] = input_data.apply(
                 lambda x: f"{x[("maze_position", "simple")]}_{x[("cardinal_movement_direction", "")]}", axis=1
             )
-        folds_df = du.get_folds_df(
+        folds_df = folds.get_folds_df(
             session, goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials
         )
         # find optimal regularisation

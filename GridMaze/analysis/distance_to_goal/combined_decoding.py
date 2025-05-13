@@ -20,6 +20,7 @@ from statsmodels.stats.multitest import multipletests
 
 from GridMaze.maze import representations as mr
 from GridMaze.analysis.core import get_sessions as gs
+from GridMaze.analysis.core import folds
 from GridMaze.analysis.distance_to_goal import decoding_utils as du
 from GridMaze.analysis.distance_to_goal import goal_decoding as gd
 from GridMaze.analysis.distance_to_goal import bases as db
@@ -216,7 +217,7 @@ def run_goal_decoding_comparison(
         # get downsampled input data containing behavioural info and spike data
         input_data = du.get_place_decoding_input_data(session, resolution, include_multi_units, window, permuted=False)
         # organise trials into test-train folds
-        folds_df = du.get_folds_df(
+        folds_df = folds.get_folds_df(
             session, goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials
         )
         # predict plce/place_direction probabilities from spike counts (for control conditions)

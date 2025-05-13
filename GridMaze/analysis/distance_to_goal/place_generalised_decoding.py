@@ -14,6 +14,7 @@ from joblib import Parallel, delayed
 
 from GridMaze.maze import partitions as mt
 from GridMaze.analysis.core import get_sessions as gs
+from GridMaze.analysis.core import folds
 from GridMaze.analysis.distance_to_goal import decoding_utils as du
 from GridMaze.analysis.distance_to_goal import bases as db
 
@@ -211,14 +212,14 @@ def run_place_generalised_goal_decoding(
     for r in range(n_repeats):
         if verbose:
             print(f"Repeat {r + 1} of {n_repeats}")
-        folds_df = du.get_folds_df(
+        folds_df = folds.get_folds_df(
             session,
             goal_stratified_validation,
             return_unique_IDs=True,
             n_test_trials=n_test_trials,
         )
 
-        folds = folds_df.columns.get_level_values(0).unique()
+        _folds = folds_df.columns.get_level_values(0).unique()
 
         if inv_alpha == "auto":
             if verbose:
@@ -257,7 +258,7 @@ def run_place_generalised_goal_decoding(
                 tol=training_steps_tol,
                 verbose=verbose,
             )
-            for f in folds
+            for f in _folds
         )
         all_results.extend(results)
 

@@ -15,6 +15,7 @@ from scipy.stats import ttest_1samp
 from statsmodels.stats.multitest import multipletests
 from sklearn.preprocessing import StandardScaler
 from GridMaze.analysis.core import permute
+from GridMaze.analysis.core import folds
 
 from . import bases as db
 from . import decoding_utils as du
@@ -329,7 +330,7 @@ def get_distance_referenced_event_aligned_goal_decoding(
     )
 
     # get validation folds
-    folds_df = du.get_folds_df(session, goal_stratified_validation, n_test_trials=n_test_trials)
+    folds_df = folds.get_folds_df(session, goal_stratified_validation, n_test_trials=n_test_trials)
     results_dfs = []
     for fold in folds_df.columns.levels[0].unique():
         fold_df = folds_df[fold]
@@ -430,7 +431,7 @@ def get_distance_basis_goal_decoding(
         plot=False,
     )
 
-    folds_df = du.get_folds_df(session, goal_stratified_validation, n_test_trials=n_test_trials)
+    folds_df = folds.get_folds_df(session, goal_stratified_validation, n_test_trials=n_test_trials)
     results_dfs = []
     for fold in folds_df.columns.levels[0].unique():
         fold_df = folds_df[fold]
@@ -512,7 +513,7 @@ def get_distance_aligned_goal_decoding(
     for steps in bin_mids:
         steps_df = input_data[input_data.steps_to_goal.bin_mid == steps]
         valid_trials = steps_df.trial.unique()
-        folds_df = du.get_folds_df(
+        folds_df = folds.get_folds_df(
             session, goal_stratified_validation, valid_trials, return_unique_IDs=True, n_test_trials=n_test_trials
         )
         if folds_df.shape[0] < 2:
@@ -580,7 +581,9 @@ def get_event_aligned_goal_decoding(
     """
     input_data = du.get_event_aligned_input_data(session, event, resolution, window, include_multi_units)
     timepoints = sorted(input_data.event_aligned_time[event].unique())
-    folds_df = du.get_folds_df(session, goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials)
+    folds_df = folds.get_folds_df(
+        session, goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials
+    )
     results_dfs = []
     for fold in folds_df.columns.levels[0].unique():
         fold_df = folds_df[fold]
