@@ -18,6 +18,7 @@ from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import get_clusters as gc
 from GridMaze.analysis.core import convert
 from GridMaze.analysis.core import permute
+from GridMaze.analysis.core import downsample as ds
 from GridMaze.maze import representations as mr
 
 
@@ -444,7 +445,7 @@ def get_distance_aligned_input_data(
     )
     spike_counts_df = spike_counts_df[spike_counts_df.columns[spike_counts_df.spike_count.columns.isin(keep_clusters)]]
     # downsample data
-    ds_nav_info, ds_spike_counts_df = _downsample_data(navigation_df, spike_counts_df, resolution)
+    ds_nav_info, ds_spike_counts_df = ds.downsample_nav_spikes_data(navigation_df, spike_counts_df, resolution)
     # update distances in non_navigation trial periods
     if "ITI" in include_trial_phases or "reward_consumption" in include_trial_phases:
         ds_nav_info[("steps_to_goal", "future")] = _add_non_nav_distances(
@@ -587,7 +588,7 @@ def get_place_decoding_input_data(
     )
     spike_counts_df = spike_counts_df[spike_counts_df.columns[spike_counts_df.spike_count.columns.isin(keep_clusters)]]
     # downsample data
-    nav_info, spike_counts_df = _downsample_data(navigation_df, spike_counts_df, resolution)
+    nav_info, spike_counts_df = ds.downsample_nav_spikes_data(navigation_df, spike_counts_df, resolution)
     # update trial definitions to start in previous ITI
     nav_info[("trial", "")] = update_trial_ID(nav_info, trials_df)
     nav_info[("trial_unique_ID", "")] = convert.trial2trial_unique_ID(session_info, nav_info["trial"])
@@ -704,7 +705,9 @@ def get_event_aligned_input_data(
             drop=True
         )
         # downsample to speficied resolution
-        ds_nav_aligned_df, ds_spikes_aligned_df = _downsample_data(nav_aligned_df, spikes_aligned_df, resolution)
+        ds_nav_aligned_df, ds_spikes_aligned_df = ds.downsample_nav_spikes_data(
+            nav_aligned_df, spikes_aligned_df, resolution
+        )
         # add event aligned time info
         timepoints = np.arange(window[0], window[1], resolution)
         if len(timepoints) > ds_nav_aligned_df.shape[0]:
@@ -744,35 +747,6 @@ def get_event_aligned_input_data(
         # combine with other data (nav_info and spike_counts)
         event_aligned_nav_rates_df = pd.concat([event_aligned_nav_rates_df, place_onehots_df], axis=1)
     return event_aligned_nav_rates_df
-
-
-def _downsample_data(navigation_df, spike_counts_df, resolution=0.2):
-    """ """
-    # downsample spike counts by suming spikes within resolution window
-    ds_frames = int(FRAME_RATE * resolution)
-    ds_spike_counts_df = spike_counts_df.groupby(spike_counts_df.index // ds_frames).sum().reset_index(drop=True)
-    # keep only relevant navigation info
-    nav_info = navigation_df[
-        [
-            ("time", ""),
-            ("trial_unique_ID", ""),
-            ("trial", ""),
-            ("goal", ""),
-            ("trial_phase", ""),
-            ("maze_position", "simple"),
-            ("cardinal_movement_direction", ""),
-            ("steps_to_goal", "future"),
-        ]
-    ]
-    # downsample navigation info by taking values in mid window
-    mid_window_inds = (spike_counts_df.index // ds_frames).unique() * ds_frames + (ds_frames // 2)
-    mid_window_inds = mid_window_inds[mid_window_inds < len(nav_info)]
-    nav_info = nav_info.iloc[mid_window_inds]
-    # account for differences in ds methods
-    nav_info.reset_index(drop=True, inplace=True)
-    if nav_info.shape[0] < ds_spike_counts_df.shape[0]:
-        ds_spike_counts_df = ds_spike_counts_df.iloc[:-1]
-    return nav_info, ds_spike_counts_df
 
 
 # %% Cross valdiation functions
