@@ -295,7 +295,7 @@ def _process_fold(
         print(f"{repeat}-{fold}")
     # Extract fold-specific split
     fold_df = folds_df[fold]
-    train_df, test_df = du._get_test_train_dfs(input_data, fold_df, training_trial_phases=training_trial_phases)
+    train_df, test_df = folds._get_test_train_dfs(input_data, fold_df, training_trial_phases=training_trial_phases)
 
     # Partition into A and B regions
     train_A = train_df[train_df.maze_position.simple.isin(A_locs)]
