@@ -180,7 +180,7 @@ def opt_population_alpha(
         no_improve_count = 0
 
         for round_idx in range(1, max_rounds + 1):
-            model = Ridge(alpha=alpha, max_iter=10_000)
+            model = Ridge(alpha=alpha, max_iter=10_000, random_state=0)
             model.fit(X_train, y_train)
             score = model.score(X_test, y_test)
 
