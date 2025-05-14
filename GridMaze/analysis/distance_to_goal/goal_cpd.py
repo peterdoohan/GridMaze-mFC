@@ -10,9 +10,7 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import PoissonRegressor
 from sklearn.linear_model import Ridge
-from sklearn.metrics import r2_score, mean_poisson_deviance
 from matplotlib import pyplot as plt
 
 from GridMaze.analysis.core import get_clusters as gc

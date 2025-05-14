@@ -400,4 +400,36 @@ def quick_plot(df, axes=None, metric="test_acc", cue_window=(-5, 10), reward_win
     ax.legend(fontsize=8)
 
 
-# %%
+# %% New verions of the place-generalised analysis using a held-out radius instead of checkerboard method
+
+
+def test(
+    session,
+    input_types=["spikes", "spikes_by_distance"],
+    max_steps_held_out=6,
+    resolution=0.5,
+    include_multi_units=True,
+    window=(-10, 10),
+    goal_stratified_validation=True,
+    n_test_trials=None,
+    n_bases=8,
+    basis_type="gamma",
+    training_trial_phases=["navigation"],
+    training_steps_tol=1,
+    max_steps_to_goal=30,
+    inv_alpha="auto",
+    verbose=True,
+    n_repeats=10,
+    max_jobs=10,
+    load_only=False,
+):
+    """ """
+    input_data = du.get_place_decoding_input_data(session, resolution, include_multi_units, window, permuted=False)
+    basis_fn = db.distance_basis_generator(
+        n_bases=n_bases,
+        basis=basis_type,
+        max_steps=max_steps_to_goal,
+    )
+    simple_maze = session.simple_maze()
+
+    return
