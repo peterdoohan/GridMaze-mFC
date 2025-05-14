@@ -5,7 +5,7 @@ in the neural population.
 """
 
 # %% Imports
-from importlib import simple
+import json
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
@@ -25,38 +25,47 @@ from GridMaze.analysis.place_direction import bases as pdb
 from GridMaze.analysis.distance_to_goal import bases as db
 
 # %% Global Variables
+from GridMaze.paths import EXPERIMENT_INFO_PATH
+
+with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
+    SUBJECT_IDS = json.load(input_file)
 
 # %% Functions
 
 
-def test(subject="m3"):
-    sessions = gs.get_maze_sessions(
-        subject_IDs=[subject],
-        maze_names="all",
-        days_on_maze="late",
-        goal_subsets=["subset_1", "subset_2"],
-        with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
-        must_have_data=True,
-    )
+def get_cpd_summary_df():
     dfs = []
-    for session in sessions:
-        dfs.append(get_goal_cpd_df(session))
-    subject_cpd_df = pd.concat(dfs)
-    return subject_cpd_df
+    for subject in SUBJECT_IDS:
+        sessions = gs.get_maze_sessions(
+            subject_IDs="all",
+            maze_names="all",
+            days_on_maze="late",
+            goal_subsets=["subset_1", "subset_2"],
+            with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
+            must_have_data=True,
+        )
+        dfs = []
+        for session in sessions:
+            dfs.append(get_goal_cpd_df(session))
+        subject_cpd_df = pd.concat(dfs)
+        subject_cpd_df.index = pd.MultiIndex.from_product([subject_cpd_df.index, [subject]])
+        dfs.append(subject_cpd_df)
+    results_df = pd.concat(dfs)
+    return results_df
 
 
 def get_goal_cpd_df(
     session,
     resolution=0.5,
-    spatial_coding="place_direction_bases",
+    spatial_coding="place_direction_onehot",
     distance_metrics=("steps_to_goal", "future"),
     goal_stratified_validation=True,
     n_test_trials=None,
     trial_phases=["navigation"],
     max_steps_to_goal=30,
     min_spikes=300,
-    pd_bases_kwargs={"n_bases": 6, "dim_red": "pca"},
-    dtg_bases_kwargs={"n_bases": 3, "basis": "gamma"},
+    pd_bases_kwargs={"n_bases": 8, "dim_red": "pca"},
+    dtg_bases_kwargs={"n_bases": 5, "basis": "gamma"},
     verbose=True,
     max_jobs=10,
 ):
@@ -91,11 +100,12 @@ def get_goal_cpd_df(
         "full_goal_by_distance": [spatial_coding, "distance", "goal_by_distance"],
         "full_goal": [spatial_coding, "distance", "goal"],
         "reduced": [spatial_coding, "distance"],
-        "reduced_distance": [spatial_coding],
-        "reduced_spatial": ["distance"],
+        "reduced_distance": [spatial_coding, "goal_by_distance"],
+        "reduced_spatial": ["distance", "goal_by_distance"],
     }
 
     n_jobs = min(len(_folds), max_jobs)
+
     if verbose:
         print(f"Running across {len(_folds)} folds with n_jobs={n_jobs}")
     cpd_list = Parallel(n_jobs=n_jobs)(
@@ -115,7 +125,6 @@ def get_goal_cpd_df(
         for fold in _folds
     )
     all_cpd = pd.concat(cpd_list)
-    return all_cpd
     mean_cpd = all_cpd.groupby("cluster_unique_ID").mean()  # average across folds
     return mean_cpd
 
@@ -173,8 +182,8 @@ def _process_fold(
     cpd = pd.DataFrame(index=rss_df.index)
     cpd["goal"] = (rss_df["reduced"] - rss_df["full_goal"]) / rss_df["reduced"]
     cpd["goal_by_distance"] = (rss_df["reduced"] - rss_df["full_goal_by_distance"]) / rss_df["reduced"]
-    cpd["distance"] = (rss_df["reduced_distance"] - rss_df["reduced"]) / rss_df["reduced_distance"]
-    cpd["spatial"] = (rss_df["reduced_spatial"] - rss_df["reduced"]) / rss_df["reduced_spatial"]
+    cpd["distance"] = (rss_df["reduced_distance"] - rss_df["full_goal_by_distance"]) / rss_df["reduced_distance"]
+    cpd["spatial"] = (rss_df["reduced_spatial"] - rss_df["full_goal_by_distance"]) / rss_df["reduced_spatial"]
     # tag with fold for later grouping
     cpd.index = pd.MultiIndex.from_product([cpd.index, [fold]], names=["cluster_unique_ID", "fold"])
     return cpd
