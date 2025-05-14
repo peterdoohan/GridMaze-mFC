@@ -7,6 +7,7 @@ in the neural population.
 # %% Imports
 import numpy as np
 import pandas as pd
+from joblib import Parallel, delayed
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import PoissonRegressor
 from sklearn.linear_model import Ridge
@@ -38,6 +39,7 @@ def test(
     pd_bases_kwargs={"n_bases": 6, "dim_red": "pca"},
     dtg_bases_kwargs={"n_bases": 3, "basis": "gamma"},
     verbose=True,
+    max_jobs=10,
 ):
     """ """
     goals = session.goals
@@ -62,63 +64,89 @@ def test(
     )
     _folds = folds_df.columns.get_level_values(0).unique()
 
-    # find optimal regularisation for each cell on an example fold of the data
-    if verbose:
-        print(f"Finding optimal regularisation for each cell")
     model2regressor_classes = {
         "full_goal_by_distance": ["place_direction", "distance", "goal_by_distance"],
         "full_goal": ["place_direction", "distance", "goal"],
         "reduced": ["place_direction", "distance"],
     }
-    cpd_dfs = []
-    for fold in _folds:
-        fold_results = []
+
+    n_jobs = min(len(_folds), max_jobs)
+    if verbose:
+        print(f"Running across {len(_folds)} folds with n_jobs={n_jobs}")
+    cpd_list = Parallel(n_jobs=n_jobs)(
+        delayed(_process_fold)(
+            fold,
+            folds_df,
+            input_data,
+            cluster_unique_IDs,
+            model2regressor_classes,
+            pd_bases,
+            dist_bases,
+            distance_metrics,
+            goals,
+            verbose,
+        )
+        for fold in _folds
+    )
+    all_cpd = pd.concat(cpd_list)
+    mean_cpd = all_cpd.groupby("cluster_unique_ID").mean()  # average across folds
+    return mean_cpd
+
+
+def _process_fold(
+    fold,
+    folds_df,
+    input_data,
+    cluster_unique_IDs,
+    model2regressor_classes,
+    pd_bases,
+    dist_bases,
+    distance_metrics,
+    goals,
+    verbose,
+):
+    """Process a single fold: fit models, find optimal alpha, compute CPD."""
+    if verbose:
+        print(f"Processing fold {fold}...")
+    fold_results = []
+    fold_df = folds_df[fold]
+    train_df, test_df = folds._get_test_train_dfs(input_data, fold_df, training_trial_phases=False)
+    for model_name, regressors in model2regressor_classes.items():
         if verbose:
-            print(fold)
-        fold_df = folds_df[fold]
-        train_df, test_df = folds._get_test_train_dfs(input_data, fold_df, training_trial_phases=False)
-        for _model, regressor_classes in model2regressor_classes.items():
+            print(f"  Model: {model_name}")
+        X_train, X_test, Y_train, Y_test = get_test_train_arrays(
+            train_df,
+            test_df,
+            regressor_classes=regressors,
+            pd_bases=pd_bases,
+            distance_metrics=distance_metrics,
+            dist_bases=dist_bases,
+            goals=goals,
+        )
+        for i, cid in enumerate(cluster_unique_IDs):
             if verbose:
-                print(_model)
-            X_train, X_test, Y_train, Y_test = (
-                get_test_train_arrays(  # X [n_regressors, n_samples], Y[n_cluster_unique_IDs, n_samples]
-                    train_df,
-                    test_df,
-                    regressor_classes=regressor_classes,
-                    pd_bases=pd_bases,
-                    distance_metrics=distance_metrics,
-                    dist_bases=dist_bases,
-                    goals=goals,
-                )
+                print(f"    Cell: {cid}")
+            y_train, y_test = Y_train[:, i], Y_test[:, i]
+            alpha, score, rss = reg_opt_Ridge(X_train, y_train, X_test, y_test, return_as="best", verbose=False)
+            fold_results.append(
+                {
+                    "score": score,
+                    "rss": rss,
+                    "alpha": alpha,
+                    "fold": fold,
+                    "cluster_unique_ID": cid,
+                    "model": model_name,
+                }
             )
-            for i, cluster_unique_ID in enumerate(cluster_unique_IDs):
-                if verbose:
-                    print(cluster_unique_ID)
-                y_train, y_test = Y_train[:, i], Y_test[:, i]  # n_train_samples, n_test_samples
-                # get the best possible fit searching over many reg values specifically for this fold
-                alpha, score, rss = reg_opt_Ridge(X_train, y_train, X_test, y_test, return_as="best", verbose=False)
-                fold_results.append(  # save output in df
-                    {
-                        "score": score,
-                        "rss": rss,
-                        "alpha": alpha,
-                        "fold": fold,
-                        "cluster_unique_ID": cluster_unique_ID,
-                        "model": _model,
-                    }
-                )
-        # calculate CPD from rss across full and reduced models within fold
-        fold_results_df = pd.DataFrame(fold_results)
-        rss_df = fold_results_df.set_index(["cluster_unique_ID", "model"]).rss.unstack()
-        cpd_df = pd.DataFrame(index=rss_df.index)
-        cpd_df["goal"] = (rss_df["reduced"] - rss_df["full_goal"]) / rss_df["reduced"]
-        cpd_df["goal_by_distance"] = (rss_df["reduced"] - rss_df["full_goal_by_distance"]) / rss_df["reduced"]
-        cpd_df.index = pd.MultiIndex.from_product([cpd_df.index, [fold]])
-        cpd_dfs.append(cpd_df)
-    cpd_df = pd.concat(cpd_dfs, axis=0)
-    # average CPD across folds
-    cpd_df = cpd_df.groupby(["cluster_unique_ID"]).mean()
-    return cpd_df
+    # compute CPD
+    fr_df = pd.DataFrame(fold_results)
+    rss_df = fr_df.set_index(["cluster_unique_ID", "model"]).rss.unstack()
+    cpd = pd.DataFrame(index=rss_df.index)
+    cpd["goal"] = (rss_df["reduced"] - rss_df["full_goal"]) / rss_df["reduced"]
+    cpd["goal_by_distance"] = (rss_df["reduced"] - rss_df["full_goal_by_distance"]) / rss_df["reduced"]
+    # tag with fold for later grouping
+    cpd.index = pd.MultiIndex.from_product([cpd.index, [fold]], names=["cluster_unique_ID", "fold"])
+    return cpd
 
 
 def reg_opt_Ridge(
