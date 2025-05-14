@@ -5,6 +5,7 @@ in the neural population.
 """
 
 # %% Imports
+from importlib import simple
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
@@ -15,6 +16,7 @@ from sklearn.metrics import r2_score, mean_poisson_deviance
 from matplotlib import pyplot as plt
 
 from GridMaze.analysis.core import get_clusters as gc
+from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import downsample as ds
 from GridMaze.analysis.core import convert
 from GridMaze.analysis.core import folds
@@ -27,9 +29,26 @@ from GridMaze.analysis.distance_to_goal import bases as db
 # %% Functions
 
 
-def test(
+def test(subject="m3"):
+    sessions = gs.get_maze_sessions(
+        subject_IDs=[subject],
+        maze_names="all",
+        days_on_maze="late",
+        goal_subsets=["subset_1", "subset_2"],
+        with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
+        must_have_data=True,
+    )
+    dfs = []
+    for session in sessions:
+        dfs.append(get_goal_cpd_df(session))
+    subject_cpd_df = pd.concat(dfs)
+    return subject_cpd_df
+
+
+def get_goal_cpd_df(
     session,
     resolution=0.5,
+    spatial_coding="place_direction_bases",
     distance_metrics=("steps_to_goal", "future"),
     goal_stratified_validation=True,
     n_test_trials=None,
@@ -42,11 +61,15 @@ def test(
     max_jobs=10,
 ):
     """ """
+    simple_maze = session.simple_maze()
     goals = session.goals
     if verbose:
         print(f"Loading basis functions")
-    # get place-direction bases
-    pd_bases = pdb.get_place_direction_bases(pdb.get_heldout_sessions(session), **pd_bases_kwargs)
+    if "bases" in spatial_coding:
+        # get place-direction bases
+        pd_bases = pdb.get_place_direction_bases(pdb.get_heldout_sessions(session), **pd_bases_kwargs)
+    else:
+        pd_bases = None
     # get distance to goal bases
     dist_bases = db.distance_basis_generator(
         **dtg_bases_kwargs, btype=distance_metrics[0].split("_")[0], max_steps=max_steps_to_goal
@@ -65,9 +88,9 @@ def test(
     _folds = folds_df.columns.get_level_values(0).unique()
 
     model2regressor_classes = {
-        "full_goal_by_distance": ["place_direction", "distance", "goal_by_distance"],
-        "full_goal": ["place_direction", "distance", "goal"],
-        "reduced": ["place_direction", "distance"],
+        "full_goal_by_distance": [spatial_coding, "distance", "goal_by_distance"],
+        "full_goal": [spatial_coding, "distance", "goal"],
+        "reduced": [spatial_coding, "distance"],
     }
 
     n_jobs = min(len(_folds), max_jobs)
@@ -84,6 +107,7 @@ def test(
             dist_bases,
             distance_metrics,
             goals,
+            simple_maze,
             verbose,
         )
         for fold in _folds
@@ -103,6 +127,7 @@ def _process_fold(
     dist_bases,
     distance_metrics,
     goals,
+    simple_maze,
     verbose,
 ):
     """Process a single fold: fit models, find optimal alpha, compute CPD."""
@@ -122,6 +147,7 @@ def _process_fold(
             distance_metrics=distance_metrics,
             dist_bases=dist_bases,
             goals=goals,
+            simple_maze=simple_maze,
         )
         for i, cid in enumerate(cluster_unique_IDs):
             if verbose:
@@ -150,7 +176,7 @@ def _process_fold(
 
 
 def reg_opt_Ridge(
-    X_train, y_train, X_test, y_test, tol=1e-4, max_rounds=30, patience=20, return_as="best", verbose=False
+    X_train, y_train, X_test, y_test, tol=1e-4, max_rounds=35, patience=25, return_as="best", verbose=False
 ):
     """
     Starts alpha=1.0 and doubles it every round.
@@ -222,15 +248,19 @@ def reg_opt_Ridge(
 def get_test_train_arrays(
     train_df,
     test_df,
-    regressor_classes=["place_direction", "distance"],
+    regressor_classes=["place_direction_bases", "distance"],
     pd_bases=None,
     distance_metrics=None,
     dist_bases=None,
     goals=None,
-    whiten_features=True,
+    simple_maze=None,
+    scale_features=True,
+    block_normalise=False,
     return_feature_names=False,
 ):
-    """ """
+    """
+    No whitening makes a big difference to final CPD values
+    """
     Xs = []
     for df in train_df, test_df:
         X, n_features = [], []
@@ -242,17 +272,25 @@ def get_test_train_arrays(
                 distance_metrics,
                 dist_bases,
                 goals,
+                simple_maze,
             )
             X.append(x)
             n_features.append(x.shape[1])
         Xs.append(np.hstack(X))
     X_train, X_test = Xs
     Y_train, Y_test = train_df.spike_count.values, test_df.spike_count.values
-    if whiten_features:
+    if scale_features:
         scaler = StandardScaler()  # mean=0, std=1 per column
         scaler.fit(X_train)  # learn stats on train
         X_train = scaler.transform(X_train)
         X_test = scaler.transform(X_test)
+    if block_normalise:
+        idx = 0
+        for size in n_features:
+            scale_factor = np.sqrt(size)
+            X_train[:, idx : idx + size] /= scale_factor
+            X_test[:, idx : idx + size] /= scale_factor
+            idx += size
     if not return_feature_names:
         return X_train, X_test, Y_train, Y_test
     else:
@@ -260,16 +298,29 @@ def get_test_train_arrays(
         return (X_train, X_test, Y_train, Y_test), feature_names
 
 
-def get_regressor_class(df, rtype, pd_bases=None, distance_metrics=None, dist_bases=None, goals=None):
+def get_regressor_class(df, rtype, pd_bases=None, distance_metrics=None, dist_bases=None, goals=None, simple_maze=None):
     """
     rtype: regressor class name
     """
-    if rtype == "place_direction":
+    if rtype == "place_direction_bases":
         assert pd_bases is not None
         place_directions = (
             df[[("maze_position", "simple"), ("cardinal_movement_direction", "")]].apply(tuple, axis=1).values
         )
         r = pd_bases.loc[place_directions].values  # n_samples x n_place_direction_bases
+
+    elif rtype == "place_direction_onehot":
+        assert simple_maze is not None
+        place_directions = (
+            df[[("maze_position", "simple"), ("cardinal_movement_direction", "")]].apply(tuple, axis=1).values
+        )
+        place_directions = np.array([f"{x[0]}_{x[1]}" for x in place_directions])
+        r = convert.place_direction2onehot(place_directions, simple_maze=simple_maze)
+
+    elif rtype == "place_onehot":
+        assert simple_maze is not None
+        places = df.maze_position.simple.values
+        r = convert.place2onehot(places, simple_maze=simple_maze)
 
     elif rtype == "distance":
         assert dist_bases is not None
