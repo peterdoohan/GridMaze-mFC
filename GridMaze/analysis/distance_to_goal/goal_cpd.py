@@ -91,6 +91,8 @@ def get_goal_cpd_df(
         "full_goal_by_distance": [spatial_coding, "distance", "goal_by_distance"],
         "full_goal": [spatial_coding, "distance", "goal"],
         "reduced": [spatial_coding, "distance"],
+        "reduced_distance": [spatial_coding],
+        "reduced_spatial": ["distance"],
     }
 
     n_jobs = min(len(_folds), max_jobs)
@@ -113,6 +115,7 @@ def get_goal_cpd_df(
         for fold in _folds
     )
     all_cpd = pd.concat(cpd_list)
+    return all_cpd
     mean_cpd = all_cpd.groupby("cluster_unique_ID").mean()  # average across folds
     return mean_cpd
 
@@ -170,6 +173,8 @@ def _process_fold(
     cpd = pd.DataFrame(index=rss_df.index)
     cpd["goal"] = (rss_df["reduced"] - rss_df["full_goal"]) / rss_df["reduced"]
     cpd["goal_by_distance"] = (rss_df["reduced"] - rss_df["full_goal_by_distance"]) / rss_df["reduced"]
+    cpd["distance"] = (rss_df["reduced_distance"] - rss_df["reduced"]) / rss_df["reduced_distance"]
+    cpd["spatial"] = (rss_df["reduced_spatial"] - rss_df["reduced"]) / rss_df["reduced_spatial"]
     # tag with fold for later grouping
     cpd.index = pd.MultiIndex.from_product([cpd.index, [fold]], names=["cluster_unique_ID", "fold"])
     return cpd
