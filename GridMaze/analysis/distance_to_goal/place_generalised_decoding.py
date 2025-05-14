@@ -7,12 +7,14 @@ from training data that only includes half of the places on the maze.
 import json
 import pandas as pd
 import polars as pl
+import networkx as nx
 from matplotlib import pyplot as plt
 
 from sklearn.linear_model import LogisticRegression
 from joblib import Parallel, delayed
 
 from GridMaze.maze import partitions as mt
+from GridMaze.maze import representations as mr
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import folds
 from GridMaze.analysis.distance_to_goal import decoding_utils as du
@@ -431,5 +433,64 @@ def test(
         max_steps=max_steps_to_goal,
     )
     simple_maze = session.simple_maze()
+    folds_df = folds.get_folds_df(
+        session,
+        goal_stratified_validation,
+        return_unique_IDs=True,
+        n_test_trials=n_test_trials,
+    )
+    _folds = folds_df.columns.get_level_values(0).unique()
+    for fold in _folds:
+        fold_df = folds_df[fold]
+        train_df, test_df = folds._get_test_train_dfs(input_data, fold_df, training_trial_phases=training_trial_phases)
+        #
+        test_locs = test_df.maze_position.simple.unique()
+        for test_loc in test_locs:
+            test_loc_df = test_df[test_df.maze_position.simple == test_loc]
+            for n in range(max_steps_held_out):
+                exclusion_locs, inclusion_locs = mt.get_exclusion_radius_split(simple_maze, test_loc, n)
+                train_locs_df = train_df[train_df.maze_position.simple.isin(inclusion_locs)]
+                test_locs_df = has_training_data(train_locs_df, test_loc_df, tol=training_steps_tol)
+                if test_locs_df.empty:
+                    print(f"Test data empty for {test_loc} with exclusion radius {n}")
+                    continue
+                for itype in input_types:
+                    X_train, X_test, y_train, y_test = du._get_test_train_arrays(
+                        train_locs_df,
+                        test_locs_df,
+                        input_type=itype,
+                        output_type="goal",
+                        whiten_features=True,
+                        basis_fn=basis_fn,
+                    )
+
+                    model = LogisticRegression(
+                        penalty="l2", C=10, max_iter=10000, random_state=0, class_weight="balanced"
+                    )
+                    model.fit(X_train, y_train)
+                    Yprobs = model.predict_proba(X_test)
+                    df = du.get_decoding_results_df(
+                        test_locs_df,
+                        y_test,
+                        Yprobs,
+                        features=list(model.classes_),
+                        output_type="goal",
+                        engine="polars",
+                    )
+                    df = df.with_columns(
+                        [
+                            pl.lit(itype).alias("input_type"),
+                            pl.lit(fold).alias("fold"),
+                            pl.lit(0).alias("repeat"),
+                            pl.lit(False).alias("permuted"),
+                        ]
+                    )
+                    return df
+
+    return
+
+
+def opt_reg_LogisticRegression(X_train, X_test, y_train, y_test, metric="test_acc"):
+    """ """
 
     return

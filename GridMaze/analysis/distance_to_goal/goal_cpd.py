@@ -23,7 +23,9 @@ from GridMaze.analysis.place_direction import bases as pdb
 from GridMaze.analysis.distance_to_goal import bases as db
 
 # %% Global Variables
-from GridMaze.paths import EXPERIMENT_INFO_PATH
+from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
+
+RESULTS_DIR = RESULTS_PATH / "goal_by_distance_CPD"
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
@@ -32,23 +34,29 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 
 
 def get_cpd_summary_df():
-    dfs = []
-    for subject in SUBJECT_IDS:
-        sessions = gs.get_maze_sessions(
-            subject_IDs="all",
-            maze_names="all",
-            days_on_maze="late",
-            goal_subsets=["subset_1", "subset_2"],
-            with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
-            must_have_data=True,
-        )
+    save_path = RESULTS_DIR / "cpd_summary_df.csv"
+    if save_path.exists():
+        results_df = pd.read_csv(save_path, index_col=[0, 1])
+    else:
+        print(f"Generating CPD summary dataframe")
         dfs = []
-        for session in sessions:
-            dfs.append(get_goal_cpd_df(session))
-        subject_cpd_df = pd.concat(dfs)
-        subject_cpd_df.index = pd.MultiIndex.from_product([subject_cpd_df.index, [subject]])
-        dfs.append(subject_cpd_df)
-    results_df = pd.concat(dfs)
+        for subject in SUBJECT_IDS:
+            sessions = gs.get_maze_sessions(
+                subject_IDs=[subject],
+                maze_names="all",
+                days_on_maze="late",
+                goal_subsets=["subset_1", "subset_2"],
+                with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
+                must_have_data=True,
+            )
+            dfs = []
+            for session in sessions:
+                dfs.append(get_goal_cpd_df(session))
+            subject_cpd_df = pd.concat(dfs)
+            subject_cpd_df.index = pd.MultiIndex.from_product([subject_cpd_df.index, [subject]])
+            dfs.append(subject_cpd_df)
+        results_df = pd.concat(dfs)
+        results_df.to_csv(save_path)
     return results_df
 
 

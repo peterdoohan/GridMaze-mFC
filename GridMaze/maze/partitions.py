@@ -10,6 +10,7 @@ import numpy as np
 import networkx as nx
 from matplotlib import pyplot as plt
 from GridMaze.maze import plotting as mp
+from GridMaze.maze import representations as mr
 
 # %% Global Variables
 
@@ -115,3 +116,37 @@ def plot_simple_maze_split(simple_maze, A, B, s, ax=None, A_color="green", B_col
     for i in x_edges:
         ax.axvline(i, color="black", linestyle="--", alpha=0.5)
         ax.axhline(i, color="black", linestyle="--", alpha=0.5)
+
+
+# %% split maze by exclusion zone
+
+
+def get_exclusion_radius_split(simple_maze, test_loc, n, plot=False):
+    extended_maze = mr.get_extended_simple_maze(simple_maze)
+    coord2label = nx.get_node_attributes(extended_maze, "label")
+    label2coord = {v: k for k, v in coord2label.items()}
+    test_coord = label2coord[test_loc]
+    lengths = nx.single_source_shortest_path_length(extended_maze, source=test_coord, cutoff=n)
+    exclusion_locs = [coord2label[i] for i in lengths.keys()]
+    all_locs = list(coord2label.values())
+    inclusion_locs = [loc for loc in all_locs if loc not in exclusion_locs]
+    if plot:
+        plot_simple_maze_exclusion_zone(simple_maze, test_loc, exclusion_locs, inclusion_locs)
+    return exclusion_locs, inclusion_locs
+
+
+def plot_simple_maze_exclusion_zone(simple_maze, test_loc, exclusion_locs, inclusion_locs, ax=None):
+    """ """
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(5, 5))
+    label2color = {
+        **{label: "green" for label in inclusion_locs},
+        **{label: "silver" for label in exclusion_locs},
+        test_loc: "black",
+    }
+    mp.plot_simple_maze_silhouette(
+        simple_maze,
+        ax=ax,
+        color="silver",
+        special_location2color=label2color,
+    )
