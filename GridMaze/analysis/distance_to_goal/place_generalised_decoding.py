@@ -429,9 +429,12 @@ def test(
     """ """
     input_data = du.get_place_decoding_input_data(session, resolution, include_multi_units, window, permuted=False)
     if permuted:
-        # shuffle trial relative to goal
+        if verbose:
+            print("Shuffling goals on each trial")
         trial_goal_df = input_data[[("trial", ""), ("goal", "")]].drop_duplicates()
-        shuffled_trial2goal = trial_goal_df.set_index("trial").goal.sample(frac=1).to_dict()
+        shuffled_trial2goal = pd.Series(
+            index=trial_goal_df.trial, data=trial_goal_df.goal.sample(frac=1).values
+        ).to_dict()
         input_data[("goal", "")] = input_data[("trial", "")].map(shuffled_trial2goal)
     basis_fn = db.distance_basis_generator(
         n_bases=n_bases,
