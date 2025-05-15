@@ -74,7 +74,9 @@ def opt_reg_LogisticRegression(
     history = []
     no_improvement_count = 0
     for round_idx in range(1, max_rounds + 1):
-        model = LogisticRegression(penalty="l2", C=1 / alpha, max_iter=10_000, random_state=0, class_weight="balanced")
+        model = LogisticRegression(
+            penalty="l2", C=(1 / alpha), max_iter=10_000, random_state=0, class_weight="balanced"
+        )
         model.fit(X_train, y_train)
         y_predict = model.predict(X_test)
         acc = np.mean(y_predict == y_test)
