@@ -132,7 +132,17 @@ def get_exclusion_radius_split(simple_maze, test_loc, n, distance_metric="euclid
         lengths = nx.single_source_shortest_path_length(extended_maze, source=test_coord, cutoff=n)
         exclusion_locs = [coord2label[i] for i in lengths.keys()]
     elif distance_metric == "euclidean":
-        pass
+        label2coord_av = {
+            label: tuple(np.mean(coord, axis=0)) if isinstance(coord[0], tuple) else coord
+            for label, coord in label2coord.items()
+        }
+        min_x, max_x = test_coord[0] - n / 2, test_coord[0] + n / 2
+        min_y, max_y = test_coord[1] - n / 2, test_coord[1] + n / 2
+        exclusion_locs = [
+            label
+            for label, coord in label2coord_av.items()
+            if min_x <= coord[0] <= max_x and min_y <= coord[1] <= max_y
+        ]
     else:
         raise ValueError("distance_metric must be 'geodesic' or 'euclidean'")
     inclusion_locs = [loc for loc in all_locs if loc not in exclusion_locs]
