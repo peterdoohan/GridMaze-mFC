@@ -450,7 +450,7 @@ def test(
     )
     _folds = folds_df.columns.get_level_values(0).unique()
     fold_results = []
-    for fold in _folds:
+    for fold in _folds[:1]:
         fold_df = folds_df[fold]
         train_df, test_df = folds._get_test_train_dfs(input_data, fold_df, training_trial_phases=training_trial_phases)
         test_locs = test_df.maze_position.simple.unique()
@@ -525,10 +525,10 @@ def _process_test_loc(
             opt_alpha, _ = du.opt_reg_LogisticRegression(X_train, X_test, y_train, y_test, verbose=False)
             if opt_alpha is not None:
                 model = LogisticRegression(
-                    penalty="l2", C=(1 / opt_alpha), max_iter=10_000, random_state=0, class_weight="balanced"
+                    penalty="l2", C=(1 / opt_alpha), max_iter=10_000, random_state=1, class_weight="balanced"
                 )
             else:
-                model = LogisticRegression(penalty=None, max_iter=10_000, random_state=0, class_weight="balanced")
+                model = LogisticRegression(penalty=None, max_iter=10_000, random_state=1, class_weight="balanced")
             model.fit(X_train, y_train)
             Yprobs = model.predict_proba(X_test)
             df = du.get_decoding_results_df(

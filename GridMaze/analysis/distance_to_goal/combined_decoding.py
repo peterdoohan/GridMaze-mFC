@@ -154,6 +154,26 @@ def get_decoding_comparisons_summary_df(metric="test_acc", cue_window=(-5, 10), 
 # %% Functions
 
 
+def populate_goal_decoding_comparisons(subject_ID, permuted, n_repeats):
+    """ """
+    sessions = gs.get_maze_sessions(
+        subject_IDs=[subject_ID],
+        maze_names="all",
+        days_on_maze="all",
+        with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
+        must_have_data=True,
+    )
+    for s in sessions:
+        print(s)
+        try:
+            run_goal_decoding_comparison(s, permuted=permuted, n_repeats=n_repeats)
+        except FileNotFoundError as e:
+            print(e)
+            continue
+    return
+
+
+# %%
 def run_goal_decoding_comparison(
     session,
     resolution=0.5,
