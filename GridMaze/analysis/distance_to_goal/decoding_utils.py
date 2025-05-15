@@ -38,6 +38,68 @@ MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
 GOAL_SETS = ["subset_1", "subset_2", "all"]
 
 
+# %% Deep reg optimisation
+
+
+def opt_reg_LogisticRegression(
+    X_train,
+    X_test,
+    y_train,
+    y_test,
+    max_rounds=20,
+    tol=1e-4,
+    patience=6,
+    verbose=True,
+):
+    """
+    Frist multiple logistic regression models with increasingly strong regularisation (inv_alpha), untill
+    decoding metric (metric=test_acc) stops improving. and returns the best xvaled test results for the given
+    input data for this model. Brute force approach without separate validation set
+
+    only supports accuracy as test metric currently
+    """
+    # baseline model with no regularisation
+    model = LogisticRegression(penalty=None, max_iter=10_000, random_state=0, class_weight="balanced")
+    model.fit(X_train, y_train)
+    y_predict = model.predict(X_test)
+    baseline_acc = np.mean(y_predict == y_test)
+    if verbose:
+        print(f"Baseline acc = {baseline_acc:.4f}")
+
+    # test with increasing regularisation to improve performance
+    best_acc = baseline_acc
+    best_alpha = None
+    alpha = 5e-2
+    best_round = 0
+    history = []
+    no_improvement_count = 0
+    for round_idx in range(1, max_rounds + 1):
+        model = LogisticRegression(penalty="l2", C=1 / alpha, max_iter=10_000, random_state=0, class_weight="balanced")
+        model.fit(X_train, y_train)
+        y_predict = model.predict(X_test)
+        acc = np.mean(y_predict == y_test)
+        history.append((alpha, acc))
+        if verbose:
+            print(f"Round {round_idx}: alpha={alpha:.2e}, acc={acc:.3f}")
+        if acc > best_acc + tol:
+            best_acc = acc
+            best_alpha = alpha
+            best_round = round_idx
+            no_improvement_count = 0
+        else:
+            if best_round != 0:
+                no_improvement_count += 1
+            if no_improvement_count >= patience:
+                break
+
+        alpha *= 5
+    if verbose:
+        _best_alpha = 0 if best_alpha is None else best_alpha
+        print(f"→ Best alpha = {_best_alpha:.3e} (round {best_round}) with acc = {best_acc:.4f}")
+
+    return best_alpha, best_acc
+
+
 # %% test train split functions
 
 
