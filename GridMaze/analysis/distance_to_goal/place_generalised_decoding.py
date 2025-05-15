@@ -427,7 +427,7 @@ def test(
     load_only=False,
 ):
     """ """
-    input_data = du.get_place_decoding_input_data(session, resolution, include_multi_units, window, permuted=False)
+    input_data = du.get_place_decoding_input_data(session, resolution, include_multi_units, window)
     if permuted:
         if verbose:
             print("Shuffling goals on each trial")
