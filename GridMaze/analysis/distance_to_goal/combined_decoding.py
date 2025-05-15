@@ -28,6 +28,7 @@ from GridMaze.analysis.distance_to_goal import bases as db
 
 # %% Global Variables
 
+
 from GridMaze.paths import RESULTS_PATH, EXPERIMENT_INFO_PATH
 
 RESULTS_DIR = RESULTS_PATH / "distance_to_goal" / "goal_decoding_comparisons"
@@ -42,6 +43,7 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 def plot_decoding_comparisons(summary_df, metric="test_acc", chance=1 / 12, cmap="Set1", axes=None):
     """ """
     # set up figure
+
     if axes is None:
         fig, axes = plt.subplots(1, 2, figsize=(6, 3), sharey=True)
     for ax in axes:
