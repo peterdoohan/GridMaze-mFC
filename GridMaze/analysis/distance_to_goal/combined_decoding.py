@@ -166,7 +166,6 @@ def run_goal_decoding_comparison(
     training_trial_phases=["navigation"],
     max_steps_to_goal=30,
     inv_alpha="auto",
-    n_repeats=10,
     verbose=True,
     load_only=False,
 ):
@@ -215,71 +214,47 @@ def run_goal_decoding_comparison(
     basis_fn = db.distance_basis_generator(n_bases=n_bases, basis=basis_type, max_steps=max_steps_to_goal, plot=False)
     simple_maze = session.simple_maze()
     C_dfs = [[] for _ in conditions]  # store condition results here
-    for n in range(n_repeats):
-        # get downsampled input data containing behavioural info and spike data
-        input_data = du.get_place_decoding_input_data(session, resolution, include_multi_units, window, permuted=False)
-        # organise trials into test-train folds
-        folds_df = folds.get_folds_df(
-            session, goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials
-        )
-        # predict plce/place_direction probabilities from spike counts (for control conditions)
-        if verbose:
-            print(f"Predicting place_direction probabilities from spike counts")
-        spatial_probs_df = get_predicted_spatial(
+    # get downsampled input data containing behavioural info and spike data
+    input_data = du.get_place_decoding_input_data(session, resolution, include_multi_units, window, permuted=False)
+    # organise trials into test-train folds
+    folds_df = folds.get_folds_df(
+        session, goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials
+    )
+    # predict plce/place_direction probabilities from spike counts (for control conditions)
+    if verbose:
+        print(f"Predicting place_direction probabilities from spike counts")
+    spatial_probs_df = get_predicted_spatial(
+        input_data,
+        folds_df,
+        simple_maze,
+        basis_fn=basis_fn,
+        input_type="spikes_by_distance",
+        output_type="place_direction",
+        inv_alpha=inv_alpha,
+        training_trial_phases=training_trial_phases,
+        verbose=verbose,
+    )
+    input_data = pd.concat([input_data, spatial_probs_df], axis=1)
+    # run xvaled decoding for each condition aross folds
+    _folds = folds_df.columns.levels[0].unique()
+    if verbose:
+        print("Running condition decodings paralleised across folds")
+    parallel_outputs = Parallel(n_jobs=len(_folds), verbose=False)(
+        delayed(_decode_fold_repeat)(
+            fold,
             input_data,
             folds_df,
-            simple_maze,
-            basis_fn=basis_fn,
-            input_type="spikes_by_distance",
-            output_type="place_direction",
-            inv_alpha=inv_alpha,
-            training_trial_phases=training_trial_phases,
-            verbose=verbose,
+            input_types,
+            basis_fn,
+            training_trial_phases,
+            verbose,
         )
-        input_data = pd.concat([input_data, spatial_probs_df], axis=1)
-        if inv_alpha == "auto":
-            # get optimal regularisation for each condition
-            inv_alphas = []
-            for input_type in input_types:
-                if verbose:
-                    print(input_type)
-                inv_alphas.append(
-                    du.get_opt_reg(
-                        input_data,
-                        folds_df["fold_0"],
-                        simple_maze,
-                        basis_fn,
-                        input_type=input_type,
-                        output_type="goal",
-                        training_trial_phases=training_trial_phases,
-                        eval_metric="expected_distance_error",
-                    )
-                )
-        else:
-            inv_alphas = [inv_alpha] * len(input_types)
-        # run xvaled decoding for each condition aross folds
-        folds = folds_df.columns.levels[0].unique()
-        if verbose:
-            print("Running condition decodings paralleised across folds")
-        parallel_outputs = Parallel(n_jobs=len(folds), verbose=False)(
-            delayed(_decode_fold_repeat)(
-                fold,
-                n,
-                input_data,
-                folds_df,
-                input_types,
-                basis_fn,
-                inv_alphas,
-                training_trial_phases,
-                verbose,
-            )
-            for fold in folds
-        )
-        # parallel_outputs is a list of lists (fold × conditions), assign to C_dfs
-        for cond_idx in range(len(input_types)):
-            for fold_output in parallel_outputs:
-                C_dfs[cond_idx].extend(fold_output[cond_idx])
-        del parallel_outputs  # save memory
+        for fold in _folds
+    )
+    # parallel_outputs is a list of lists (fold × conditions), assign to C_dfs
+    for cond_idx in range(len(input_types)):
+        for fold_output in parallel_outputs:
+            C_dfs[cond_idx].extend(fold_output[cond_idx])
     # combine folds and repeats
     results_dfs = [pl.concat(_dfs, how="vertical") for _dfs in C_dfs]
     # calculate test_acc and expecte distance error over every xvaled sample-repeat
@@ -296,6 +271,11 @@ def run_goal_decoding_comparison(
     if verbose:
         print(f"Saved results to {save_path}")
     return output_df
+
+
+def _process_fold(fold, input_data, folds_df, input_types):
+    """ """
+    return
 
 
 def _decode_fold_repeat(

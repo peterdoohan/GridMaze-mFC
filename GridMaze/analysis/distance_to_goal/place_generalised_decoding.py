@@ -580,10 +580,22 @@ def quick_plot2(
             exclusion_distance_df = itype_df[itype_df.exclusion_distance == exclusion_distance]
             for event, ax, window in zip(["cue", "reward"], axes[i], [cue_window, reward_window]):
                 color = colors[j]
-                _df = exclusion_distance_df[exclusion_distance_df[f"{event}_aligned_time"].between(*window)]
-                trial_df = _df.groupby(["trial_unique_ID", f"{event}_aligned_time"])[metric].mean().unstack()
+                _time = f"{event}_aligned_time"
+                if event == "cue":
+                    _df = exclusion_distance_df[~exclusion_distance_df[_time].isna()]
+                    _df = _df[
+                        ((_df[_time].between(window[0], 0)) & (_df.trial_phase == "ITI"))
+                        | (_df[_time].between(0, window[1])) & (_df.trial_phase == "navigation")
+                    ]
+                else:  # reward
+                    _df = exclusion_distance_df[~exclusion_distance_df[_time].isna()]
+                    _df = _df[
+                        ((_df[_time].between(0, window[1])) & (_df.trial_phase == "reward_consumption"))
+                        | (_df[_time].between(window[0], 0)) & (_df.trial_phase == "navigation")
+                    ]
+                trial_df = _df.groupby(["trial_unique_ID", _time])[metric].mean().unstack()
                 mean = trial_df.mean()
-                ax.plot(mean.index, mean.values, label=exclusion_distance, lw=0.5, alpha=0.75, color=color)
-        axes[i].legend(fontsize=8)
+                ax.plot(mean.index, mean.values, label=exclusion_distance, lw=1, alpha=0.75, color=color)
+        axes[i][0].legend(fontsize=8)
 
     return
