@@ -422,11 +422,17 @@ def test(
     training_steps_tol=1,
     max_steps_to_goal=30,
     verbose=True,
-    max_jobs=10,
+    max_jobs=20,
+    permuted=False,
     load_only=False,
 ):
     """ """
     input_data = du.get_place_decoding_input_data(session, resolution, include_multi_units, window, permuted=False)
+    if permuted:
+        # shuffle trial relative to goal
+        trial_goal_df = input_data[[("trial", ""), ("goal", "")]].drop_duplicates()
+        shuffled_trial2goal = trial_goal_df.set_index("trial").goal.sample(frac=1).to_dict()
+        input_data[("goal", "")] = input_data[("trial", "")].map(shuffled_trial2goal)
     basis_fn = db.distance_basis_generator(
         n_bases=n_bases,
         basis=basis_type,
@@ -605,3 +611,38 @@ def opt_reg_LogisticRegression(
         print(f"→ Best alpha = {_best_alpha:.3e} (round {best_round}) with acc = {best_acc:.4f}")
 
     return best_alpha, best_acc
+
+
+def quick_plot2(
+    df,
+    axes=None,
+    metric="test_acc",
+    chance=1 / 12,
+    cue_window=(-5, 10),
+    reward_window=(-10, 5),
+    cmaps=("viridis", "plasma"),
+):
+    # set up fig
+    if axes is None:
+        fig, axes = plt.subplots(2, 2, figsize=(6, 6), sharey=True)
+    for ax in axes.flatten():
+        ax.axvline(0, color="k", linestyle="--", alpha=0.5)
+        ax.axhline(chance, color="k", linestyle="--", alpha=0.5)
+
+    input_types = df.input_type.unique()
+    exclusion_distances = df.exclusion_distance.unique()
+
+    for i, itype in enumerate(input_types):
+        itype_df = df[df.input_type == itype]
+        colors = plt.get_cmap(cmaps[i])(np.linspace(0, 1, len(exclusion_distances)))
+        for j, exclusion_distance in enumerate(exclusion_distances):
+            exclusion_distance_df = itype_df[itype_df.exclusion_distance == exclusion_distance]
+            for event, ax, window in zip(["cue", "reward"], axes[i], [cue_window, reward_window]):
+                color = colors[j]
+                _df = exclusion_distance_df[exclusion_distance_df[f"{event}_aligned_time"].between(*window)]
+                trial_df = _df.groupby(["trial_unique_ID", f"{event}_aligned_time"])[metric].mean().unstack()
+                mean = trial_df.mean()
+                ax.plot(mean.index, mean.values, label=exclusion_distance, lw=0.5, alpha=0.75, color=color)
+        axes[i].legend(fontsize=8)
+
+    return
