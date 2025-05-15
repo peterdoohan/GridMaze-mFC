@@ -409,20 +409,19 @@ def quick_plot(df, axes=None, metric="test_acc", cue_window=(-5, 10), reward_win
 def test(
     session,
     input_types=["spikes", "spikes_by_distance"],
-    max_steps_held_out=6,
+    max_exclusion_steps=6,
+    exclusion_distance_metric="euclidean",
     resolution=0.5,
     include_multi_units=True,
     window=(-10, 10),
     goal_stratified_validation=True,
     n_test_trials=None,
-    n_bases=8,
+    n_bases=6,
     basis_type="gamma",
     training_trial_phases=["navigation"],
     training_steps_tol=1,
     max_steps_to_goal=30,
-    inv_alpha="auto",
     verbose=True,
-    n_repeats=10,
     max_jobs=10,
     load_only=False,
 ):
@@ -441,65 +440,112 @@ def test(
         n_test_trials=n_test_trials,
     )
     _folds = folds_df.columns.get_level_values(0).unique()
+    fold_results = []
     for fold in _folds:
-        fold_results = []
         fold_df = folds_df[fold]
         train_df, test_df = folds._get_test_train_dfs(input_data, fold_df, training_trial_phases=training_trial_phases)
         test_locs = test_df.maze_position.simple.unique()
-        for test_loc in test_locs:
-            if verbose:
-                print(f"Test location: {test_loc}")
-            test_loc_df = test_df[test_df.maze_position.simple == test_loc]
-            for n in range(max_steps_held_out):
-                if verbose:
-                    print(f"    Exclusion radius: {n}")
-                return simple_maze, test_loc
-                _, inclusion_locs = mt.get_exclusion_radius_split(simple_maze, test_loc, n)
-                train_locs_df = train_df[train_df.maze_position.simple.isin(inclusion_locs)]
-                test_locs_df = has_training_data(train_locs_df, test_loc_df, tol=training_steps_tol)
-                if test_locs_df.empty:
-                    print(f"    Test data empty for {test_loc} with exclusion radius {n}")
-                    continue
-                for itype in input_types:
-                    X_train, X_test, y_train, y_test = du._get_test_train_arrays(
-                        train_locs_df,
-                        test_locs_df,
-                        input_type=itype,
-                        output_type="goal",
-                        whiten_features=True,
-                        basis_fn=basis_fn,
-                    )
-                    opt_alpha, _ = opt_reg_LogisticRegression(X_train, X_test, y_train, y_test)
-                    if opt_alpha is not None:
-                        model = LogisticRegression(
-                            penalty="l2", C=(1 / opt_alpha), max_iter=10_000, random_state=0, class_weight="balanced"
-                        )
-                    else:
-                        model = LogisticRegression(
-                            penalty=None, max_iter=10_000, random_state=0, class_weight="balanced"
-                        )
-                    model.fit(X_train, y_train)
-                    Yprobs = model.predict_proba(X_test)
-                    df = du.get_decoding_results_df(
-                        test_locs_df,
-                        y_test,
-                        Yprobs,
-                        features=list(model.classes_),
-                        output_type="goal",
-                        engine="polars",
-                    )
-                    df = df.with_columns(
-                        [
-                            pl.lit(itype).alias("input_type"),
-                            pl.lit(fold).alias("fold"),
-                            pl.lit(0).alias("repeat"),
-                            pl.lit(False).alias("permuted"),
-                            pl.lit(n).alias("exclusion_distance"),
-                        ]
-                    )
-                    fold_results.append(df)
+        test_loc_results = Parallel(n_jobs=max_jobs)(
+            delayed(_process_test_loc)(
+                loc,
+                fold,
+                train_df,
+                test_df,
+                simple_maze,
+                input_types,
+                max_exclusion_steps,
+                exclusion_distance_metric,
+                training_steps_tol,
+                basis_fn,
+                verbose,
+            )
+            for loc in test_locs
+        )
+        test_loc_results = [df for df in test_loc_results if df is not None]
+        fold_results.append(pl.concat(test_loc_results, how="vertical"))
+    decoding_results_df = pl.concat(fold_results, how="vertical")
+    # calculate metrics
+    decoding_metrics_df = du.get_decoding_metrics_df(
+        decoding_results_df,
+        simple_maze,
+        output_type="goal",
+        groupby=["sample_index", "input_type", "exclusion_distance"],
+    )
+    return decoding_metrics_df
 
-    return
+
+def _process_test_loc(
+    test_loc,
+    fold,
+    train_df,
+    test_df,
+    simple_maze,
+    input_types,
+    max_exclusion_steps,
+    exclusion_distance_metric,
+    training_steps_tol,
+    basis_fn,
+    verbose,
+):
+    test_loc_dfs = []
+    if verbose:
+        print(f"Test location: {test_loc} ({fold})")
+    test_loc_df = test_df[test_df.maze_position.simple == test_loc]
+    for n in range(max_exclusion_steps + 1):
+        if verbose:
+            print(f"    Exclusion radius: {n}")
+        _, inclusion_locs = mt.get_exclusion_radius_split(
+            simple_maze, test_loc, n, distance_metric=exclusion_distance_metric
+        )
+        train_locs_df = train_df[train_df.maze_position.simple.isin(inclusion_locs)]
+        test_locs_df = has_training_data(train_locs_df, test_loc_df, tol=training_steps_tol)
+        if test_locs_df.empty:
+            print(f"    Test data empty for {test_loc} with exclusion radius {n}")
+            continue
+        for itype in input_types:
+            if verbose:
+                print(f"        Input type: {itype}")
+            X_train, X_test, y_train, y_test = du._get_test_train_arrays(
+                train_locs_df,
+                test_locs_df,
+                input_type=itype,
+                output_type="goal",
+                whiten_features=True,
+                basis_fn=basis_fn,
+            )
+            opt_alpha, _ = opt_reg_LogisticRegression(X_train, X_test, y_train, y_test)
+            if opt_alpha is not None:
+                model = LogisticRegression(
+                    penalty="l2", C=(1 / opt_alpha), max_iter=10_000, random_state=0, class_weight="balanced"
+                )
+            else:
+                model = LogisticRegression(penalty=None, max_iter=10_000, random_state=0, class_weight="balanced")
+            model.fit(X_train, y_train)
+            Yprobs = model.predict_proba(X_test)
+            df = du.get_decoding_results_df(
+                test_locs_df,
+                y_test,
+                Yprobs,
+                features=list(model.classes_),
+                output_type="goal",
+                engine="polars",
+            )
+            df = df.with_columns(
+                [
+                    pl.lit(itype).alias("input_type"),
+                    pl.lit(fold).alias("fold"),
+                    pl.lit(n).alias("exclusion_distance"),
+                ]
+            )
+            test_loc_dfs.append(df)
+    if len(test_loc_dfs) == 0:
+        # not enough training data
+        if verbose:
+            print(f"No training data for {test_loc} at any exclusion radius")
+        return None
+    else:
+        test_loc_df = pl.concat(test_loc_dfs, how="vertical")
+        return test_loc_df
 
 
 def opt_reg_LogisticRegression(
@@ -509,7 +555,7 @@ def opt_reg_LogisticRegression(
     y_test,
     max_rounds=20,
     tol=1e-4,
-    patience=12,
+    patience=6,
     verbose=True,
 ):
     """
@@ -530,7 +576,7 @@ def opt_reg_LogisticRegression(
     # test with increasing regularisation to improve performance
     best_acc = baseline_acc
     best_alpha = None
-    alpha = 1e-2
+    alpha = 5e-2
     best_round = 0
     history = []
     no_improvement_count = 0
@@ -548,7 +594,8 @@ def opt_reg_LogisticRegression(
             best_round = round_idx
             no_improvement_count = 0
         else:
-            no_improvement_count += 1
+            if best_round != 0:
+                no_improvement_count += 1
             if no_improvement_count >= patience:
                 break
 

@@ -200,32 +200,34 @@ def _evaluate_alpha(
 # %% decoding metrics (polars)
 
 
-def get_decoding_metrics_df(results_df, simple_maze, output_type="goal", ede_op="sum"):
+def get_decoding_metrics_df(
+    results_df, simple_maze, output_type="goal", groupby=["sample_index", "repeat"], ede_op="sum"
+):
     assert isinstance(results_df, pl.DataFrame), "results_df must be a Polars DataFrame"
     _check_decoding_type(results_df, output_type)
-    metrics_df = _get_decoding_acc(results_df, output_type)
-    EDEs = _get_expected_distance_error(results_df, simple_maze, output_type=output_type, op=ede_op)
-    metrics_df = metrics_df.join(EDEs, on=["sample_index", "repeat"], how="inner")
+    metrics_df = _get_decoding_acc(results_df, output_type, groupby=groupby)
+    EDEs = _get_expected_distance_error(results_df, simple_maze, output_type=output_type, groupby=groupby, op=ede_op)
+    metrics_df = metrics_df.join(EDEs, on=groupby, how="inner")
     # return as pandas
     metrics_df = metrics_df.to_pandas()
     metrics_df.reset_index(drop=True, inplace=True)
     return metrics_df
 
 
-def _get_decoding_acc(results_df, output_type):
+def _get_decoding_acc(results_df, output_type, groupby=["sample_index", "repeat"]):
     """"""
     # compute with polars
     acc_df = (
         results_df
         # sort each group so the highest-prob row comes first
         .sort(f"predicted_{output_type}_prob", descending=True)
-        .group_by(["sample_index", "repeat"], maintain_order=True)
+        .group_by(groupby, maintain_order=True)
         .head(1)
         .with_columns(
             (pl.col(f"true_{output_type}") == pl.col(f"predicted_{output_type}")).cast(pl.Int8).alias("test_acc")
         )
     )
-    acc_df = acc_df.sort(by=["sample_index", "repeat"])
+    acc_df = acc_df.sort(by=groupby)
     return acc_df
 
 
@@ -234,6 +236,7 @@ def _get_expected_distance_error(
     simple_maze,
     op="sum",
     output_type="goal",
+    groupby=["sample_index", "repeat"],
 ):
     """
     input polars df (need speed from polars for processing large outputs from permuted decodings)
@@ -248,29 +251,28 @@ def _get_expected_distance_error(
             (pl.col(f"predicted_{output_type}_prob") * pl.col("euc_dist")).alias("euc_weight_prob"),
         ]
     )
-    group_cols = ["sample_index", "repeat"]
     # aggregate per‐sample (sum or max)
     if op == "sum":
         sample_EDE = (
-            df.group_by(group_cols, maintain_order=True)
+            df.group_by(groupby, maintain_order=True)
             .agg(
                 [
                     pl.sum("geo_weight_prob").alias("geodesic_ede"),
                     pl.sum("euc_weight_prob").alias("euclidean_ede"),
                 ]
             )
-            .sort(group_cols)
+            .sort(groupby)
         )
     elif op == "max":
         sample_EDE = (
-            df.group_by(group_cols, maintain_order=True)
+            df.group_by(groupby, maintain_order=True)
             .agg(
                 [
                     pl.max("geo_weight_prob").alias("geodesic_ede"),
                     pl.max("euc_weight_prob").alias("euclidean_ede"),
                 ]
             )
-            .sort(group_cols)
+            .sort(groupby)
         )
     else:
         raise ValueError(f"Unsupported op: {op!r}")

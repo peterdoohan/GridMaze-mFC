@@ -136,8 +136,9 @@ def get_exclusion_radius_split(simple_maze, test_loc, n, distance_metric="euclid
             label: tuple(np.mean(coord, axis=0)) if isinstance(coord[0], tuple) else coord
             for label, coord in label2coord.items()
         }
-        min_x, max_x = test_coord[0] - n / 2, test_coord[0] + n / 2
-        min_y, max_y = test_coord[1] - n / 2, test_coord[1] + n / 2
+        tc = label2coord_av[test_loc]
+        min_x, max_x = tc[0] - n / 2, tc[0] + n / 2
+        min_y, max_y = tc[1] - n / 2, tc[1] + n / 2
         exclusion_locs = [
             label
             for label, coord in label2coord_av.items()
