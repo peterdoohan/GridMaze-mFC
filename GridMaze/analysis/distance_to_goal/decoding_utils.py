@@ -331,46 +331,24 @@ def get_decoding_results_df(test_df, y_test, Yprobs, features, output_type, engi
     """
     Organises output of decoding analyses to be read into get_decoding_metrics_df
     """
-    # define df columns
     n_samples, n_features = Yprobs.shape
-    sample_index = np.repeat(test_df.index.values, n_features)
-    train_unique_IDs = np.repeat(test_df.trial_unique_ID.values, n_features)
-    cue_aligned_times = np.repeat(test_df.event_aligned_bin["cue"].values, n_features)
-    reward_aligned_times = np.repeat(test_df.event_aligned_bin["reward"].values, n_features)
-    trial_phases = np.repeat(test_df.trial_phase.values, n_features)
-    steps_to_goals = np.repeat(test_df.steps_to_goal.future.values, n_features)
-    true = np.repeat(y_test, n_features)
-    predicted = np.tile(features, n_samples)
-    predicted_probs = Yprobs.ravel()
+    data = {
+        "sample_index": np.repeat(test_df.index.values, n_features),
+        "trial_unique_ID": np.repeat(test_df.trial_unique_ID.values, n_features),
+        "cue_aligned_time": np.repeat(test_df.event_aligned_bin["cue"].values, n_features),
+        "reward_aligned_time": np.repeat(test_df.event_aligned_bin["reward"].values, n_features),
+        "trial_phase": np.repeat(test_df.trial_phase.values, n_features),
+        "maze_position": np.repeat(test_df.maze_position.simple.values, n_features),
+        "steps_to_goal": np.repeat(test_df.steps_to_goal.future.values, n_features),
+        f"true_{output_type}": np.repeat(y_test, n_features),
+        f"predicted_{output_type}": np.tile(features, n_samples),
+        f"predicted_{output_type}_prob": Yprobs.ravel(),
+    }
     # create df
     if engine == "polars":
-        df = pl.DataFrame(  # note use of polars df (big output dfs need something faster than pandas)
-            {
-                "sample_index": sample_index,
-                "trial_unique_ID": np.repeat(test_df.trial_unique_ID.values, n_features),
-                "cue_aligned_time": np.repeat(test_df.event_aligned_bin["cue"].values, n_features),
-                "reward_aligned_time": np.repeat(test_df.event_aligned_bin["reward"].values, n_features),
-                "trial_phase": np.repeat(test_df.trial_phase.values, n_features),
-                "steps_to_goal": np.repeat(test_df.steps_to_goal.future.values, n_features),
-                f"true_{output_type}": np.repeat(y_test, n_features),
-                f"predicted_{output_type}": np.tile(features, n_samples),
-                f"predicted_{output_type}_prob": Yprobs.ravel(),
-            }
-        )
+        df = pl.DataFrame(data)  # note use of polars df (big output dfs need something faster than pandas)
     elif engine == "pandas":
-        df = pd.DataFrame(
-            {
-                "sample_index": sample_index,
-                "trial_unique_ID": train_unique_IDs,
-                "cue_aligned_time": cue_aligned_times,
-                "reward_aligned_time": reward_aligned_times,
-                "trial_phase": trial_phases,
-                "steps_to_goal": steps_to_goals,
-                f"true_{output_type}": true,
-                f"predicted_{output_type}": predicted,
-                f"predicted_{output_type}_prob": predicted_probs,
-            }
-        )
+        df = pd.DataFrame(data)
     else:
         raise ValueError(f"Unknown engine {engine!r}")
     return df

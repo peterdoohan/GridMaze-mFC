@@ -5,6 +5,7 @@ from training data that only includes half of the places on the maze.
 
 # %% Imports
 import json
+import numpy as np
 import pandas as pd
 import polars as pl
 import networkx as nx
@@ -441,18 +442,23 @@ def test(
     )
     _folds = folds_df.columns.get_level_values(0).unique()
     for fold in _folds:
+        fold_results = []
         fold_df = folds_df[fold]
         train_df, test_df = folds._get_test_train_dfs(input_data, fold_df, training_trial_phases=training_trial_phases)
-        #
         test_locs = test_df.maze_position.simple.unique()
         for test_loc in test_locs:
+            if verbose:
+                print(f"Test location: {test_loc}")
             test_loc_df = test_df[test_df.maze_position.simple == test_loc]
             for n in range(max_steps_held_out):
-                exclusion_locs, inclusion_locs = mt.get_exclusion_radius_split(simple_maze, test_loc, n)
+                if verbose:
+                    print(f"    Exclusion radius: {n}")
+                return simple_maze, test_loc
+                _, inclusion_locs = mt.get_exclusion_radius_split(simple_maze, test_loc, n)
                 train_locs_df = train_df[train_df.maze_position.simple.isin(inclusion_locs)]
                 test_locs_df = has_training_data(train_locs_df, test_loc_df, tol=training_steps_tol)
                 if test_locs_df.empty:
-                    print(f"Test data empty for {test_loc} with exclusion radius {n}")
+                    print(f"    Test data empty for {test_loc} with exclusion radius {n}")
                     continue
                 for itype in input_types:
                     X_train, X_test, y_train, y_test = du._get_test_train_arrays(
@@ -463,10 +469,15 @@ def test(
                         whiten_features=True,
                         basis_fn=basis_fn,
                     )
-
-                    model = LogisticRegression(
-                        penalty="l2", C=10, max_iter=10000, random_state=0, class_weight="balanced"
-                    )
+                    opt_alpha, _ = opt_reg_LogisticRegression(X_train, X_test, y_train, y_test)
+                    if opt_alpha is not None:
+                        model = LogisticRegression(
+                            penalty="l2", C=(1 / opt_alpha), max_iter=10_000, random_state=0, class_weight="balanced"
+                        )
+                    else:
+                        model = LogisticRegression(
+                            penalty=None, max_iter=10_000, random_state=0, class_weight="balanced"
+                        )
                     model.fit(X_train, y_train)
                     Yprobs = model.predict_proba(X_test)
                     df = du.get_decoding_results_df(
@@ -483,14 +494,67 @@ def test(
                             pl.lit(fold).alias("fold"),
                             pl.lit(0).alias("repeat"),
                             pl.lit(False).alias("permuted"),
+                            pl.lit(n).alias("exclusion_distance"),
                         ]
                     )
-                    return df
+                    fold_results.append(df)
 
     return
 
 
-def opt_reg_LogisticRegression(X_train, X_test, y_train, y_test, metric="test_acc"):
-    """ """
+def opt_reg_LogisticRegression(
+    X_train,
+    X_test,
+    y_train,
+    y_test,
+    max_rounds=20,
+    tol=1e-4,
+    patience=12,
+    verbose=True,
+):
+    """
+    Frist multiple logistic regression models with increasingly strong regularisation (inv_alpha), untill
+    decoding metric (metric=test_acc) stops improving. and returns the best xvaled test results for the given
+    input data for this model. Brute force approach without separate validation set
 
-    return
+    only supports accuracy as test metric currently
+    """
+    # baseline model with no regularisation
+    model = LogisticRegression(penalty=None, max_iter=10_000, random_state=0, class_weight="balanced")
+    model.fit(X_train, y_train)
+    y_predict = model.predict(X_test)
+    baseline_acc = np.mean(y_predict == y_test)
+    if verbose:
+        print(f"Baseline acc = {baseline_acc:.4f}")
+
+    # test with increasing regularisation to improve performance
+    best_acc = baseline_acc
+    best_alpha = None
+    alpha = 1e-2
+    best_round = 0
+    history = []
+    no_improvement_count = 0
+    for round_idx in range(1, max_rounds + 1):
+        model = LogisticRegression(penalty="l2", C=1 / alpha, max_iter=10_000, random_state=0, class_weight="balanced")
+        model.fit(X_train, y_train)
+        y_predict = model.predict(X_test)
+        acc = np.mean(y_predict == y_test)
+        history.append((alpha, acc))
+        if verbose:
+            print(f"Round {round_idx}: alpha={alpha:.2e}, acc={acc:.3f}")
+        if acc > best_acc + tol:
+            best_acc = acc
+            best_alpha = alpha
+            best_round = round_idx
+            no_improvement_count = 0
+        else:
+            no_improvement_count += 1
+            if no_improvement_count >= patience:
+                break
+
+        alpha *= 5
+    if verbose:
+        _best_alpha = 0 if best_alpha is None else best_alpha
+        print(f"→ Best alpha = {_best_alpha:.3e} (round {best_round}) with acc = {best_acc:.4f}")
+
+    return best_alpha, best_acc

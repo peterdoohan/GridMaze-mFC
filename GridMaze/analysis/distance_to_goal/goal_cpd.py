@@ -25,7 +25,7 @@ from GridMaze.analysis.distance_to_goal import bases as db
 # %% Global Variables
 from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
 
-RESULTS_DIR = RESULTS_PATH / "goal_by_distance_CPD"
+RESULTS_DIR = RESULTS_PATH / "goal_coding" / "goal_by_distance_CPD"
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
@@ -39,7 +39,7 @@ def get_cpd_summary_df():
         results_df = pd.read_csv(save_path, index_col=[0, 1])
     else:
         print(f"Generating CPD summary dataframe")
-        dfs = []
+        subject_dfs = []
         for subject in SUBJECT_IDS:
             sessions = gs.get_maze_sessions(
                 subject_IDs=[subject],
@@ -54,8 +54,8 @@ def get_cpd_summary_df():
                 dfs.append(get_goal_cpd_df(session))
             subject_cpd_df = pd.concat(dfs)
             subject_cpd_df.index = pd.MultiIndex.from_product([subject_cpd_df.index, [subject]])
-            dfs.append(subject_cpd_df)
-        results_df = pd.concat(dfs)
+            subject_dfs.append(subject_cpd_df)
+        results_df = pd.concat(subject_dfs)
         results_df.to_csv(save_path)
     return results_df
 

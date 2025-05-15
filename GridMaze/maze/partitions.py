@@ -121,14 +121,20 @@ def plot_simple_maze_split(simple_maze, A, B, s, ax=None, A_color="green", B_col
 # %% split maze by exclusion zone
 
 
-def get_exclusion_radius_split(simple_maze, test_loc, n, plot=False):
+def get_exclusion_radius_split(simple_maze, test_loc, n, distance_metric="euclidean", plot=False):
+    """ """
     extended_maze = mr.get_extended_simple_maze(simple_maze)
     coord2label = nx.get_node_attributes(extended_maze, "label")
     label2coord = {v: k for k, v in coord2label.items()}
-    test_coord = label2coord[test_loc]
-    lengths = nx.single_source_shortest_path_length(extended_maze, source=test_coord, cutoff=n)
-    exclusion_locs = [coord2label[i] for i in lengths.keys()]
     all_locs = list(coord2label.values())
+    test_coord = label2coord[test_loc]
+    if distance_metric == "geodesic":
+        lengths = nx.single_source_shortest_path_length(extended_maze, source=test_coord, cutoff=n)
+        exclusion_locs = [coord2label[i] for i in lengths.keys()]
+    elif distance_metric == "euclidean":
+        pass
+    else:
+        raise ValueError("distance_metric must be 'geodesic' or 'euclidean'")
     inclusion_locs = [loc for loc in all_locs if loc not in exclusion_locs]
     if plot:
         plot_simple_maze_exclusion_zone(simple_maze, test_loc, exclusion_locs, inclusion_locs)
