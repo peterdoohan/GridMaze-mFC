@@ -212,16 +212,16 @@ def run_goal_decoding_comparison(
             must_have_data=True,
         )
     # check if results already exist
-    # session_name = session.name
-    # _is_permuted = "permuted" if permuted else "true"
-    # save_path = RESULTS_DIR / _is_permuted / f"{session_name}.parquet"
-    # if save_path.exists():
-    #     if verbose:
-    #         print(f"Loading results for {session_name} from disk")
-    #     return pd.read_parquet(save_path)
-    # else:
-    #     if load_only:
-    #         raise FileNotFoundError(f"Results for {session_name} not found on disk")
+    session_name = session.name
+    _is_permuted = "permuted" if permuted else "true"
+    save_path = RESULTS_DIR / _is_permuted / f"{session_name}.parquet"
+    if save_path.exists():
+        if verbose:
+            print(f"Loading results for {session_name} from disk")
+        return pd.read_parquet(save_path)
+    else:
+        if load_only:
+            raise FileNotFoundError(f"Results for {session_name} not found on disk")
 
     # get downsampled input data containing behavioural info and spike data
     all_results = []
@@ -283,10 +283,10 @@ def run_goal_decoding_comparison(
         decoding_results_df, simple_maze, output_type="goal", groupby=["sample_index", "repeat", "input_type"]
     )
     # save results to disk
-    # save_path.parent.mkdir(parents=True, exist_ok=True)
-    # decoding_metrics_df.to_parquet(save_path, index=False)
-    # if verbose:
-    #     print(f"Saved results to {save_path}")
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    decoding_metrics_df.to_parquet(save_path, index=False)
+    if verbose:
+        print(f"Saved results to {save_path}")
     return decoding_metrics_df
 
 
