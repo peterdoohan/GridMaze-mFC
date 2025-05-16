@@ -212,22 +212,22 @@ def run_goal_decoding_comparison(
             must_have_data=True,
         )
     # check if results already exist
-    session_name = session.name
-    _is_permuted = "permuted" if permuted else "true"
-    save_path = RESULTS_DIR / _is_permuted / f"{session_name}.parquet"
-    if save_path.exists():
-        if verbose:
-            print(f"Loading results for {session_name} from disk")
-        return pd.read_parquet(save_path)
-    else:
-        if load_only:
-            raise FileNotFoundError(f"Results for {session_name} not found on disk")
+    # session_name = session.name
+    # _is_permuted = "permuted" if permuted else "true"
+    # save_path = RESULTS_DIR / _is_permuted / f"{session_name}.parquet"
+    # if save_path.exists():
+    #     if verbose:
+    #         print(f"Loading results for {session_name} from disk")
+    #     return pd.read_parquet(save_path)
+    # else:
+    #     if load_only:
+    #         raise FileNotFoundError(f"Results for {session_name} not found on disk")
 
     # get downsampled input data containing behavioural info and spike data
     all_results = []
     for r in range(n_repeats):
         if verbose:
-            print(r)
+            print(f"Repeat: {r}")
         input_data = du.get_place_decoding_input_data(session, resolution, include_multi_units, window, permuted=False)
         if permuted:
             if verbose:
@@ -283,40 +283,27 @@ def run_goal_decoding_comparison(
         decoding_results_df, simple_maze, output_type="goal", groupby=["sample_index", "repeat", "input_type"]
     )
     # save results to disk
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-    decoding_metrics_df.to_parquet(save_path, index=False)
-    if verbose:
-        print(f"Saved results to {save_path}")
+    # save_path.parent.mkdir(parents=True, exist_ok=True)
+    # decoding_metrics_df.to_parquet(save_path, index=False)
+    # if verbose:
+    #     print(f"Saved results to {save_path}")
     return decoding_metrics_df
 
 
 def _process_fold(repeat, fold, input_data, folds_df, input_types, basis_fn, training_trial_phases, verbose):
     """ """
     fold_results = []
-    fold_df = folds_df[fold]
-    train_df, test_df = folds._get_test_train_dfs(input_data, fold_df, training_trial_phases=training_trial_phases)
     for itype in input_types:
-        if verbose:
-            print(f"{fold}:{itype}")
-        X_train, X_test, y_train, y_test = du._get_test_train_arrays(
-            train_df, test_df, input_type=itype, output_type="goal", whiten_features=True, basis_fn=basis_fn
-        )
-        opt_alpha, _ = du.opt_reg_LogisticRegression(X_train, X_test, y_train, y_test, verbose=False)
-        if opt_alpha is not None:
-            model = LogisticRegression(
-                penalty="l2", C=(1 / opt_alpha), max_iter=10_000, random_state=0, class_weight="balanced"
-            )
-        else:
-            model = LogisticRegression(penalty=None, max_iter=10_000, random_state=0, class_weight="balanced")
-        model.fit(X_train, y_train)
-        Yprobs = model.predict_proba(X_test)
-        df = du.get_decoding_results_df(
-            test_df,
-            y_test,
-            Yprobs,
-            features=list(model.classes_),
+        df = du.get_xvaled_decoding_df(
+            input_data,
+            folds_df,
+            fold,
+            training_trial_phases,
+            itype,
             output_type="goal",
-            engine="polars",
+            basis_fn=basis_fn,
+            df_engine="polars",
+            verbose=verbose,
         )
         df = df.with_columns(
             [pl.lit(repeat).alias("repeat"), pl.lit(fold).alias("fold"), pl.lit(itype).alias("input_type")]
@@ -427,25 +414,19 @@ def _process_predict_spatial_fold(
     """ """
     if verbose:
         print(fold)
-    train_df, test_df = folds._get_test_train_dfs(input_data, folds_df[fold], training_trial_phases)
-    X_train, X_test, y_train, y_test = du._get_test_train_arrays(
-        train_df, test_df, input_type=input_type, output_type=output_type, whiten_features=True, basis_fn=basis_fn
+    probs_df = du.get_xvaled_decoding_df(
+        input_data,
+        folds_df,
+        fold,
+        training_trial_phases,
+        input_type,
+        output_type=output_type,
+        basis_fn=basis_fn,
+        df_engine="polars",
+        verbose=verbose,
+        return_as="probs_df",
     )
-    opt_alpha, _ = du.opt_reg_LogisticRegression(X_train, X_test, y_train, y_test, verbose=True)
-    if opt_alpha is None:
-        decoder = LogisticRegression(penalty=None, max_iter=10_000, random_state=0, class_weight="balanced")
-    else:
-        decoder = LogisticRegression(
-            penalty="l2", C=(1 / opt_alpha), max_iter=10_000, random_state=0, class_weight="balanced"
-        )
-    decoder.fit(X_train, y_train)
-    Yprobs = decoder.predict_proba(X_test)
-    features = list(decoder.classes_)
-    probs_df = pd.DataFrame(
-        index=test_df.index,
-        columns=pd.MultiIndex.from_product([[f"{output_type}_prob"], features]),
-        data=Yprobs,
-    )
+    features = probs_df.columns.levels[1].unique()
     # check for missing place_directions and add columns with value 0
     missing_features = set(all_features) - set(features)
     if len(missing_features) > 0:

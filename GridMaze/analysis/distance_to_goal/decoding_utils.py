@@ -50,6 +50,8 @@ def get_xvaled_decoding_df(
     output_type="goal",
     basis_fn=None,
     df_engine="polars",
+    verbose=False,
+    return_as="decoding_df",
 ):
     """ """
     # find best regularisation with hold one out training
@@ -71,13 +73,13 @@ def get_xvaled_decoding_df(
             X_val,
             y_train,
             y_val,
-            return_history=False,
-            verbose=True,
+            verbose=verbose,
         )
         best_alpha = 0 if best_alpha is None else best_alpha
         training_fold_results.append((best_alpha, best_acc))
     opt_alpha = np.array(training_fold_results)[:, 0].mean()
-    print(f"opt_alpha: {opt_alpha}")
+    if verbose:
+        print(f"opt_alpha: {opt_alpha}")
     # now use this with all the training data to predict test data
     test_df = folds_df[fold]["test"]
     test_trials = test_df.unstack().values
@@ -96,15 +98,24 @@ def get_xvaled_decoding_df(
         )
     model.fit(X_train, y_train)
     Yprobs = model.predict_proba(X_test)
-    df = get_decoding_results_df(
-        test_df,
-        y_test,
-        Yprobs,
-        features=list(model.classes_),
-        output_type=output_type,
-        engine=df_engine,
-    )
-    return df
+    if return_as == "probs_df":
+        features = list(model.classes_)
+        probs_df = pd.DataFrame(
+            index=test_df.index, columns=pd.MultiIndex.from_product([[f"{output_type}_prob"], features]), data=Yprobs
+        )
+        return probs_df
+    elif return_as == "decoding_df":
+        df = get_decoding_results_df(
+            test_df,
+            y_test,
+            Yprobs,
+            features=list(model.classes_),
+            output_type=output_type,
+            engine=df_engine,
+        )
+        return df
+    else:
+        raise ValueError(f"Unknown return_as type {return_as!r}")
 
 
 def opt_reg_LogisticRegression(
@@ -115,7 +126,7 @@ def opt_reg_LogisticRegression(
     max_rounds=20,
     tol=1e-4,
     patience=6,
-    verbose=True,
+    verbose=False,
     return_history=False,
 ):
     """
