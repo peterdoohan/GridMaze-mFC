@@ -17,9 +17,6 @@ RESULTS_DIR = RESULTS_PATH / "distance_to_goal" / "goal_decoding_comparisons"
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
 
-with open(EXPERIMENT_INFO_PATH / "maze_day2date.json", "r") as input_file:
-    MAZE_DAY2DATE = json.load(input_file)
-
 
 # %% Functions
 
@@ -43,8 +40,8 @@ def get_SLURM_script(subject, permuted, n_repeats):
 #SBATCH --error=jobs/goal_decoding_comparisons/err/{exp_name}.err
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=12
-#SBATCH -p a100
-#SBATCH --mem=32GB
+#SBATCH -p gpu
+#SBATCH --mem=16GB
 #SBATCH --time=48:00:00
 
 module load miniconda

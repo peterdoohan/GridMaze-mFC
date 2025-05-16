@@ -40,7 +40,9 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 # %%
 
 
-def plot_decoding_comparisons(summary_df, metric="test_acc", chance=1 / 12, cmap="Set1", axes=None):
+def plot_decoding_comparisons(
+    summary_df, metric="test_acc", chance=1 / 12, cmap="Set1", cue_window=(-5, 10), reward_window=(-10, 5), axes=None
+):
     """ """
     # set up figure
 
@@ -55,12 +57,9 @@ def plot_decoding_comparisons(summary_df, metric="test_acc", chance=1 / 12, cmap
     axes[0].set_ylabel(metric)
 
     # plot conditions
-    conditions = [
-        "spikes_by_distance",
-        "place_direction_prob_by_distance",
-    ]  # ["spikes", "spikes_by_distance", "place_direction_prob", "place_direction_prob_by_distance"]
+    conditions = ["spikes", "spikes_by_distance", "place_direction_prob", "place_direction_prob_by_distance"]
     cmap = plt.get_cmap(cmap, len(conditions))
-    for event, ax in zip(["cue", "reward"], axes):
+    for event, ax, window in zip(["cue", "reward"], axes, [cue_window, reward_window]):
         df = summary_df[summary_df.event == event]
         df = df.set_index(["subject_ID", "aligned_time"])[conditions]
         subject_grouped_df = df.groupby("aligned_time")
@@ -73,8 +72,9 @@ def plot_decoding_comparisons(summary_df, metric="test_acc", chance=1 / 12, cmap
             ax.plot(mean.index, mean.values, label=condition, color=color)
             ax.fill_between(mean.index, mean - sem, mean + sem, alpha=0.2, color=color)
         ax.set_xlabel(f"{event} (s)")
-    axes[0].legend(fontsize=8, loc="center left")
-
+        ax.set_xlim(window)
+    axes[0].legend(fontsize=8)
+    return
     # run stats
     for ax, event in zip(axes, ["cue", "reward"]):
         spikes_by_distance_df = pd.DataFrame()
@@ -106,14 +106,10 @@ def _plot_p_values(ax, df, height, color, chance=0):
             ax.plot(x_run, y_run, color=color, linewidth=2)
 
 
-def get_decoding_comparisons_summary_df(metric="test_acc", cue_window=(-5, 10), reward_window=(-10, 5)):
+def get_decoding_summary_df(metric="test_acc"):
     """ """
-    event2valid_trial_phases = {
-        "cue": ["ITI", "navigation"],
-        "reward": ["navigation", "reward_consumption"],
-    }
     all_dfs = []
-    for subject_ID in SUBJECT_IDS:
+    for subject_ID in ["m2"]:
         print(subject_ID)
         sessions = gs.get_maze_sessions(
             subject_IDs=[subject_ID],
@@ -130,19 +126,26 @@ def get_decoding_comparisons_summary_df(metric="test_acc", cue_window=(-5, 10), 
             except FileNotFoundError as e:
                 print(e)
                 continue
-            for event, window, perf_df in zip(
-                ["cue", "reward"], [cue_window, reward_window], [cue_aligned_perf, reward_aligned_perf]
-            ):
-                _df = decoding_df[
-                    (decoding_df[f"{event}_aligned_time"].between(*window))
-                    & (decoding_df.trial_phase.isin(event2valid_trial_phases[event]))
-                ]
+            for event, perf_df in zip(["cue", "reward"], [cue_aligned_perf, reward_aligned_perf]):
+                _time = f"{event}_aligned_time"
+                if event == "cue":
+                    df = decoding_df[~decoding_df[_time].isna()]
+                    df = df[  # only include ITI before cue and navigation time after cue
+                        ((df[_time].le(0)) & (df.trial_phase == "ITI"))
+                        | (df[_time].gt(0)) & (df.trial_phase == "navigation")
+                    ]
+                else:  # reward
+                    df = decoding_df[~decoding_df[_time].isna()]
+                    df = df[
+                        ((df[_time].gt(0)) & (df.trial_phase == "reward_consumption"))
+                        | (df[_time].le(0)) & (df.trial_phase == "navigation")
+                    ]
                 perf_df.append(
-                    _df.groupby(["condition", "trial_unique_ID", f"{event}_aligned_time"])[metric].mean().unstack()
+                    df.groupby(["input_type", "trial_unique_ID", f"{event}_aligned_time"])[metric].mean().unstack()
                 )  # conditions_by_trials x timepoints (average over repeats)
         for _df, event in zip([cue_aligned_perf, reward_aligned_perf], ["cue", "reward"]):
             df = pd.concat(_df, axis=0)  # next average trials over conditions
-            df = df.groupby("condition").mean().T.reset_index()
+            df = df.groupby("input_type").mean().T.reset_index()
             df = df.rename(columns={f"{event}_aligned_time": "aligned_time"})
             df["event"] = event
             df["subject_ID"] = subject_ID

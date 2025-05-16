@@ -653,6 +653,8 @@ def get_place_decoding_input_data(
     nav_rates_df = nav_rates_df[~nav_rates_df.trial.isna()]
     # add non nav distances
     nav_rates_df[("steps_to_goal", "future")] = update_non_nav_distances(nav_rates_df, simple_maze)
+    # sometimes NSEW values are NaN (end of session, remove these)
+    nav_rates_df = nav_rates_df[~nav_rates_df.cardinal_movement_direction.isna()]
     return nav_rates_df
 
 
