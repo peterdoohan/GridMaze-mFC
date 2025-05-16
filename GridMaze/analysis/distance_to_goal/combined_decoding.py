@@ -74,7 +74,6 @@ def plot_decoding_comparisons(
         ax.set_xlabel(f"{event} (s)")
         ax.set_xlim(window)
     axes[0].legend(fontsize=8)
-    return
     # run stats
     for ax, event in zip(axes, ["cue", "reward"]):
         spikes_by_distance_df = pd.DataFrame()
@@ -106,10 +105,10 @@ def _plot_p_values(ax, df, height, color, chance=0):
             ax.plot(x_run, y_run, color=color, linewidth=2)
 
 
-def get_decoding_summary_df(metric="test_acc"):
+def get_decoding_summary_df(metric="test_acc", permuted=False):
     """ """
     all_dfs = []
-    for subject_ID in ["m2"]:
+    for subject_ID in SUBJECT_IDS:
         print(subject_ID)
         sessions = gs.get_maze_sessions(
             subject_IDs=[subject_ID],
@@ -122,7 +121,7 @@ def get_decoding_summary_df(metric="test_acc"):
         cue_aligned_perf, reward_aligned_perf = [], []
         for s in sessions:
             try:
-                decoding_df = run_goal_decoding_comparison(s, verbose=False, load_only=True)
+                decoding_df = run_goal_decoding_comparison(s, permuted=permuted, verbose=False, load_only=True)
             except FileNotFoundError as e:
                 print(e)
                 continue

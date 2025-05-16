@@ -41,6 +41,72 @@ GOAL_SETS = ["subset_1", "subset_2", "all"]
 # %% Deep reg optimisation
 
 
+def get_xvaled_decoding_df(
+    input_data,
+    folds_df,
+    fold,
+    training_trial_phases=["navigation"],
+    input_type="spikes",
+    output_type="goal",
+    basis_fn=None,
+    df_engine="polars",
+):
+    """ """
+    # find best regularisation with hold one out training
+    train_df = folds_df[fold]["train"]
+    cols = train_df.columns.values
+    trial_phase_mask = input_data.trial_phase.isin(training_trial_phases)
+    training_fold_results = []
+    for col in cols:
+        other_cols = cols[cols != col]
+        val_trials = train_df[col].dropna().values
+        vtrain_trials = train_df[other_cols].unstack().dropna().values
+        val_df = input_data[input_data.trial_unique_ID.isin(val_trials) & trial_phase_mask]
+        vtrain_df = input_data[input_data.trial_unique_ID.isin(vtrain_trials)]
+        X_train, X_val, y_train, y_val = _get_test_train_arrays(
+            vtrain_df, val_df, input_type=input_type, output_type=output_type, basis_fn=basis_fn
+        )
+        best_alpha, best_acc = opt_reg_LogisticRegression(
+            X_train,
+            X_val,
+            y_train,
+            y_val,
+            return_history=False,
+            verbose=True,
+        )
+        best_alpha = 0 if best_alpha is None else best_alpha
+        training_fold_results.append((best_alpha, best_acc))
+    opt_alpha = np.array(training_fold_results)[:, 0].mean()
+    print(f"opt_alpha: {opt_alpha}")
+    # now use this with all the training data to predict test data
+    test_df = folds_df[fold]["test"]
+    test_trials = test_df.unstack().values
+    test_df = input_data[input_data.trial_unique_ID.isin(test_trials)]
+    train_trials = train_df.unstack().dropna().values
+    train_df = input_data[input_data.trial_unique_ID.isin(train_trials) & trial_phase_mask]
+    X_train, X_test, y_train, y_test = _get_test_train_arrays(
+        train_df, test_df, input_type=input_type, output_type=output_type, basis_fn=basis_fn
+    )
+    # fit model
+    if opt_alpha is None:
+        model = LogisticRegression(penalty=None, max_iter=10_000, random_state=0, class_weight="balanced")
+    else:
+        model = LogisticRegression(
+            penalty="l2", C=(1 / opt_alpha), max_iter=10_000, random_state=0, class_weight="balanced"
+        )
+    model.fit(X_train, y_train)
+    Yprobs = model.predict_proba(X_test)
+    df = get_decoding_results_df(
+        test_df,
+        y_test,
+        Yprobs,
+        features=list(model.classes_),
+        output_type=output_type,
+        engine=df_engine,
+    )
+    return df
+
+
 def opt_reg_LogisticRegression(
     X_train,
     X_test,
@@ -50,6 +116,7 @@ def opt_reg_LogisticRegression(
     tol=1e-4,
     patience=6,
     verbose=True,
+    return_history=False,
 ):
     """
     Frist multiple logistic regression models with increasingly strong regularisation (inv_alpha), untill
@@ -99,7 +166,10 @@ def opt_reg_LogisticRegression(
         _best_alpha = 0 if best_alpha is None else best_alpha
         print(f"→ Best alpha = {_best_alpha:.3e} (round {best_round}) with acc = {best_acc:.4f}")
 
-    return best_alpha, best_acc
+    if return_history:
+        return best_alpha, best_acc, history
+    else:
+        return best_alpha, best_acc
 
 
 # %% test train split functions
