@@ -188,7 +188,6 @@ def run_goal_decoding_comparison(
     include_multi_units=True,
     window=(-10, 10),
     goal_stratified_validation=True,
-    n_test_trials=None,
     n_bases=8,
     basis_type="gamma",
     training_trial_phases=["navigation"],
@@ -243,9 +242,7 @@ def run_goal_decoding_comparison(
         )
         simple_maze = session.simple_maze()
         # organise trials into test-train folds
-        folds_df = folds.get_folds_df(
-            session, goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials
-        )
+        folds_df = folds.get_folds_df(session, goal_stratified_validation, return_unique_IDs=True)
         # predict plce/place_direction probabilities from spike counts (for control conditions)
         if verbose:
             print(f"Predicting place_direction probabilities from spike counts")

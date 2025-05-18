@@ -23,11 +23,9 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 
 def submit_all_jobs():
     for subject in SUBJECT_IDS:
-        script_path_1 = get_SLURM_script(subject, permuted=False, n_repeats=1)
-        script_path_2 = get_SLURM_script(subject, permuted=True, n_repeats=10)
-        for sp in [script_path_1, script_path_2]:
-            os.system(f"chmod +x {sp}")
-            os.system(f"sbatch {sp}")
+        script_path = get_SLURM_script(subject, permuted=False, n_repeats=1)
+        os.system(f"chmod +x {script_path}")
+        os.system(f"sbatch {script_path}")
 
 
 def get_SLURM_script(subject, permuted, n_repeats):
