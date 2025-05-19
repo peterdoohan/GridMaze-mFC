@@ -113,79 +113,47 @@ def get_goal_cpd_df(
 
     if verbose:
         print(f"Running across {len(_folds)} folds with n_jobs={n_jobs}")
-    cpd_list = Parallel(n_jobs=n_jobs)(
-        delayed(_process_fold)(
-            fold,
-            folds_df,
-            input_data,
-            cluster_unique_IDs,
-            model_type,
-            model_name2regressor_classes,
-            pd_bases,
-            dist_bases,
-            distance_metrics,
-            goals,
-            simple_maze,
-            verbose,
-        )
-        for fold in _folds
-    )
-    all_cpd = pd.concat(cpd_list)
+    cpd_dfs = []
+    for fold in _folds:
+        if verbose:
+            print(f"Processing fold {fold}...")
+            results_dfs = []
+        for model_name, regressor_classes in model_name2regressor_classes.items():
+            results_df = xval_regression(
+                fold,
+                folds_df,
+                input_data,
+                regressor_classes,
+                model_type,
+                cluster_unique_IDs,
+                pd_bases,
+                dist_bases,
+                distance_metrics,
+                goals,
+                simple_maze,
+                verbose,
+            )
+            results_df["model_name"] = model_name
+            results_dfs.append(results_df)
+        fold_results = pd.concat(results_dfs)
+        if model_type == "Ridge":
+            metric = "rss"
+        elif model_type == "PossionRegressor":
+            metric = "deviance"
+        else:
+            raise ValueError(f"Unknown model type: {model_type}")
+        metric_df = fold_results.set_index(["cluster_unique_ID", "model_name"])[metric].unstack()
+        cpd_df = pd.DataFrame(index=metric_df.index)
+        for reg_class in ["goal_by_distance", "distance", "spatial"]:
+            reduced_model_metric = metric_df[f"reduced_{reg_class}"]
+            full_model_metric = metric_df["full"]
+            cpd_df[reg_class] = (reduced_model_metric - full_model_metric) / reduced_model_metric
+        # tag with fold for later grouping
+        cpd_df.index = pd.MultiIndex.from_product([cpd_df.index, [fold]], names=["cluster_unique_ID", "fold"])
+        cpd_dfs.append(cpd_df)
+    all_cpd = pd.concat(cpd_dfs)
     mean_cpd = all_cpd.groupby("cluster_unique_ID").mean()  # average across folds
     return mean_cpd
-
-
-def _process_fold(
-    fold,
-    folds_df,
-    input_data,
-    cluster_unique_IDs,
-    model_type,
-    model_name2regressor_classes,
-    pd_bases,
-    dist_bases,
-    distance_metrics,
-    goals,
-    simple_maze,
-    verbose,
-):
-    """Process a single fold: fit models, find optimal alpha, compute CPD."""
-    if verbose:
-        print(f"Processing fold {fold}...")
-    results_dfs = []
-    for model_name, regressor_classes in model_name2regressor_classes.items():
-        results_df = xval_regression(
-            fold,
-            folds_df,
-            input_data,
-            regressor_classes,
-            model_type,
-            cluster_unique_IDs,
-            pd_bases,
-            dist_bases,
-            distance_metrics,
-            goals,
-            simple_maze,
-            verbose,
-        )
-        results_df["model_name"] = model_name
-        results_dfs.append(results_df)
-    fold_results = pd.concat(results_dfs)
-    if model_type == "Ridge":
-        metric = "rss"
-    elif model_type == "PossionRegressor":
-        metric = "deviance"
-    else:
-        raise ValueError(f"Unknown model type: {model_type}")
-    metric_df = fold_results.set_index(["cluster_unique_ID", "model_name"])[metric].unstack()
-    cpd_df = pd.DataFrame(index=metric_df.index)
-    for reg_class in ["goal_by_distance", "distance", "spatial"]:
-        reduced_model_metric = metric_df[f"reduced_{reg_class}"]
-        full_model_metric = metric_df["full"]
-        cpd_df[reg_class] = (reduced_model_metric - full_model_metric) / reduced_model_metric
-    # tag with fold for later grouping
-    cpd_df.index = pd.MultiIndex.from_product([cpd_df.index, [fold]], names=["cluster_unique_ID", "fold"])
-    return cpd_df
 
 
 # %% L2 OLS or Poisson regression
@@ -211,36 +179,26 @@ def xval_regression(
         print("finding best xval alpha for each cluster...")
     train_df = folds_df[fold]["train"]
     cols = train_df.columns.values
-    xval_reg_results = []
-    for i, col in enumerate(cols):
-        other_cols = cols[cols != col]
-        val_trials = train_df[col].dropna().values
-        vtrain_trials = train_df[other_cols].unstack().dropna().values
-        val_df = input_data[input_data.trial_unique_ID.isin(val_trials)]
-        vtrain_df = input_data[input_data.trial_unique_ID.isin(vtrain_trials)]
-        X_vtrain, X_val, Y_vtrain, Y_val = get_test_train_arrays(
-            vtrain_df,
-            val_df,
-            regressor_classes=regressor_classes,
-            pd_bases=pd_bases,
-            distance_metrics=distance_metrics,
-            dist_bases=dist_bases,
-            goals=goals,
-            simple_maze=simple_maze,
+    xval_reg_results = Parallel(n_jobs=len(cols))(
+        delayed(_process_reg_validation_fold)(
+            input_data,
+            train_df,
+            regressor_classes,
+            cols,
+            col,
+            pd_bases,
+            distance_metrics,
+            dist_bases,
+            goals,
+            simple_maze,
+            model=model,
+            cluster_unique_IDs=cluster_unique_IDs,
+            i=i,
+            verbose=verbose,
         )
-        for j, cid in enumerate(cluster_unique_IDs):
-            y_train, y_val = Y_vtrain[:, j], Y_val[:, j]
-            alpha, score = reg_search_regression(
-                X_vtrain, y_train, X_val, y_val, model, return_as="best", verbose=verbose
-            )
-            xval_reg_results.append(
-                {
-                    "cluster_unique_ID": cid,
-                    "alpha": alpha,
-                    "score": score,
-                    "vfold": i,
-                }
-            )
+        for i, col in enumerate(cols)
+    )
+    xval_reg_results = [result for fold_results in xval_reg_results for result in fold_results]
     reg_df = pd.DataFrame(xval_reg_results)
     # compute average score (R2) for each cluster and alpha, then take the best for each
     cluster_reg_scores = reg_df.groupby(["cluster_unique_ID", "alpha"]).score.mean().unstack()
@@ -298,6 +256,53 @@ def xval_regression(
                 }
             )
     return pd.DataFrame(fold_results)
+
+
+def _process_reg_validation_fold(
+    input_data,
+    train_df,
+    regressor_classes,
+    cols,
+    col,
+    pd_bases,
+    distance_metrics,
+    dist_bases,
+    goals,
+    simple_maze,
+    model,
+    cluster_unique_IDs,
+    i,
+    verbose,
+):
+    """ """
+    other_cols = cols[cols != col]
+    val_trials = train_df[col].dropna().values
+    vtrain_trials = train_df[other_cols].unstack().dropna().values
+    val_df = input_data[input_data.trial_unique_ID.isin(val_trials)]
+    vtrain_df = input_data[input_data.trial_unique_ID.isin(vtrain_trials)]
+    X_vtrain, X_val, Y_vtrain, Y_val = get_test_train_arrays(
+        vtrain_df,
+        val_df,
+        regressor_classes=regressor_classes,
+        pd_bases=pd_bases,
+        distance_metrics=distance_metrics,
+        dist_bases=dist_bases,
+        goals=goals,
+        simple_maze=simple_maze,
+    )
+    results = []
+    for j, cid in enumerate(cluster_unique_IDs):
+        y_train, y_val = Y_vtrain[:, j], Y_val[:, j]
+        alpha, score = reg_search_regression(X_vtrain, y_train, X_val, y_val, model, return_as="best", verbose=verbose)
+        results.append(
+            {
+                "cluster_unique_ID": cid,
+                "alpha": alpha,
+                "score": score,
+                "vfold": i,
+            }
+        )
+    return results
 
 
 def reg_search_regression(
