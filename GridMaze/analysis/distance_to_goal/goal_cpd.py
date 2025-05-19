@@ -65,10 +65,10 @@ def get_cpd_summary_df():
 def get_goal_cpd_df(
     session,
     resolution=0.5,
+    model_type="Ridge",
     spatial_coding="place_direction_onehot",
     distance_metrics=("steps_to_goal", "future"),
     goal_stratified_validation=True,
-    n_folds=None,
     trial_phases=["navigation"],
     max_steps_to_goal=30,
     min_spikes=300,
@@ -99,34 +99,17 @@ def get_goal_cpd_df(
     )
     cluster_unique_IDs = input_data.spike_count.columns.values
     # get folds df
-    folds_df = folds.get_folds_df(
-        session, goal_stratified=goal_stratified_validation, return_unique_IDs=True, n_folds=n_folds
-    )
+    folds_df = folds.get_folds_df(session, goal_stratified=goal_stratified_validation, return_unique_IDs=True)
     _folds = folds_df.columns.get_level_values(0).unique()
 
-    model2regressor_classes = {
-        "full_goal_by_distance": [spatial_coding, "distance", "goal_by_distance"],
-        "full_goal": [spatial_coding, "distance", "goal"],
-        "reduced": [spatial_coding, "distance"],
+    model_name2regressor_classes = {
+        "full": [spatial_coding, "distance", "goal_by_distance"],
+        "reduced_goal_by_distance": [spatial_coding, "distance"],
         "reduced_distance": [spatial_coding, "goal_by_distance"],
         "reduced_spatial": ["distance", "goal_by_distance"],
     }
 
     n_jobs = min(len(_folds), max_jobs)
-
-    return (
-        "fold_0",
-        folds_df,
-        input_data,
-        cluster_unique_IDs,
-        model2regressor_classes,
-        pd_bases,
-        dist_bases,
-        distance_metrics,
-        goals,
-        simple_maze,
-        verbose,
-    )
 
     if verbose:
         print(f"Running across {len(_folds)} folds with n_jobs={n_jobs}")
@@ -136,7 +119,8 @@ def get_goal_cpd_df(
             folds_df,
             input_data,
             cluster_unique_IDs,
-            model2regressor_classes,
+            model_type,
+            model_name2regressor_classes,
             pd_bases,
             dist_bases,
             distance_metrics,
@@ -156,7 +140,8 @@ def _process_fold(
     folds_df,
     input_data,
     cluster_unique_IDs,
-    model2regressor_classes,
+    model_type,
+    model_name2regressor_classes,
     pd_bases,
     dist_bases,
     distance_metrics,
@@ -167,48 +152,40 @@ def _process_fold(
     """Process a single fold: fit models, find optimal alpha, compute CPD."""
     if verbose:
         print(f"Processing fold {fold}...")
-    fold_results = []
-    fold_df = folds_df[fold]
-    train_df, test_df = folds._get_test_train_dfs(input_data, fold_df, training_trial_phases=False)
-    for model_name, regressors in model2regressor_classes.items():
-        if verbose:
-            print(f"  Model: {model_name}")
-        X_train, X_test, Y_train, Y_test = get_test_train_arrays(
-            train_df,
-            test_df,
-            regressor_classes=regressors,
-            pd_bases=pd_bases,
-            distance_metrics=distance_metrics,
-            dist_bases=dist_bases,
-            goals=goals,
-            simple_maze=simple_maze,
+    results_dfs = []
+    for model_name, regressor_classes in model_name2regressor_classes.items():
+        results_df = xval_regression(
+            fold,
+            folds_df,
+            input_data,
+            regressor_classes,
+            model_type,
+            cluster_unique_IDs,
+            pd_bases,
+            dist_bases,
+            distance_metrics,
+            goals,
+            simple_maze,
+            verbose,
         )
-        for i, cid in enumerate(cluster_unique_IDs):
-            if verbose:
-                print(f"    Cell: {cid}")
-            y_train, y_test = Y_train[:, i], Y_test[:, i]
-            alpha, score, rss = reg_opt_Ridge(X_train, y_train, X_test, y_test, return_as="best", verbose=False)
-            fold_results.append(
-                {
-                    "score": score,
-                    "rss": rss,
-                    "alpha": alpha,
-                    "fold": fold,
-                    "cluster_unique_ID": cid,
-                    "model": model_name,
-                }
-            )
-    # compute CPD
-    fr_df = pd.DataFrame(fold_results)
-    rss_df = fr_df.set_index(["cluster_unique_ID", "model"]).rss.unstack()
-    cpd = pd.DataFrame(index=rss_df.index)
-    cpd["goal"] = (rss_df["reduced"] - rss_df["full_goal"]) / rss_df["reduced"]
-    cpd["goal_by_distance"] = (rss_df["reduced"] - rss_df["full_goal_by_distance"]) / rss_df["reduced"]
-    cpd["distance"] = (rss_df["reduced_distance"] - rss_df["full_goal_by_distance"]) / rss_df["reduced_distance"]
-    cpd["spatial"] = (rss_df["reduced_spatial"] - rss_df["full_goal_by_distance"]) / rss_df["reduced_spatial"]
+        results_df["model_name"] = model_name
+        results_dfs.append(results_df)
+    fold_results = pd.concat(results_dfs)
+    if model_type == "Ridge":
+        metric = "rss"
+    elif model_type == "PossionRegressor":
+        metric = "deviance"
+    else:
+        raise ValueError(f"Unknown model type: {model_type}")
+    metric_df = fold_results.set_index(["cluster_unique_ID", "model_name"])[metric].unstack()
+    cpd_df = pd.DataFrame(index=metric_df.index)
+    for reg_class in ["goal_by_distance", "distance", "spatial"]:
+        reduced_model_metric = metric_df[f"reduced_{reg_class}"]
+        full_model_metric = metric_df["full"]
+        cpd_df[reg_class] = (reduced_model_metric - full_model_metric) / reduced_model_metric
     # tag with fold for later grouping
-    cpd.index = pd.MultiIndex.from_product([cpd.index, [fold]], names=["cluster_unique_ID", "fold"])
-    return cpd
+    cpd_df.index = pd.MultiIndex.from_product([cpd_df.index, [fold]], names=["cluster_unique_ID", "fold"])
+    return cpd_df
 
 
 # %% L2 OLS or Poisson regression
@@ -291,10 +268,10 @@ def xval_regression(
         y_train, y_test = Y_train[:, i], Y_test[:, i]
         alpha = cluster2opt_reg[cid]
         if model == "Ridge":
-            model = Ridge(alpha=alpha, max_iter=10_000, random_state=0)
-            model.fit(X_train, y_train)
-            score = model.score(X_test, y_test)
-            residuals = y_test - model.predict(X_test)
+            Model = Ridge(alpha=alpha, max_iter=10_000, random_state=0)
+            Model.fit(X_train, y_train)
+            score = Model.score(X_test, y_test)
+            residuals = y_test - Model.predict(X_test)
             rss = np.sum(residuals**2)
             fold_results.append(
                 {
@@ -306,10 +283,10 @@ def xval_regression(
                 }
             )
         elif model == "PossionRegressor":
-            model = PoissonRegressor(alpha=alpha, max_iter=10_000, random_state=0)
-            model.fit(X_train, y_train)
-            score = model.score(X_test, y_test)
-            y_pred = model.predict(X_test)
+            Model = PoissonRegressor(alpha=alpha, max_iter=10_000)
+            Model.fit(X_train, y_train)
+            score = Model.score(X_test, y_test)
+            y_pred = Model.predict(X_test)
             deviance = mean_poisson_deviance(y_test, y_pred)
             fold_results.append(
                 {
@@ -330,14 +307,20 @@ def reg_search_regression(
     y_test,
     model="Ridge",
     tol=1e-4,
-    max_rounds=35,
-    patience=25,
+    max_rounds=30,
+    patience=6,
     return_as="best",
     verbose=False,
 ):
-    """ """
+    """
+    Runs OLS (Ridge) or Poisson regression (PoissonRegressor) with increasing alpha
+    until the score stops improving.
+    Returns the best alpha and score.
+    If return_as="history", returns a array of (alphas, scores).
+    Scores are R² for OLS and Pseudo R2 for Poisson regression.
+    """
 
-    alpha = 1.0
+    alpha = 1e-2
     best_alpha = alpha
     best_score = -np.inf
     best_round = 0
@@ -348,14 +331,14 @@ def reg_search_regression(
     for round_idx in range(1, max_rounds + 1):
 
         if model == "Ridge":
-            model = Ridge(alpha=alpha, max_iter=10_000, random_state=0)
+            Model = Ridge(alpha=alpha, max_iter=10_000, random_state=0)
         elif model == "PossionRegressor":
-            model = PoissonRegressor(alpha=alpha, max_iter=10_000, random_state=0)
+            Model = PoissonRegressor(alpha=alpha, max_iter=10_000)
         else:
             raise ValueError(f"Unknown model: {model}")
 
-        model.fit(X_train, y_train)
-        score = model.score(X_test, y_test)
+        Model.fit(X_train, y_train)
+        score = Model.score(X_test, y_test)
         history.append((alpha, score))
         if verbose:
             print(f"Round {round_idx:2d}: α = {alpha:.3e},  R² = {score:.4f}")
@@ -368,8 +351,8 @@ def reg_search_regression(
             no_improve_count = 0
 
         else:
-            # only count towards patience if score is non-negative
-            if score >= 0:
+            # only count towards patience if best_score is non-negative
+            if best_score >= 0:
                 no_improve_count += 1
                 if no_improve_count >= patience:
                     break
@@ -525,4 +508,6 @@ def get_input_data(
     # check remaining clusters pass min_spikes
     reject_clusters = nav_rates_df.spike_count.columns[nav_rates_df.spike_count.sum().lt(min_spikes)]
     nav_rates_df = nav_rates_df[nav_rates_df.columns[~nav_rates_df.columns.get_level_values(1).isin(reject_clusters)]]
+    # ensure cardinal movement direction is always defined
+    nav_rates_df = nav_rates_df[nav_rates_df.cardinal_movement_direction.notna()]
     return nav_rates_df
