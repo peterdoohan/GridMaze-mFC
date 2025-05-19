@@ -15,8 +15,8 @@ from GridMaze.analysis.event_aligned import mlp_utils as mu
 from statsmodels.stats.multitest import multipletests
 import seaborn as sns
 
-from ..core import get_sessions as gs
-from ..core import get_clusters as gc
+from GridMaze.analysis.core import get_sessions as gs
+from GridMaze.analysis.core import get_clusters as gc
 
 # %% Global variables
 

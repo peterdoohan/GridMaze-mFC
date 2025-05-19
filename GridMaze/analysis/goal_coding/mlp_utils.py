@@ -12,7 +12,7 @@ from torch.utils.data import TensorDataset, DataLoader
 import numpy as np
 from sklearn.preprocessing import OneHotEncoder, LabelEncoder
 
-from . import allocentric_goal_decoding as agd
+from GridMaze.analysis.goal_coding import event_aligned_decoding as egd
 import pandas as pd
 
 # %% Global Variables
@@ -42,14 +42,14 @@ def test(activity_df, validation_folds_df, classifier="mlp_torch", verbose=True)
             test_df = fold_df.test.droplevel(0, axis=1)
         else:
             test_df = fold_df.test
-        test_X, test_y = agd.get_synthetic_activity_matrix(
+        test_X, test_y = egd.get_synthetic_activity_matrix(
             activity_df, test_df
         )  # [n_goals, n_session_clusters, n_timepoints], [n_goals]
         training_df = fold_df.training
         training_Xs, training_ys = [], []
         for training_set in training_df.columns.get_level_values(0).unique():
             training_set_df = training_df[training_set]
-            X, y = agd.get_synthetic_activity_matrix(activity_df, training_set_df)
+            X, y = egd.get_synthetic_activity_matrix(activity_df, training_set_df)
             training_Xs.append(X)
             training_ys.append(y)
         training_X = np.vstack(training_Xs)  # [n_training_sets x n_goals, n_session_clusters, n_timepoints]

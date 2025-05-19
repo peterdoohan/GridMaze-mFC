@@ -55,7 +55,9 @@ def get_cpd_summary_df():
             for session in sessions:
                 dfs.append(get_goal_cpd_df(session))
             subject_cpd_df = pd.concat(dfs)
-            subject_cpd_df.index = pd.MultiIndex.from_product([subject_cpd_df.index, [subject]])
+            subject_cpd_df["subject"] = subject
+            subject_cpd_df = subject_cpd_df.set_index("subject", append=True)
+
             subject_dfs.append(subject_cpd_df)
         results_df = pd.concat(subject_dfs)
         results_df.to_csv(save_path)
@@ -75,7 +77,6 @@ def get_goal_cpd_df(
     pd_bases_kwargs={"n_bases": 8, "dim_red": "pca"},
     dtg_bases_kwargs={"n_bases": 5, "basis": "gamma"},
     verbose=True,
-    max_jobs=10,
 ):
     """ """
     simple_maze = session.simple_maze()
@@ -108,16 +109,11 @@ def get_goal_cpd_df(
         "reduced_distance": [spatial_coding, "goal_by_distance"],
         "reduced_spatial": ["distance", "goal_by_distance"],
     }
-
-    n_jobs = min(len(_folds), max_jobs)
-
-    if verbose:
-        print(f"Running across {len(_folds)} folds with n_jobs={n_jobs}")
     cpd_dfs = []
     for fold in _folds:
         if verbose:
             print(f"Processing fold {fold}...")
-            results_dfs = []
+        results_dfs = []
         for model_name, regressor_classes in model_name2regressor_classes.items():
             results_df = xval_regression(
                 fold,
@@ -314,8 +310,8 @@ def reg_search_regression(
     y_test,
     model="Ridge",
     tol=1e-4,
-    max_rounds=35,
-    patience=15,
+    max_rounds=40,
+    patience=20,
     return_as="best",
     verbose=False,
 ):
@@ -368,7 +364,7 @@ def reg_search_regression(
                 if no_improve_count >= patience:
                     break
 
-        alpha *= 5
+        alpha *= 2
 
     if verbose:
         print(f"→ Best α = {best_alpha:.3e} (round {best_round}) with R² = {best_score:.4f}")
