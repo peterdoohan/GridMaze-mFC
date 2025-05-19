@@ -10,7 +10,9 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import Ridge
+from sklearn.linear_model import Ridge, PoissonRegressor
+from sklearn.metrics import mean_poisson_deviance
+
 from matplotlib import pyplot as plt
 
 from GridMaze.analysis.core import get_clusters as gc
@@ -66,7 +68,7 @@ def get_goal_cpd_df(
     spatial_coding="place_direction_onehot",
     distance_metrics=("steps_to_goal", "future"),
     goal_stratified_validation=True,
-    n_test_trials=None,
+    n_folds=None,
     trial_phases=["navigation"],
     max_steps_to_goal=30,
     min_spikes=300,
@@ -98,7 +100,7 @@ def get_goal_cpd_df(
     cluster_unique_IDs = input_data.spike_count.columns.values
     # get folds df
     folds_df = folds.get_folds_df(
-        session, goal_stratified=goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials
+        session, goal_stratified=goal_stratified_validation, return_unique_IDs=True, n_folds=n_folds
     )
     _folds = folds_df.columns.get_level_values(0).unique()
 
@@ -111,6 +113,20 @@ def get_goal_cpd_df(
     }
 
     n_jobs = min(len(_folds), max_jobs)
+
+    return (
+        "fold_0",
+        folds_df,
+        input_data,
+        cluster_unique_IDs,
+        model2regressor_classes,
+        pd_bases,
+        dist_bases,
+        distance_metrics,
+        goals,
+        simple_maze,
+        verbose,
+    )
 
     if verbose:
         print(f"Running across {len(_folds)} folds with n_jobs={n_jobs}")
@@ -195,41 +211,152 @@ def _process_fold(
     return cpd
 
 
-def reg_opt_Ridge(
-    X_train, y_train, X_test, y_test, tol=1e-4, max_rounds=35, patience=25, return_as="best", verbose=False
-):
-    """
-    Starts alpha=1.0 and doubles it every round.
-    - If score >= 0: stops early when you’ve gone `patience` rounds in a row
-    without improving R² by > tol.
-    - If score  < 0: always keeps going until max_rounds.
+# %% L2 OLS or Poisson regression
 
-    Returns
-    -------
-    best_alpha : float
-        α that gave the highest R²
-    best_score : float
-        that highest R²
-    best_round : int
-        the iteration number (1-based) when best_alpha was found
-    history : list of (alpha, score) tuples
-    """
+
+def xval_regression(
+    fold,
+    folds_df,
+    input_data,
+    regressor_classes,
+    model,
+    cluster_unique_IDs,
+    pd_bases,
+    dist_bases,
+    distance_metrics,
+    goals,
+    simple_maze,
+    verbose,
+):
+    """ """
+    # first find best alpha (regularisation) for every cluster across xval folds of training data
+    if verbose:
+        print("finding best xval alpha for each cluster...")
+    train_df = folds_df[fold]["train"]
+    cols = train_df.columns.values
+    xval_reg_results = []
+    for i, col in enumerate(cols):
+        other_cols = cols[cols != col]
+        val_trials = train_df[col].dropna().values
+        vtrain_trials = train_df[other_cols].unstack().dropna().values
+        val_df = input_data[input_data.trial_unique_ID.isin(val_trials)]
+        vtrain_df = input_data[input_data.trial_unique_ID.isin(vtrain_trials)]
+        X_vtrain, X_val, Y_vtrain, Y_val = get_test_train_arrays(
+            vtrain_df,
+            val_df,
+            regressor_classes=regressor_classes,
+            pd_bases=pd_bases,
+            distance_metrics=distance_metrics,
+            dist_bases=dist_bases,
+            goals=goals,
+            simple_maze=simple_maze,
+        )
+        for j, cid in enumerate(cluster_unique_IDs):
+            y_train, y_val = Y_vtrain[:, j], Y_val[:, j]
+            alpha, score = reg_search_regression(
+                X_vtrain, y_train, X_val, y_val, model, return_as="best", verbose=verbose
+            )
+            xval_reg_results.append(
+                {
+                    "cluster_unique_ID": cid,
+                    "alpha": alpha,
+                    "score": score,
+                    "vfold": i,
+                }
+            )
+    reg_df = pd.DataFrame(xval_reg_results)
+    # compute average score (R2) for each cluster and alpha, then take the best for each
+    cluster_reg_scores = reg_df.groupby(["cluster_unique_ID", "alpha"]).score.mean().unstack()
+    cluster2opt_reg = cluster_reg_scores.idxmax(axis=1)
+    # using opt alpha to run main test_train cpd
+    if verbose:
+        print("running main test_train cpd...")
+    test_df = folds_df[fold]["test"]
+    test_trials = test_df.unstack().dropna().values
+    test_df = input_data[input_data.trial_unique_ID.isin(test_trials)]
+    train_trials = train_df.unstack().dropna().values
+    train_df = input_data[input_data.trial_unique_ID.isin(train_trials)]
+    X_train, X_test, Y_train, Y_test = get_test_train_arrays(
+        train_df,
+        test_df,
+        regressor_classes=regressor_classes,
+        pd_bases=pd_bases,
+        distance_metrics=distance_metrics,
+        dist_bases=dist_bases,
+        goals=goals,
+        simple_maze=simple_maze,
+    )
+    fold_results = []
+    for i, cid in enumerate(cluster_unique_IDs):
+        y_train, y_test = Y_train[:, i], Y_test[:, i]
+        alpha = cluster2opt_reg[cid]
+        if model == "Ridge":
+            model = Ridge(alpha=alpha, max_iter=10_000, random_state=0)
+            model.fit(X_train, y_train)
+            score = model.score(X_test, y_test)
+            residuals = y_test - model.predict(X_test)
+            rss = np.sum(residuals**2)
+            fold_results.append(
+                {
+                    "cluster_unique_ID": cid,
+                    "alpha": alpha,
+                    "score": score,
+                    "rss": rss,
+                    "fold": fold,
+                }
+            )
+        elif model == "PossionRegressor":
+            model = PoissonRegressor(alpha=alpha, max_iter=10_000, random_state=0)
+            model.fit(X_train, y_train)
+            score = model.score(X_test, y_test)
+            y_pred = model.predict(X_test)
+            deviance = mean_poisson_deviance(y_test, y_pred)
+            fold_results.append(
+                {
+                    "cluster_unique_ID": cid,
+                    "alpha": alpha,
+                    "score": score,
+                    "deviance": deviance,
+                    "fold": fold,
+                }
+            )
+    return pd.DataFrame(fold_results)
+
+
+def reg_search_regression(
+    X_train,
+    y_train,
+    X_test,
+    y_test,
+    model="Ridge",
+    tol=1e-4,
+    max_rounds=35,
+    patience=25,
+    return_as="best",
+    verbose=False,
+):
+    """ """
+
     alpha = 1.0
     best_alpha = alpha
     best_score = -np.inf
-    best_rss = np.inf
     best_round = 0
 
     history = []
     no_improve_count = 0
 
     for round_idx in range(1, max_rounds + 1):
-        model = Ridge(alpha=alpha, max_iter=10_000, random_state=0)
+
+        if model == "Ridge":
+            model = Ridge(alpha=alpha, max_iter=10_000, random_state=0)
+        elif model == "PossionRegressor":
+            model = PoissonRegressor(alpha=alpha, max_iter=10_000, random_state=0)
+        else:
+            raise ValueError(f"Unknown model: {model}")
+
         model.fit(X_train, y_train)
         score = model.score(X_test, y_test)
-        residuals = y_test - model.predict(X_test)
-        rss = np.sum(residuals**2)
-        history.append((alpha, score, rss))
+        history.append((alpha, score))
         if verbose:
             print(f"Round {round_idx:2d}: α = {alpha:.3e},  R² = {score:.4f}")
 
@@ -237,7 +364,6 @@ def reg_opt_Ridge(
         if score > best_score + tol:
             best_score = score
             best_alpha = alpha
-            best_rss = rss
             best_round = round_idx
             no_improve_count = 0
 
@@ -257,7 +383,7 @@ def reg_opt_Ridge(
     if return_as == "history":
         return np.array(history).T
     elif return_as == "best":
-        return best_alpha, best_score, best_rss
+        return best_alpha, best_score
     else:
         raise ValueError(f"Unknown return_as: {return_as}")
 
