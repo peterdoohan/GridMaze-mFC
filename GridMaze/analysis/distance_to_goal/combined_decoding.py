@@ -156,6 +156,24 @@ def get_decoding_summary_df(metric="test_acc", permuted=False):
 # %% Functions
 
 
+def test_plots(subject_ID):
+    sessions = gs.get_maze_sessions(
+        subject_IDs=[subject_ID],
+        maze_names="all",
+        days_on_maze="all",
+        goal_subsets=["subset_1", "subset_2"],
+        with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
+        must_have_data=True,
+    )
+    for session in sessions:
+        decoding_df = run_goal_decoding_comparison(session, permuted=False, verbose=False, load_only=True)
+        fig, axes = plt.subplots(1, 2, figsize=(6, 3), sharey=True)
+        quick_plot(decoding_df, axes=axes, metric="test_acc", chance=1 / 12)
+        axes[0].set_title(f"{session.maze_name}-{session.day_on_maze}-{session.subject_ID}")
+
+    return
+
+
 def populate_goal_decoding_comparisons(subject_ID, permuted, n_repeats):
     """ """
     sessions = gs.get_maze_sessions(

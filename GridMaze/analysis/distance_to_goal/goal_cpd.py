@@ -274,7 +274,9 @@ def _process_reg_validation_fold(
     i,
     verbose,
 ):
-    """ """
+    """
+    for parallel processing
+    """
     other_cols = cols[cols != col]
     val_trials = train_df[col].dropna().values
     vtrain_trials = train_df[other_cols].unstack().dropna().values
@@ -312,8 +314,8 @@ def reg_search_regression(
     y_test,
     model="Ridge",
     tol=1e-4,
-    max_rounds=30,
-    patience=6,
+    max_rounds=35,
+    patience=15,
     return_as="best",
     verbose=False,
 ):
@@ -325,7 +327,11 @@ def reg_search_regression(
     Scores are R² for OLS and Pseudo R2 for Poisson regression.
     """
 
-    alpha = 1e-2
+    if model == "Ridge":
+        alpha = 1
+    else:
+        alpha = 1e-2
+
     best_alpha = alpha
     best_score = -np.inf
     best_round = 0
@@ -362,7 +368,7 @@ def reg_search_regression(
                 if no_improve_count >= patience:
                     break
 
-        alpha *= 2
+        alpha *= 5
 
     if verbose:
         print(f"→ Best α = {best_alpha:.3e} (round {best_round}) with R² = {best_score:.4f}")
