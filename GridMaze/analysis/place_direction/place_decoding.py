@@ -18,7 +18,7 @@ from joblib import Parallel, delayed
 
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import folds
-from GridMaze.analysis.distance_to_goal import decoding_utils as du
+from GridMaze.analysis.goal_coding import decoding_utils as du
 from GridMaze.analysis.distance_to_goal import bases as db
 
 # %% Global Variables
