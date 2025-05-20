@@ -13,7 +13,7 @@ from matplotlib import pyplot as plt
 from GridMaze.maze import partitions as mt
 from GridMaze.analysis.core import get_sessions as gs
 
-from GridMaze.analysis.distance_to_goal import decoding_utils as du
+from GridMaze.analysis.goal_coding import decoding_utils as du
 
 # %% Global Variables
 from GridMaze.paths import ANALYSIS_INFO_PATH
