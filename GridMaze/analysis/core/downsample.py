@@ -13,7 +13,7 @@ FRAME_RATE = 60  # Hz
 
 
 def downsample_nav_spikes_data(
-    navigation_df, spike_counts_df, resolution=0.2, distance_metrics=("steps_to_goal", "future")
+    navigation_df, spike_counts_df, resolution=0.2, distance_metrics=[("steps_to_goal", "future")]
 ):
     """ """
     # downsample spike counts by suming spikes within resolution window
@@ -29,7 +29,7 @@ def downsample_nav_spikes_data(
             ("trial_phase", ""),
             ("maze_position", "simple"),
             ("cardinal_movement_direction", ""),
-            distance_metrics,
+            *distance_metrics,
         ]
     ]
     # downsample navigation info by taking values in mid window

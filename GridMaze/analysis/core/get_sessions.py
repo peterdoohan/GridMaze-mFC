@@ -13,7 +13,6 @@ from GridMaze.maze import representations as mr
 # %% Global variables
 from GridMaze.paths import EXPERIMENT_INFO_PATH, PROCESSED_DATA_PATH, ANALYSIS_DATA_PATH
 
-# check git tacking??
 
 MAZE_PROCESSED_DATA_STRUCTURE2FILENAME = {
     "events_df": "events.htsv",
