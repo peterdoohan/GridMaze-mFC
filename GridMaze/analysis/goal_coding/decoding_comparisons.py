@@ -103,7 +103,7 @@ def get_decoding_summary_df(metric="test_acc", permuted=False, min_single_unit=0
             subject_IDs=[subject_ID],
             maze_names="all",
             days_on_maze="late",
-            goal_subsets=["subset_1", "subset_2"],
+            goal_subsets=["all"],
             with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
             must_have_data=True,
         )
@@ -163,7 +163,7 @@ def test_plots(subject_ID):
         subject_IDs=[subject_ID],
         maze_names="all",
         days_on_maze="all",
-        goal_subsets=["subset_1", "subset_2"],
+        goal_subsets=["all"],
         with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
         must_have_data=True,
     )
