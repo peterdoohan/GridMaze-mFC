@@ -6,6 +6,7 @@ Library for comparing distance to goal tuning metrics
 import json
 import numpy as np
 import pandas as pd
+from itertools import combinations
 from joblib import Parallel, delayed
 from sklearn.linear_model import Ridge, PoissonRegressor
 from sklearn.preprocessing import StandardScaler
@@ -31,9 +32,9 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 # %% L1, L2 ratio comparison function
 
 
-def compare_distance_metric_regression_weights(
+def get_distance_metric_weight_summaries(
     session,
-    resolution=0.25,
+    resolution=0.5,
     fixed_alpha=False,
     model="PoissonRegressor",
     n_bases=10,
@@ -41,6 +42,7 @@ def compare_distance_metric_regression_weights(
     metric_1="geodesic",
     metric_2="euclidean",
     max_steps_to_goal=25,
+    max_jobs=20,
 ):
     """
     Runs a Poission GLM predicting spikes from basis activations of two distance metrics.
@@ -86,53 +88,93 @@ def compare_distance_metric_regression_weights(
     X = scaler.fit_transform(X)
     Y = input_data.spike_count.values
     # fit each cluster in a Linear OLS / Possion GLM with distance metric featrues
-    results = []
-    for i, cluster in enumerate(cluster_unique_IDs):
-        y = Y[:, i]
-        alpha = cluster_alphas.loc[cluster]
-        if model == "PoissonRegressor":
-            Model = PoissonRegressor(alpha=alpha, max_iter=10_000)
-        elif model == "Ridge":
-            Model = Ridge(alpha=alpha, max_iter=10_000, random_state=0)
-        else:
-            raise ValueError(f"Unknown model: {model}")
-        Model.fit(X, y)
-        betas = Model.coef_
-        beta_metic_1 = betas[:n_bases]
-        beta_metic_2 = betas[n_bases:]
-        L1_metric_1, L1_metric_2 = np.abs(beta_metic_1).sum(), np.abs(beta_metic_2).sum()
-        L1_sum = L1_metric_1 + L1_metric_2
-        L2_metric_1, L2_metric_2 = np.linalg.norm(beta_metic_1, ord=2), np.linalg.norm(beta_metic_2, ord=2)
-        L2_sum = L2_metric_1 + L2_metric_2
-        for metric, L1, L2 in zip([metric_1, metric_2], [L1_metric_1, L1_metric_2], [L2_metric_1, L2_metric_2]):
-            results.append(
-                {
-                    "cluster_unique_ID": cluster,
-                    "alpha": alpha,
-                    "metric": metric,
-                    "L1_ratio": L1 / L1_sum,
-                    "L2_ratio": L2 / L2_sum,
-                }
-            )
-    results_df = pd.DataFrame(results)
-    # add session info before returning
-    results_df["subject_ID"] = session.subject_ID
-    results_df["maze_name"] = session.maze_name
-    results_df["day_on_maze"] = session.day_on_maze
+    cluster_results = Parallel(n_jobs=max_jobs)(
+        delayed(_process_cluster_betas)(
+            model,
+            X,
+            Y[:, i],
+            cluster_alphas.loc[cluster],
+            cluster,
+            n_bases,
+            metric_1,
+            metric_2,
+        )
+        for i, cluster in enumerate(cluster_unique_IDs)
+    )
+    results_df = pd.DataFrame([i for j in cluster_results for i in j])
     return results_df
 
 
+def _process_cluster_betas(model, X, y, alpha, cluster, n_bases, metric_1, metric_2):
+    """ """
+    if model == "PoissonRegressor":
+        Model = PoissonRegressor(alpha=alpha, max_iter=10_000)
+    elif model == "Ridge":
+        Model = Ridge(alpha=alpha, max_iter=10_000, random_state=0)
+    else:
+        raise ValueError(f"Unknown model: {model}")
+    Model.fit(X, y)
+    betas = Model.coef_
+    beta_metic_1 = betas[:n_bases]
+    beta_metic_2 = betas[n_bases:]
+    L1_metric_1, L1_metric_2 = np.abs(beta_metic_1).sum(), np.abs(beta_metic_2).sum()
+    L1_sum = L1_metric_1 + L1_metric_2
+    L2_metric_1, L2_metric_2 = np.linalg.norm(beta_metic_1, ord=2), np.linalg.norm(beta_metic_2, ord=2)
+    L2_sum = L2_metric_1 + L2_metric_2
+    results = []
+    for metric, L1, L2 in zip([metric_1, metric_2], [L1_metric_1, L1_metric_2], [L2_metric_1, L2_metric_2]):
+        results.append(
+            {
+                "cluster_unique_ID": cluster,
+                "alpha": alpha,
+                "metric": metric,
+                "L1_ratio": L1 / L1_sum,
+                "L2_ratio": L2 / L2_sum,
+            }
+        )
+    return results
+
+
 # %% CPD function
+def get_CPD_summary_df(verbose=True):
+    """ """
+    sessions = gs.get_maze_sessions(
+        subject_IDs="all",
+        maze_names="all",
+        days_on_maze="all",
+        with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
+        must_have_data=True,
+    )
+    distance_metrics = ["geodesic", "euclidean", "manhattan", "future"]
+    metric_pairs = list(combinations(distance_metrics, 2))
+    dfs = []
+    for session in sessions:
+        if verbose:
+            print(session.name)
+        cpd_dfs = []
+        for metric_1, metric_2 in metric_pairs:
+            _name = f"{metric_1}_vs_{metric_2}"
+            if verbose:
+                print(_name)
+            cpd_df = get_distance_metric_CPDs(session, metric_1=metric_1, metric_2=metric_2)
+            cpd_df.columns = pd.MultiIndex.from_product([[_name], cpd_df.columns])
+            cpd_dfs.append(cpd_df)
+        comparisons_df = pd.concat(cpd_dfs, axis=1)
+        comparisons_df[("subject_ID", "")] = session.subject_ID
+        comparisons_df[("maze_name", "")] = session.maze_name
+        comparisons_df[("day_on_maze", "")] = session.day_on_maze
+        dfs.append(comparisons_df)
+    return pd
 
 
 def get_distance_metric_CPDs(
     session,
+    metric_1="geodesic",
+    metric_2="euclidean",
     resolution=0.5,
     model="PoissonRegressor",
     n_bases=10,
     basis_type="gamma",
-    metric_1="geodesic",
-    metric_2="euclidean",
     max_steps_to_goal=25,
     max_jobs=20,
 ):
@@ -186,7 +228,7 @@ def get_distance_metric_CPDs(
             test_df = input_data[input_data.trial_unique_ID.isin(test_trials)]
             X_train, Y_train, X_test, Y_test = get_test_train_arrays(train_df, test_df, regressor_classes, scale_X=True)
             model_results = Parallel(n_jobs=max_jobs)(
-                delayed(_process_cluster)(
+                delayed(_process_cluster_cpd)(
                     X_train,
                     Y_train[:, i],
                     X_test,
@@ -214,7 +256,7 @@ def get_distance_metric_CPDs(
     return cpd_df
 
 
-def _process_cluster(X_train, y_train, X_test, y_test, model, alpha, cluster, fold, model_name):
+def _process_cluster_cpd(X_train, y_train, X_test, y_test, model, alpha, cluster, fold, model_name):
     if model == "PoissonRegressor":
         Model = PoissonRegressor(alpha=alpha, max_iter=10_000)
         Model.fit(X_train, y_train)
@@ -298,10 +340,9 @@ def get_train_folds_opt_alpha(
 
 
 def _process_cluster_reg_search(fold, i, cluster, X_train, Y_train, X_test, Y_test, model="PoissonRegressor"):
-    print(cluster)
     y_train, y_test = Y_train[:, i], Y_test[:, i]
     best_alpha, best_score = eu.reg_search_regression(
-        X_train, y_train, X_test, y_test, model=model, return_as="best", verbose=True, patience=5
+        X_train, y_train, X_test, y_test, model=model, return_as="best", verbose=False, patience=5
     )
     return {
         "fold": fold,
