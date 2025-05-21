@@ -6,6 +6,9 @@ Library for comparing distance to goal tuning metrics
 import json
 import numpy as np
 import pandas as pd
+import seaborn as sns
+from scipy.stats import ttest_rel
+from matplotlib import pyplot as plt
 from itertools import combinations
 from joblib import Parallel, delayed
 from sklearn.linear_model import Ridge, PoissonRegressor
@@ -31,17 +34,143 @@ RESULTS_DIR = RESULTS_PATH / "distaance_to_goal" / "distance_metrics"
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
 
+with open(EXPERIMENT_INFO_PATH / "maze_day2date.json", "r") as input_file:
+    MAZE_DAY2DATE = json.load(input_file)
+
+MAZE2MAX_DAY = {m: int((list(MAZE_DAY2DATE[m].keys())[-1])) for m in MAZE_DAY2DATE.keys()}
+
 DISTANCE_METRICS = ["geodesic", "euclidean", "manhattan", "future"]
+
+# %% plot results from summary dfs
+
+
+def plot_cross_subject_norm_comparison(
+    summary_df,
+    comparison="geodesic_vs_euclidean",
+    norm_metric="L1_ratio",
+    late_sessions=True,
+    ax=None,
+    print_stats=True,
+):
+    """ """
+    # process data
+    if late_sessions:
+        df = summary_df[summary_df.apply(_is_late_session, axis=1)].copy()
+    else:
+        df = summary_df.copy()
+    # drop info columns
+    df.drop(columns=[("maze_name", ""), ("day_on_maze", "")], inplace=True)
+    df.set_index("subject_ID", append=True, inplace=True)
+    comp_df = df[comparison][["metric", norm_metric]]
+    mean_norms_df = comp_df.groupby(["subject_ID", "metric"])[norm_metric].mean().reset_index()
+    # plot
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(3, 3))
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_ylim(0.45, 0.55)
+    ax.set_ylabel(norm_metric)
+    sns.pointplot(
+        data=mean_norms_df,
+        x="metric",
+        y="L1_ratio",
+        hue="subject_ID",
+        palette="viridis",
+        errorbar=None,
+        dodge=True,
+        markers="o",
+        linestyles="-",
+        legend=False,
+        markersize=10,
+        linewidth=5,
+    )
+    # do stats
+    if print_stats:
+        wide = mean_norms_df.pivot(index="subject_ID", columns="metric", values="L1_ratio")
+        t_stat, t_p = ttest_rel(wide["euclidean"], wide["geodesic"])
+        print(f"{comparison}: {norm_metric} t-stat: {t_stat:.3f}, p-value: {t_p:.3e}")
+
+
+def get_cross_subject_norm_diffs(summary_df, axes=None):
+    """
+    Calculate the average L1_ratio and L2_ratio over all (late session) neurons
+    for a subject under each distance metric pairwise comparison.
+    Compute the difference between each ratio across metric (intuitively, what fraction of extra
+    weight are attributed to metric 1 vs metric 2), separately for each subject.
+    Averge these matrics across subjects and plot for L1 and L2 separately.
+    """
+    # process data
+    L1_dfs, L2_dfs = [], []
+    for subject in SUBJECT_IDS:
+        subject_df = summary_df[summary_df.subject_ID == subject].copy()
+        # filter for "late" sessions
+        subject_df = subject_df[subject_df.apply(_is_late_session, axis=1)]
+        # drop info columns
+        subject_df.drop(columns=[("subject_ID", ""), ("maze_name", ""), ("day_on_maze", "")], inplace=True)
+        comparisons = subject_df.columns.get_level_values(0).unique()
+        subject_L1_df = pd.DataFrame(index=DISTANCE_METRICS, columns=DISTANCE_METRICS)
+        subject_L2_df = pd.DataFrame(index=DISTANCE_METRICS, columns=DISTANCE_METRICS)
+        for c in comparisons:
+            metric_1, metric_2 = c.split("_vs_")
+            comp_df = subject_df[c]
+            mean_norms = comp_df.groupby("metric")[["L1_ratio", "L2_ratio"]].mean()
+            norm_diff = mean_norms.loc[metric_1] - mean_norms.loc[metric_2]
+            subject_L1_df.loc[metric_1, metric_2] = norm_diff["L1_ratio"]
+            subject_L2_df.loc[metric_1, metric_2] = norm_diff["L2_ratio"]
+        L1_dfs.append(subject_L1_df)
+        L2_dfs.append(subject_L2_df)
+    output_dfs = []
+    for dfs in [L1_dfs, L2_dfs]:
+        # average diff norms across subjects
+        arr = arr = np.stack([df.values.astype(float) for df in dfs], axis=0)
+        masked = np.ma.masked_invalid(arr)  # mask all NaNs
+        mean_masked = masked.mean(axis=0)
+        output_dfs.append(
+            pd.DataFrame(index=DISTANCE_METRICS, columns=DISTANCE_METRICS, data=mean_masked.filled(np.nan))
+        )
+    if axes is None:
+        f, axes = plt.subplots(1, 2, figsize=(6, 3), sharey=True)
+    for i, (df, label) in enumerate(zip(output_dfs, ["L1", "L2"])):
+        ax = axes[i]
+        df = df.mul(100)  # convert to % weight difference
+        sns.heatmap(
+            df,
+            vmin=-4,
+            vmax=4,
+            cmap="coolwarm",
+            ax=ax,
+            square=True,
+            annot=True,
+            fmt=".1f",
+            cbar_kws={"shrink": 0.5, "label": f"Δ{label} (%)"},  # shrink colorbar length to 50%
+        )
+        ax.tick_params(
+            axis="x", which="both", top=True, bottom=False, labeltop=True, labelbottom=False, labelrotation=45
+        )
+
+
+def _is_late_session(row):
+    """Def as last seven days on the maze"""
+    max_days = MAZE2MAX_DAY[row[("maze_name", "")]]
+    if row[("day_on_maze", "")] > max_days - 7:
+        return True
+    else:
+        return False
+
+
 # %% populate weights pairwise comparisons and big summary df
 
 
-def get_weight_metrics_summary_df(verbose=True):
+def get_weight_metrics_summary_df(verbose=False):
     """ """
     save_path = RESULTS_DIR / "weight_metric_summary_df.csv"
     if save_path.exists():
         if verbose:
             print(f"Loading weight metric summaries df from {save_path}")
         results_df = pd.read_csv(save_path, index_col=0, header=[0, 1])
+        # fix cols when loading from disk
+        results_df.columns = pd.MultiIndex.from_tuples(
+            [c if "Unnamed" not in c[1] else (c[0], "") for c in results_df.columns]
+        )
     else:
         if verbose:
             print(f"loading sessions ...")
