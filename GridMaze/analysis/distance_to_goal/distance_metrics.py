@@ -31,18 +31,35 @@ RESULTS_DIR = RESULTS_PATH / "distaance_to_goal" / "distance_metrics"
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
 
+
+# %% populate weights pairwise comparisons and big summary df
+
+
+def run_pairwise_weight_summary_comparisons(session, verbose=True):
+    """ """
+    distance_metrics = ["geodesic", "euclidean", "manhattan", "future"]
+    metric_pairs = list(combinations(distance_metrics, 2))
+    cpd_dfs = []
+    for metric_1, metric_2 in metric_pairs:
+        _name = f"{metric_1}_vs_{metric_2}"
+        if verbose:
+            print(_name)
+
+    return
+
+
 # %% L1, L2 ratio comparison function
 
 
 def get_distance_metric_weight_summaries(
     session,
+    metric_1="geodesic",
+    metric_2="euclidean",
     resolution=0.5,
     fixed_alpha=False,
     model="PoissonRegressor",
     n_bases=10,
     basis_type="gamma",
-    metric_1="geodesic",
-    metric_2="euclidean",
     max_steps_to_goal=25,
     max_jobs=20,
 ):
@@ -145,7 +162,7 @@ def _process_cluster_betas(model, X, y, alpha, cluster, n_bases, metric_1, metri
 # %% CPD function
 
 
-def get_distance_metric_CPD_summaries(verbose=True):
+def get_distance_metric_CPD_summary_df(verbose=True):
     """ """
     save_path = RESULTS_DIR / "cpd_summary_df.csv"
     if save_path.exists():
@@ -153,6 +170,8 @@ def get_distance_metric_CPD_summaries(verbose=True):
             print(f"Loading CPD summaries df from {save_path}")
         results_df = pd.read_csv(save_path, index_col=0, header=[0, 1])
     else:
+        if verbose:
+            print(f"loading sessions ...")
         sessions = gs.get_maze_sessions(
             subject_IDs="all",
             maze_names="all",
@@ -164,10 +183,15 @@ def get_distance_metric_CPD_summaries(verbose=True):
         for session in sessions:
             if verbose:
                 print(session.name)
-            comparisons_df = run_pairwise_CPD_comparisons(session, verbose=verbose)
-            dfs.append(comparisons_df)
+            try:
+                comparisons_df = run_pairwise_CPD_comparisons(session, verbose=verbose)
+                dfs.append(comparisons_df)
+            except Exception as e:
+                if verbose:
+                    print(f"Error processing {session.name}: \n {e}")
         results_df = pd.concat(dfs, axis=0)
         # save
+        save_path.parent.mkdir(parents=True, exist_ok=True)
         results_df.to_csv(save_path, index=True)
         if verbose:
             print(f"Saved CPD summaries df to {save_path}")
