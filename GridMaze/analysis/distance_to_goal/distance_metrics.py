@@ -24,7 +24,9 @@ from GridMaze.analysis.distance_to_goal import distributions as dd
 
 
 # %% Global Variables
-from GridMaze.paths import EXPERIMENT_INFO_PATH
+from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
+
+RESULTS_DIR = RESULTS_PATH / "distaance_to_goal" / "distance_metrics"
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
@@ -60,11 +62,16 @@ def get_distance_metric_weight_summaries(
     basis_activation_dfs = []
     for i, m in enumerate([metric_1, metric_2]):
         _m = ("distance_to_goal", m)
+        if not m == "future":
+            _max = dd.get_distance_percentile(_m, percentile=85)
+        else:
+            # future distance distribution has large tail due to off task trials
+            _max = dd.get_distance_percentile("geodesic", percentile=85)
         basis_fn = db.distance_basis_generator(
             n_bases=n_bases,
             basis=basis_type,
             btype="distance",
-            max_distance=dd.get_distance_percentile(_m, percentile=85),
+            max_distance=_max,
         )
         basis_activations = basis_fn(input_data[_m])
         basis_activations = pd.DataFrame(
@@ -136,35 +143,54 @@ def _process_cluster_betas(model, X, y, alpha, cluster, n_bases, metric_1, metri
 
 
 # %% CPD function
-def get_CPD_summary_df(verbose=True):
+
+
+def get_distance_metric_CPD_summaries(verbose=True):
     """ """
-    sessions = gs.get_maze_sessions(
-        subject_IDs="all",
-        maze_names="all",
-        days_on_maze="all",
-        with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
-        must_have_data=True,
-    )
+    save_path = RESULTS_DIR / "cpd_summary_df.csv"
+    if save_path.exists():
+        if verbose:
+            print(f"Loading CPD summaries df from {save_path}")
+        results_df = pd.read_csv(save_path, index_col=0, header=[0, 1])
+    else:
+        sessions = gs.get_maze_sessions(
+            subject_IDs="all",
+            maze_names="all",
+            days_on_maze="all",
+            with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
+            must_have_data=True,
+        )
+        dfs = []
+        for session in sessions:
+            if verbose:
+                print(session.name)
+            comparisons_df = run_pairwise_CPD_comparisons(session, verbose=verbose)
+            dfs.append(comparisons_df)
+        results_df = pd.concat(dfs, axis=0)
+        # save
+        results_df.to_csv(save_path, index=True)
+        if verbose:
+            print(f"Saved CPD summaries df to {save_path}")
+    return results_df
+
+
+def run_pairwise_CPD_comparisons(session, verbose=True):
+    """ """
     distance_metrics = ["geodesic", "euclidean", "manhattan", "future"]
     metric_pairs = list(combinations(distance_metrics, 2))
-    dfs = []
-    for session in sessions:
+    cpd_dfs = []
+    for metric_1, metric_2 in metric_pairs:
+        _name = f"{metric_1}_vs_{metric_2}"
         if verbose:
-            print(session.name)
-        cpd_dfs = []
-        for metric_1, metric_2 in metric_pairs:
-            _name = f"{metric_1}_vs_{metric_2}"
-            if verbose:
-                print(_name)
-            cpd_df = get_distance_metric_CPDs(session, metric_1=metric_1, metric_2=metric_2)
-            cpd_df.columns = pd.MultiIndex.from_product([[_name], cpd_df.columns])
-            cpd_dfs.append(cpd_df)
-        comparisons_df = pd.concat(cpd_dfs, axis=1)
-        comparisons_df[("subject_ID", "")] = session.subject_ID
-        comparisons_df[("maze_name", "")] = session.maze_name
-        comparisons_df[("day_on_maze", "")] = session.day_on_maze
-        dfs.append(comparisons_df)
-    return pd
+            print(_name)
+        cpd_df = get_distance_metric_CPDs(session, metric_1=metric_1, metric_2=metric_2)
+        cpd_df.columns = pd.MultiIndex.from_product([[_name], cpd_df.columns])
+        cpd_dfs.append(cpd_df)
+    comparisons_df = pd.concat(cpd_dfs, axis=1)
+    comparisons_df[("subject_ID", "")] = session.subject_ID
+    comparisons_df[("maze_name", "")] = session.maze_name
+    comparisons_df[("day_on_maze", "")] = session.day_on_maze
+    return comparisons_df
 
 
 def get_distance_metric_CPDs(
@@ -389,16 +415,21 @@ def get_input_data(session, metric_1, metric_2, resolution=0.2, max_steps_to_goa
     single_units = convert.cluster_IDs2scluster_unique_IDs(session_info, single_units)
     spike_counts_df = spike_counts_df[[("spike_count", c) for c in single_units]]
     # downsample to specified resolution
+    distance_metrics = list(
+        set(
+            [
+                metric_1,
+                metric_2,
+                ("steps_to_goal", "future"),
+                ("distance_to_goal", "future"),
+            ]
+        )
+    )
     nav_info, spike_counts = ds.downsample_nav_spikes_data(
         navigation_df,
         spike_counts_df,
         resolution=resolution,
-        distance_metrics=[
-            metric_1,
-            metric_2,
-            ("steps_to_goal", "future"),
-            ("distance_to_goal", "future"),
-        ],
+        distance_metrics=distance_metrics,
     )
     # filter for navigation trial phaes and distance / steps to goal
     masks = [
@@ -411,11 +442,6 @@ def get_input_data(session, metric_1, metric_2, resolution=0.2, max_steps_to_goa
     # check remaining clusters pass min_spikes
     reject_clusters = spike_counts.columns[spike_counts.spike_count.sum().lt(min_spikes)]
     spike_counts = spike_counts.drop(columns=reject_clusters)
-    # remove future distance columns if they are not in metric_1 or metric_2
-    if metric_1 != ("distance_to_goal", "future") or metric_2 != ("distance_to_goal", "future"):
-        nav_info = nav_info.drop(columns=[("distance_to_goal", "future")])
-    if metric_1 != ("steps_to_goal", "future") or metric_2 != ("steps_to_goal", "future"):
-        nav_info = nav_info.drop(columns=[("steps_to_goal", "future")])
     # combine and return
     input_data = pd.concat([nav_info, spike_counts], axis=1)
     return input_data
