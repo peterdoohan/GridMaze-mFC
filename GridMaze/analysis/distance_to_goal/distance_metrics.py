@@ -89,6 +89,14 @@ def run_pairwise_weight_metric_comparisons(session, verbose=True):
     return comparisons_df
 
 
+def quick_weight_check(comparisons_df):
+    comparisons_df.drop(columns=[("subject_ID", ""), ("maze_name", ""), ("day_on_maze", "")], inplace=True)
+    parwise_comparisons = comparisons_df.columns.get_level_values(0).unique()
+    for pc in parwise_comparisons:
+        df = comparisons_df[pc]
+        print(df.groupby("metric")[["L1_ratio", "L2_ratio"]].mean())
+
+
 # %% L1, L2 ratio comparison function
 
 
@@ -120,7 +128,10 @@ def get_distance_metric_weight_summaries(
     basis_activation_dfs = []
     for i, m in enumerate([metric_1, metric_2]):
         _m = ("distance_to_goal", m)
-        _max = dd.get_distance_percentile(_m, percentile=85)
+        if m == "future":
+            _max = dd.get_distance_percentile(("distance_to_goal", "geodesic"), percentile=85)
+        else:
+            _max = dd.get_distance_percentile(_m, percentile=85)
         basis_fn = db.distance_basis_generator(
             n_bases=n_bases,
             basis=basis_type,
@@ -279,7 +290,10 @@ def get_distance_metric_CPDs(
     basis_activation_dfs = []
     for i, m in enumerate([metric_1, metric_2]):
         _m = ("distance_to_goal", m)
-        _max = dd.get_distance_percentile(_m, percentile=85)
+        if m == "future":
+            _max = dd.get_distance_percentile(("distance_to_goal", "geodesic"), percentile=85)
+        else:
+            _max = dd.get_distance_percentile(_m, percentile=85)
         basis_fn = db.distance_basis_generator(
             n_bases=n_bases,
             basis=basis_type,
