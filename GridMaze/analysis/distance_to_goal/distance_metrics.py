@@ -31,21 +31,62 @@ RESULTS_DIR = RESULTS_PATH / "distaance_to_goal" / "distance_metrics"
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
 
-
+DISTANCE_METRICS = ["geodesic", "euclidean", "manhattan", "future"]
 # %% populate weights pairwise comparisons and big summary df
 
 
-def run_pairwise_weight_summary_comparisons(session, verbose=True):
+def get_weight_metrics_summary_df(verbose=True):
     """ """
-    distance_metrics = ["geodesic", "euclidean", "manhattan", "future"]
-    metric_pairs = list(combinations(distance_metrics, 2))
-    cpd_dfs = []
+    save_path = RESULTS_DIR / "weight_metric_summary_df.csv"
+    if save_path.exists():
+        if verbose:
+            print(f"Loading weight metric summaries df from {save_path}")
+        results_df = pd.read_csv(save_path, index_col=0, header=[0, 1])
+    else:
+        if verbose:
+            print(f"loading sessions ...")
+        sessions = gs.get_maze_sessions(
+            subject_IDs="all",
+            maze_names="all",
+            days_on_maze="all",
+            with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
+            must_have_data=True,
+        )
+        dfs = []
+        for session in sessions:
+            if verbose:
+                print(session.name)
+            try:
+                comparisons_df = run_pairwise_weight_metric_comparisons(session, verbose=verbose)
+                dfs.append(comparisons_df)
+            except Exception as e:
+                if verbose:
+                    print(f"Error processing {session.name}: \n {e}")
+        results_df = pd.concat(dfs, axis=0)
+        # save
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        results_df.to_csv(save_path, index=True)
+        if verbose:
+            print(f"Saved weight metric summaries df to {save_path}")
+    return results_df
+
+
+def run_pairwise_weight_metric_comparisons(session, verbose=True):
+    """ """
+    metric_pairs = list(combinations(DISTANCE_METRICS, 2))
+    dfs = []
     for metric_1, metric_2 in metric_pairs:
         _name = f"{metric_1}_vs_{metric_2}"
         if verbose:
             print(_name)
-
-    return
+        weight_metrics_df = get_distance_metric_weight_summaries(session, metric_1, metric_2)
+        weight_metrics_df.columns = pd.MultiIndex.from_product([[_name], weight_metrics_df.columns])
+        dfs.append(weight_metrics_df)
+    comparisons_df = pd.concat(dfs, axis=1)
+    comparisons_df[("subject_ID", "")] = session.subject_ID
+    comparisons_df[("maze_name", "")] = session.maze_name
+    comparisons_df[("day_on_maze", "")] = session.day_on_maze
+    return comparisons_df
 
 
 # %% L1, L2 ratio comparison function
@@ -79,11 +120,7 @@ def get_distance_metric_weight_summaries(
     basis_activation_dfs = []
     for i, m in enumerate([metric_1, metric_2]):
         _m = ("distance_to_goal", m)
-        if not m == "future":
-            _max = dd.get_distance_percentile(_m, percentile=85)
-        else:
-            # future distance distribution has large tail due to off task trials
-            _max = dd.get_distance_percentile("geodesic", percentile=85)
+        _max = dd.get_distance_percentile(_m, percentile=85)
         basis_fn = db.distance_basis_generator(
             n_bases=n_bases,
             basis=basis_type,
@@ -126,6 +163,7 @@ def get_distance_metric_weight_summaries(
         for i, cluster in enumerate(cluster_unique_IDs)
     )
     results_df = pd.DataFrame([i for j in cluster_results for i in j])
+    results_df.set_index("cluster_unique_ID", inplace=True)
     return results_df
 
 
@@ -200,8 +238,7 @@ def get_distance_metric_CPD_summary_df(verbose=True):
 
 def run_pairwise_CPD_comparisons(session, verbose=True):
     """ """
-    distance_metrics = ["geodesic", "euclidean", "manhattan", "future"]
-    metric_pairs = list(combinations(distance_metrics, 2))
+    metric_pairs = list(combinations(DISTANCE_METRICS, 2))
     cpd_dfs = []
     for metric_1, metric_2 in metric_pairs:
         _name = f"{metric_1}_vs_{metric_2}"
@@ -242,11 +279,12 @@ def get_distance_metric_CPDs(
     basis_activation_dfs = []
     for i, m in enumerate([metric_1, metric_2]):
         _m = ("distance_to_goal", m)
+        _max = dd.get_distance_percentile(_m, percentile=85)
         basis_fn = db.distance_basis_generator(
             n_bases=n_bases,
             basis=basis_type,
             btype="distance",
-            max_distance=dd.get_distance_percentile(_m, percentile=85),
+            max_distance=_max,
         )
         basis_activations = basis_fn(input_data[_m])
         basis_activations = pd.DataFrame(
