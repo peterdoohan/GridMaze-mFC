@@ -101,10 +101,6 @@ def _analysis_data(filepath):
         data = _load_multiindex_parquet(filepath)
     elif analysis_data_structure == "frames.spikeCounts.parquet":
         data = _load_multiindex_parquet(filepath)
-    elif analysis_data_structure == "clusters.placeTuning.parquet":
-        data = pd.read_parquet(filepath)
-    elif analysis_data_structure == "clusters.placeDirectionTuning.parquet":
-        data = _load_multiindex_parquet(filepath)
     elif analysis_data_structure == "trial_aligned_rates.parquet":
         data = _load_multiindex_parquet(filepath)
     elif analysis_data_structure == "event_aligned_rates.parquet":
@@ -118,13 +114,7 @@ def _analysis_data(filepath):
             data[("available", d)] = data[("available", d)].map(_rebool)
     elif analysis_data_structure == "trajectory_decisions.parquet":
         data = _load_multiindex_parquet(filepath)
-    elif analysis_data_structure == "distance_to_goal_aligned_rates.parquet":
-        data = _load_multiindex_parquet(filepath)
-    elif analysis_data_structure == "head_direction_tuning.parquet":
-        data = _load_multiindex_parquet(filepath)
-    elif analysis_data_structure == "allocentric_angle_to_goal_tuning.parquet":
-        data = _load_multiindex_parquet(filepath)
-    elif analysis_data_structure == "egocentric_angle_to_goal_tuning.parquet":
+    elif analysis_data_structure == "clusters.distanceTuningMetrics.parquet":
         data = _load_multiindex_parquet(filepath)
     else:
         raise ValueError(f"Analysis data structure {analysis_data_structure} not recognised")
