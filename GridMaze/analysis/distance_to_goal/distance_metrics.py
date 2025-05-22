@@ -44,6 +44,28 @@ DISTANCE_METRICS = ["geodesic", "euclidean", "manhattan", "future"]
 # %% plot results from summary dfs
 
 
+def plot_comparison_timeseries(summary_df, comparison="geodesic_vs_euclidean", norm_metric="L1_ratio", ax=None):
+    """"""
+    metric_1, metric_2 = comparison.split("_vs_")
+    df = (
+        summary_df[
+            [
+                (comparison, norm_metric),
+                (comparison, "metric"),
+                ("maze_name", ""),
+                ("day_on_maze", ""),
+                ("subject_ID", ""),
+            ]
+        ]
+        .reset_index()
+        .copy()
+    )
+    df.groupby([("subject_ID", ""), ("maze_name", ""), ("day_on_maze", ""), (comparison, "metric")])[
+        [(comparison, norm_metric)]
+    ].mean().unstack().groupby([("maze_name", ""), ("day_on_maze", "")]).mean().loc["rooms_maze"].plot()
+    return
+
+
 def plot_cross_subject_norm_comparison(
     summary_df,
     comparison="geodesic_vs_euclidean",
@@ -65,10 +87,11 @@ def plot_cross_subject_norm_comparison(
     mean_norms_df = comp_df.groupby(["subject_ID", "metric"])[norm_metric].mean().reset_index()
     # plot
     if ax is None:
-        f, ax = plt.subplots(1, 1, figsize=(3, 3))
+        f, ax = plt.subplots(1, 1, figsize=(2, 2))
     ax.spines[["top", "right"]].set_visible(False)
     ax.set_ylim(0.45, 0.55)
     ax.set_ylabel(norm_metric)
+    ax.axhline(0.5, color="k", linestyle="--", alpha=0.5)
     sns.pointplot(
         data=mean_norms_df,
         x="metric",
@@ -80,8 +103,8 @@ def plot_cross_subject_norm_comparison(
         markers="o",
         linestyles="-",
         legend=False,
-        markersize=10,
-        linewidth=5,
+        markersize=8,
+        linewidth=4,
     )
     # do stats
     if print_stats:
@@ -90,7 +113,7 @@ def plot_cross_subject_norm_comparison(
         print(f"{comparison}: {norm_metric} t-stat: {t_stat:.3f}, p-value: {t_p:.3e}")
 
 
-def get_cross_subject_norm_diffs(summary_df, axes=None):
+def plot_all_pairwise_metric_norm_diffs(summary_df, norm_metric="L1_ratio", ax=None):
     """
     Calculate the average L1_ratio and L2_ratio over all (late session) neurons
     for a subject under each distance metric pairwise comparison.
@@ -99,7 +122,7 @@ def get_cross_subject_norm_diffs(summary_df, axes=None):
     Averge these matrics across subjects and plot for L1 and L2 separately.
     """
     # process data
-    L1_dfs, L2_dfs = [], []
+    dfs = []
     for subject in SUBJECT_IDS:
         subject_df = summary_df[summary_df.subject_ID == subject].copy()
         # filter for "late" sessions
@@ -107,45 +130,35 @@ def get_cross_subject_norm_diffs(summary_df, axes=None):
         # drop info columns
         subject_df.drop(columns=[("subject_ID", ""), ("maze_name", ""), ("day_on_maze", "")], inplace=True)
         comparisons = subject_df.columns.get_level_values(0).unique()
-        subject_L1_df = pd.DataFrame(index=DISTANCE_METRICS, columns=DISTANCE_METRICS)
-        subject_L2_df = pd.DataFrame(index=DISTANCE_METRICS, columns=DISTANCE_METRICS)
+        norm_diff_df = pd.DataFrame(index=DISTANCE_METRICS, columns=DISTANCE_METRICS)
         for c in comparisons:
             metric_1, metric_2 = c.split("_vs_")
             comp_df = subject_df[c]
-            mean_norms = comp_df.groupby("metric")[["L1_ratio", "L2_ratio"]].mean()
+            mean_norms = comp_df.groupby("metric")[norm_metric].mean()
             norm_diff = mean_norms.loc[metric_1] - mean_norms.loc[metric_2]
-            subject_L1_df.loc[metric_1, metric_2] = norm_diff["L1_ratio"]
-            subject_L2_df.loc[metric_1, metric_2] = norm_diff["L2_ratio"]
-        L1_dfs.append(subject_L1_df)
-        L2_dfs.append(subject_L2_df)
-    output_dfs = []
-    for dfs in [L1_dfs, L2_dfs]:
-        # average diff norms across subjects
-        arr = arr = np.stack([df.values.astype(float) for df in dfs], axis=0)
-        masked = np.ma.masked_invalid(arr)  # mask all NaNs
-        mean_masked = masked.mean(axis=0)
-        output_dfs.append(
-            pd.DataFrame(index=DISTANCE_METRICS, columns=DISTANCE_METRICS, data=mean_masked.filled(np.nan))
-        )
-    if axes is None:
-        f, axes = plt.subplots(1, 2, figsize=(6, 3), sharey=True)
-    for i, (df, label) in enumerate(zip(output_dfs, ["L1", "L2"])):
-        ax = axes[i]
-        df = df.mul(100)  # convert to % weight difference
-        sns.heatmap(
-            df,
-            vmin=-4,
-            vmax=4,
-            cmap="coolwarm",
-            ax=ax,
-            square=True,
-            annot=True,
-            fmt=".1f",
-            cbar_kws={"shrink": 0.5, "label": f"Δ{label} (%)"},  # shrink colorbar length to 50%
-        )
-        ax.tick_params(
-            axis="x", which="both", top=True, bottom=False, labeltop=True, labelbottom=False, labelrotation=45
-        )
+            norm_diff_df.loc[metric_1, metric_2] = norm_diff
+        dfs.append(norm_diff_df)
+    # average diff norms across subjects
+    arr = np.stack([df.values.astype(float) for df in dfs], axis=0)
+    masked = np.ma.masked_invalid(arr)  # mask all NaNs
+    mean_masked = masked.mean(axis=0)
+    df = pd.DataFrame(index=DISTANCE_METRICS, columns=DISTANCE_METRICS, data=mean_masked.filled(np.nan))
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(2, 2), sharey=True)
+    df = df.mul(100)  # convert to % weight difference
+    for d in DISTANCE_METRICS:
+        df.loc[d, d] = 0
+    sns.heatmap(
+        df,
+        vmin=-4,
+        vmax=4,
+        cmap="coolwarm",
+        ax=ax,
+        square=True,
+        fmt=".1f",
+        cbar_kws={"shrink": 0.75, "label": f"Δ{norm_metric} (%)"},
+    )
+    ax.tick_params(axis="x", which="both", top=True, bottom=False, labeltop=True, labelbottom=False, labelrotation=45)
 
 
 def _is_late_session(row):

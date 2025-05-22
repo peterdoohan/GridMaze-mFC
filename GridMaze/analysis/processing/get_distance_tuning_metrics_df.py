@@ -28,6 +28,7 @@ def get_distance_tuning_metrics_df(
     max_steps_to_goal=30,
     moving_only=False,
     bin_spacing=0.1,
+    alpha=0.01,
 ):
     """ """
     # load data
@@ -45,12 +46,18 @@ def get_distance_tuning_metrics_df(
     distance_info = navigation_df[
         [("goal", ""), ("trial", ""), ("moving", ""), ("steps_to_goal", "future"), distance_metrics]
     ].droplevel(1, axis=1)
-
+    metric_cols = [
+        ("distance_tuned", ""),
+        ("split_half_corr", "value"),
+        ("split_half_corr", "pvalue"),
+        ("gamma_fit", ""),
+        ("gaussian_fit", ""),
+        ("polynomial_fit", ""),
+    ]
+    metrics_df = pd.DataFrame(index=cluster_unique_IDs, columns=[])
     for cluster in cluster_unique_IDs:
         if cluster not in single_units:
             continue
-        cluster = "m2.2022-07-04.maze_cluster99"
-        print(cluster)
         cluster_rates = navigation_spike_rates_df.xs(cluster, level=1, axis=1)
         distance_rates_df = pd.concat([distance_info, cluster_rates], axis=1)
         distance_tuning_df = dtg.get_distance_to_goal_tuning_df(
@@ -60,23 +67,12 @@ def get_distance_tuning_metrics_df(
             max_steps_to_goal=max_steps_to_goal,
             moving_only=moving_only,
         )
-        return distance_tuning_df
-        is_distance_tuned = _is_distance_tuned(distance_tuning_df, n_reps=100)
-        f, ax = plt.subplots(1, 1, figsize=(3, 1.5), clear=True)
-        dtg.plot_distance_tuning(
-            distance_tuning_df,
-            distance_metrics,
-            ax=ax,
-            color="darkcyan",
-            smooth_SD=False,
-        )
-        ax.set_title(f"distance tuned: {is_distance_tuned}", fontsize=8)
-        return
+        mean_corr, p_val, sig = _get_distance_tuning_metrics(distance_tuning_df, n_reps=50, alpha=alpha)
 
     return
 
 
-def _is_distance_tuned(distance_tuning_df, n_reps=500, alpha=0.005):
+def _get_distance_tuning_metrics(distance_tuning_df, n_reps=50, alpha=0.01):
     """ """
     trials = distance_tuning_df.trial.unique()
     mid = len(trials) // 2
@@ -87,11 +83,9 @@ def _is_distance_tuned(distance_tuning_df, n_reps=500, alpha=0.005):
         split_2 = distance_tuning_df[distance_tuning_df.trial.isin(trials_shuffled[mid:])]
         curve_1 = split_1.distance.mean()
         curve_2 = split_2.distance.mean()
-        corrs.append(curve_1.corr(curve_2))
+        corrs.append(curve_1.corr(curve_2, method="spearman"))
     result = ttest_1samp(corrs, 0, alternative="greater")
     p_val = result.pvalue
-    return p_val
-    if p_val < alpha:
-        return True
-    else:
-        return False
+    mean_corr = np.mean(corrs)
+    sig = True if p_val < alpha else False
+    return mean_corr, p_val, sig
