@@ -53,15 +53,20 @@ def get_distance_tuning_metrics_df(
     distance_info = navigation_df[
         [("goal", ""), ("trial", ""), ("moving", ""), ("steps_to_goal", "future"), distance_metrics]
     ].droplevel(1, axis=1)
-    metric_cols = [
+    curve_fit_fns = [gamma_2p, gamma_4p, gaussian_2p, gaussian_4p, polynomial_4p]
+    cols = [
+        ("single_unit", ""),
         ("distance_tuned", ""),
         ("split_half_corr", "value"),
         ("split_half_corr", "pvalue"),
-    ]
-    metrics_df = pd.DataFrame(index=cluster_unique_IDs, columns=[])
-    for cluster in cluster_unique_IDs:
-        if cluster not in single_units:
-            continue
+    ] + [(fn.__name__, x) for fn in curve_fit_fns for x in _get_param_names(fn)]
+    metrics_df = pd.DataFrame(index=cluster_unique_IDs, columns=pd.MultiIndex.from_tuples(cols), data=np.nan)
+    # fix boolian dtype cols
+    for col in [("single_unit", ""), ("distance_tuned", "")]:
+        metrics_df[col] = metrics_df[col].astype(bool)
+        metrics_df[col] = False  # false by default
+    for cluster in single_units:
+        metrics_df.loc[cluster, ("single_unit", "")] = True
         cluster_rates = navigation_spike_rates_df.xs(cluster, level=1, axis=1)
         distance_rates_df = pd.concat([distance_info, cluster_rates], axis=1)
         distance_tuning_df = dtg.get_distance_to_goal_tuning_df(
@@ -71,12 +76,21 @@ def get_distance_tuning_metrics_df(
             max_steps_to_goal=max_steps_to_goal,
             moving_only=moving_only,
         )
-        # mean_corr, p_val, sig = _get_distance_tuning_metrics(distance_tuning_df, n_reps=50, alpha=alpha)
-        tc = distance_tuning_df.distance.mean()
-        for fit_fn in [gamma_2p, gamma_4p, gaussian_2p, gaussian_4p, polynomial_4p]:
-            params = tuning_curve_fit(tc, fit_fn)
-
-    return
+        mean_corr, p_val, sig = _get_distance_tuning_metrics(distance_tuning_df, n_reps=50, alpha=alpha)
+        metrics_df.loc[cluster, ("split_half_corr", "value")] = mean_corr
+        metrics_df.loc[cluster, ("split_half_corr", "pvalue")] = p_val
+        metrics_df.loc[cluster, ("distance_tuned", "")] = sig
+        if sig:
+            tc = distance_tuning_df.distance.mean()
+            for fit_fn in curve_fit_fns:
+                params = tuning_curve_fit(tc, fit_fn)
+                for param, value in params.items():
+                    fn_name = fit_fn.__name__
+                    metrics_df.loc[cluster, (fn_name, param)] = value
+    # return
+    metrics_df.reset_index(inplace=True)
+    metrics_df.rename(columns={"index": "cluster_unique_ID"}, inplace=True)
+    return metrics_df.sort_index(axis=1)
 
 
 def _get_distance_tuning_metrics(distance_tuning_df, n_reps=50, alpha=0.01):

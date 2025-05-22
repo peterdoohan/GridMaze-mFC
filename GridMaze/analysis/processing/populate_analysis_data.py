@@ -3,6 +3,7 @@
 # %% Imports
 import json
 import pandas as pd
+from joblib import Parallel, delayed
 
 from .get_navigation_df import get_navigation_df
 from .get_navigation_spike_dfs import get_navigation_spike_rates_df, get_navigation_spike_counts_df
@@ -10,7 +11,7 @@ from .get_time_aligned_rates_dfs import get_trial_aligned_rates_df, get_event_al
 from .get_navigation_strategies_dfs import get_navigation_strategies_df
 from .get_trajectory_decisions_dfs import get_trajectory_decisions_df
 
-from .get_distance_to_goal_aligned_rates_dfs import get_distance_to_goal_aligned_rates_df
+from .get_distance_tuning_metrics_df import get_distance_tuning_metrics_df
 
 # %% Global variables
 
@@ -42,16 +43,21 @@ ANALYSIS_DATA_STRUCTURES_DF = pd.DataFrame(
             "session_types": ["maze"],
         },
         {
-            "filename": "distance_to_goal_aligned_rates.parquet",
-            "function": get_distance_to_goal_aligned_rates_df,
+            "filename": "clusters.distanceTuningMetrics.parquet",
+            "function": get_distance_tuning_metrics_df,
             "session_types": ["maze"],
         },
     ]
 )
+
+
+# %%
+
+
 # %% Process analysis data single process
 
 
-def populate_analysis_data(data_structures="all", overwrite=False, subject_IDs="all"):
+def populate_analysis_data(data_structures="all", overwrite=False, subject_IDs="all", max_jobs=20):
     """ """
     subject_IDs = SUBJECT_IDS if subject_IDs == "all" else subject_IDs
     data_strucutres_df = (
@@ -62,7 +68,8 @@ def populate_analysis_data(data_structures="all", overwrite=False, subject_IDs="
     for subject in subject_IDs:
         processed_data_paths = [f for f in (PROCESSED_DATA_PATH / subject).iterdir() if f.is_dir()]
         analysis_data_paths = [ANALYSIS_DATA_PATH / subject / p.name for p in processed_data_paths]
-        for processed_data_path, analysis_data_path in zip(processed_data_paths, analysis_data_paths):
+
+        def _process_session(processed_data_path, analysis_data_path):
             if not analysis_data_path.exists():
                 analysis_data_path.mkdir(parents=True)
             print(f"Saving analysis data for {processed_data_path}")
@@ -79,6 +86,11 @@ def populate_analysis_data(data_structures="all", overwrite=False, subject_IDs="
                 except FileNotFoundError:
                     print(f"FileNotFoundError: {row.function.__name__} failed for {processed_data_path}")
                     pass
+
+        Parallel(n_jobs=-1)(
+            delayed(_process_session)(processed_data_path, analysis_data_path)
+            for processed_data_path, analysis_data_path in zip(processed_data_paths, analysis_data_paths)
+        )
 
 
 def populate_analysis_data_single_session(
