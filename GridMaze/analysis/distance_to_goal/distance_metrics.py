@@ -4,6 +4,7 @@ Library for comparing distance to goal tuning metrics
 
 # %% Imports
 import json
+from tkinter import font
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -41,7 +42,125 @@ MAZE2MAX_DAY = {m: int((list(MAZE_DAY2DATE[m].keys())[-1])) for m in MAZE_DAY2DA
 
 DISTANCE_METRICS = ["geodesic", "euclidean", "manhattan", "future"]
 
-# %% plot results from summary dfs
+
+# %% plot results from CPD summary
+
+
+def plot_CPD_timeseries(summary_df, axes=None, comparison="geodesic_vs_euclidean", group_days=3):
+    """ """
+    # remove CPD outliers
+    outlier_mask = summary_df[comparison].lt(-0.5).any(axis=1)
+    df = summary_df[~outlier_mask]
+    if group_days:
+        # update maze day label to group days together
+        df.loc[:, ("day_on_maze", "")] = (df.day_on_maze // group_days) * group_days
+    # process data
+    df = df.groupby(["subject_ID", "maze_name", "day_on_maze"])[comparison].mean()[comparison]
+    sub_grouped_df = df.groupby(["maze_name", "day_on_maze"])
+    mean_df = sub_grouped_df.mean()
+    sem_df = sub_grouped_df.sem()
+    # plotting
+    metric_1, metric_2 = comparison.split("_vs_")
+    mean_df = mean_df.mul(100)  # convert to %
+    sem_df = sem_df.mul(100)
+    if axes is None:
+        f, axes = plt.subplots(1, 3, figsize=(6, 2), sharey=True)
+    for ax in axes:
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.axhline(0, color="k", linestyle="--", alpha=0.5)
+    axes[0].set_ylabel("CPD (%)")
+
+    for maze_name, ax in zip(MAZE_DAY2DATE.keys(), axes):
+        for metric in [metric_1, metric_2]:
+            mean = mean_df.loc[maze_name][metric]
+            sem = sem_df.loc[maze_name][metric]
+            ax.plot(mean.index, mean.values, label=metric)
+            ax.fill_between(mean.index, mean - sem, mean + sem, alpha=0.2)
+            ax.set_xlabel("days on maze")
+        ax.set_title(maze_name)
+    axes[-1].legend(fontsize=8, loc="lower left")
+
+
+def plot_cross_subject_CPD_comparison(
+    summary_df, comparison="geodesic_vs_euclidean", maze_names=["maze_1", "maze_2"], late_sessions=True, ax=None
+):
+    """ """
+    # filter data
+    df = summary_df[summary_df.maze_name.isin(maze_names)]
+    if late_sessions:
+        df = df[df.apply(_is_late_session, axis=1)]
+    df.drop(columns=[("maze_name", ""), ("day_on_maze", "")], inplace=True)
+    df.set_index("subject_ID", append=True, inplace=True)
+    # process data
+    mean_cpd = df[comparison].groupby("subject_ID").mean().unstack().reset_index()
+    mean_cpd.columns = ["metric", "subject_ID", "CPD"]
+    # plot
+    mean_cpd["CPD"] = mean_cpd["CPD"].mul(100)  # convert to %
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(2, 2))
+
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_ylabel("CPD (%)")
+    ax.axhline(0, color="k", linestyle="--", alpha=0.5)
+    sns.pointplot(
+        data=mean_cpd,
+        x="metric",
+        y="CPD",
+        hue="subject_ID",
+        errorbar=None,
+        dodge=False,
+        markers="o",
+        linestyles="-",
+        legend=False,
+        markersize=8,
+        linewidth=4,
+    )
+    ax.set_ylim(-1, 2)
+    return
+
+
+def plot_pairwise_CPD_summary(summary_df, late_sessions=True, maze_names=["maze_1", "maze_2"], ax=None):
+    """ """
+    # process summary data
+    df = summary_df[summary_df.maze_name.isin(maze_names)]
+    if late_sessions:
+        df = df[df.apply(_is_late_session, axis=1)]
+    dfs = []
+    for subject in SUBJECT_IDS:
+        subject_df = df[df.subject_ID == subject].copy()
+        subject_df.drop(columns=[("subject_ID", ""), ("maze_name", ""), ("day_on_maze", "")], inplace=True)
+        comparisons = subject_df.columns.get_level_values(0).unique()
+        cpd_df = pd.DataFrame(index=DISTANCE_METRICS, columns=DISTANCE_METRICS, dtype=float)
+        for c in comparisons:
+            metric_1, metric_2 = c.split("_vs_")
+            mean_cpd = subject_df[c].mean()
+            cpd_df.loc[metric_1, metric_2] = mean_cpd.loc[metric_1]
+            cpd_df.loc[metric_2, metric_1] = mean_cpd.loc[metric_2]
+        cpd_df.fillna(0, inplace=True)
+        dfs.append(cpd_df)
+    # average CPDs across subjects
+    subject_av_cpds = np.mean(np.stack([x.values for x in dfs]), axis=0)
+    output_df = pd.DataFrame(index=DISTANCE_METRICS, columns=DISTANCE_METRICS, data=subject_av_cpds)
+
+    # plot
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(2, 2), sharey=True)
+    output_df = output_df.mul(100)  # convert to %
+    for d in DISTANCE_METRICS:
+        output_df.loc[d, d] = np.nan
+    sns.heatmap(
+        output_df,
+        vmin=0,
+        cmap="plasma",
+        ax=ax,
+        square=True,
+        fmt=".1f",
+        cbar_kws={"shrink": 0.75, "label": f"CPD (%)"},
+    )
+    ax.tick_params(axis="x", which="both", top=True, bottom=False, labeltop=True, labelbottom=False, labelrotation=45)
+
+
+# %% plot results from weight summary dfs
 
 
 def plot_comparison_timeseries(summary_df, comparison="geodesic_vs_euclidean", norm_metric="L1_ratio", ax=None):
@@ -353,13 +472,17 @@ def _process_cluster_betas(model, X, y, alpha, cluster, n_bases, metric_1, metri
 # %% CPD function
 
 
-def get_distance_metric_CPD_summary_df(verbose=True):
+def get_distance_metric_CPD_summary_df(verbose=False):
     """ """
     save_path = RESULTS_DIR / "cpd_summary_df.csv"
     if save_path.exists():
         if verbose:
             print(f"Loading CPD summaries df from {save_path}")
         results_df = pd.read_csv(save_path, index_col=0, header=[0, 1])
+        # fix cols when loading from disk
+        results_df.columns = pd.MultiIndex.from_tuples(
+            [c if "Unnamed" not in c[1] else (c[0], "") for c in results_df.columns]
+        )
     else:
         if verbose:
             print(f"loading sessions ...")
