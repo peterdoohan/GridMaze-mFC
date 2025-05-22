@@ -148,10 +148,12 @@ def plot_pairwise_CPD_summary(summary_df, late_sessions=True, maze_names=["maze_
     output_df = output_df.mul(100)  # convert to %
     for d in DISTANCE_METRICS:
         output_df.loc[d, d] = np.nan
+    cmap = sns.color_palette("Reds", as_cmap=True)
+    cmap.set_bad(color="lightgrey")
     sns.heatmap(
         output_df,
         vmin=0,
-        cmap="plasma",
+        cmap=cmap,
         ax=ax,
         square=True,
         fmt=".1f",
@@ -163,11 +165,22 @@ def plot_pairwise_CPD_summary(summary_df, late_sessions=True, maze_names=["maze_
 # %% plot results from weight summary dfs
 
 
-def plot_comparison_timeseries(summary_df, comparison="geodesic_vs_euclidean", norm_metric="L1_ratio", ax=None):
+def plot_weights_comparison_timeseries(
+    summary_df,
+    comparison="geodesic_vs_euclidean",
+    plot_metric="geodesic",
+    norm_metric="L1_ratio",
+    group_days=3,
+    axes=None,
+):
     """"""
-    metric_1, metric_2 = comparison.split("_vs_")
+    # process data
+    df = summary_df.copy()
+    if group_days:
+        # update maze day label to group days together
+        df.loc[:, ("day_on_maze", "")] = (df.day_on_maze // group_days) * group_days
     df = (
-        summary_df[
+        df[
             [
                 (comparison, norm_metric),
                 (comparison, "metric"),
@@ -179,10 +192,32 @@ def plot_comparison_timeseries(summary_df, comparison="geodesic_vs_euclidean", n
         .reset_index()
         .copy()
     )
-    df.groupby([("subject_ID", ""), ("maze_name", ""), ("day_on_maze", ""), (comparison, "metric")])[
-        [(comparison, norm_metric)]
-    ].mean().unstack().groupby([("maze_name", ""), ("day_on_maze", "")]).mean().loc["rooms_maze"].plot()
-    return
+    timeseries_df = (
+        df.groupby([("subject_ID", ""), ("maze_name", ""), ("day_on_maze", ""), (comparison, "metric")])[
+            [(comparison, norm_metric)]
+        ]
+        .mean()[comparison]
+        .unstack()
+    )
+    sub_grouped_df = timeseries_df.groupby([("maze_name", ""), ("day_on_maze", "")])
+    mean_df = sub_grouped_df.mean()[norm_metric][plot_metric]
+    sem_df = sub_grouped_df.sem()[norm_metric][plot_metric]
+
+    # plotting
+    if axes is None:
+        f, axes = plt.subplots(1, 3, figsize=(6, 2), sharey=True)
+    for ax in axes:
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.axhline(0.5, color="k", linestyle="--", alpha=0.5)
+    for maze_name, ax in zip(MAZE_DAY2DATE.keys(), axes):
+        mean = mean_df.loc[maze_name]
+        sem = sem_df.loc[maze_name]
+        ax.plot(mean.index, mean.values, label=plot_metric)
+        ax.fill_between(mean.index, mean - sem, mean + sem, alpha=0.2)
+        ax.set_xlabel("days on maze")
+        ax.set_title(maze_name)
+    axes[0].set_ylabel(norm_metric)
+    axes[-1].legend(fontsize=8, loc="upper left")
 
 
 def plot_cross_subject_norm_comparison(
@@ -190,15 +225,16 @@ def plot_cross_subject_norm_comparison(
     comparison="geodesic_vs_euclidean",
     norm_metric="L1_ratio",
     late_sessions=True,
+    maze_names=["maze_1", "maze_2"],
     ax=None,
     print_stats=True,
 ):
     """ """
     # process data
+    metric_1, metric_2 = comparison.split("_vs_")
+    df = summary_df[summary_df.maze_name.isin(maze_names)]
     if late_sessions:
-        df = summary_df[summary_df.apply(_is_late_session, axis=1)].copy()
-    else:
-        df = summary_df.copy()
+        df = df[df.apply(_is_late_session, axis=1)].copy()
     # drop info columns
     df.drop(columns=[("maze_name", ""), ("day_on_maze", "")], inplace=True)
     df.set_index("subject_ID", append=True, inplace=True)
@@ -213,12 +249,12 @@ def plot_cross_subject_norm_comparison(
     ax.axhline(0.5, color="k", linestyle="--", alpha=0.5)
     sns.pointplot(
         data=mean_norms_df,
+        order=[metric_1, metric_2],
         x="metric",
-        y="L1_ratio",
+        y=norm_metric,
         hue="subject_ID",
-        palette="viridis",
         errorbar=None,
-        dodge=True,
+        dodge=False,
         markers="o",
         linestyles="-",
         legend=False,
@@ -227,12 +263,14 @@ def plot_cross_subject_norm_comparison(
     )
     # do stats
     if print_stats:
-        wide = mean_norms_df.pivot(index="subject_ID", columns="metric", values="L1_ratio")
+        wide = mean_norms_df.pivot(index="subject_ID", columns="metric", values=norm_metric)
         t_stat, t_p = ttest_rel(wide["euclidean"], wide["geodesic"])
         print(f"{comparison}: {norm_metric} t-stat: {t_stat:.3f}, p-value: {t_p:.3e}")
 
 
-def plot_all_pairwise_metric_norm_diffs(summary_df, norm_metric="L1_ratio", ax=None):
+def plot_all_pairwise_metric_norm_diffs(
+    summary_df, norm_metric="L1_ratio", late_sessions=True, maze_names=["maze_1", "maze_2"], ax=None
+):
     """
     Calculate the average L1_ratio and L2_ratio over all (late session) neurons
     for a subject under each distance metric pairwise comparison.
@@ -241,9 +279,12 @@ def plot_all_pairwise_metric_norm_diffs(summary_df, norm_metric="L1_ratio", ax=N
     Averge these matrics across subjects and plot for L1 and L2 separately.
     """
     # process data
+    df = summary_df[summary_df.maze_name.isin(maze_names)]
+    if late_sessions:
+        df = df[df.apply(_is_late_session, axis=1)].copy()
     dfs = []
     for subject in SUBJECT_IDS:
-        subject_df = summary_df[summary_df.subject_ID == subject].copy()
+        subject_df = df[df.subject_ID == subject].copy()
         # filter for "late" sessions
         subject_df = subject_df[subject_df.apply(_is_late_session, axis=1)]
         # drop info columns
