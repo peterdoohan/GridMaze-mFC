@@ -25,7 +25,7 @@ CURVE_FITS = ["gamma_4p", "gaussian_4p", "polynomial_4p"]
 # %%
 
 
-def get_population_tuning_df(late_sessions=True, min_split_half_corr=0.5, min_r2=0.5, fit="gamma_4p", verbose=False):
+def get_population_tuning_df(late_sessions=True, min_split_half_corr=0.5, min_r2=0.5, fit="gamma_4p", verbose=True):
     """ """
     days_on_maze = "late" if late_sessions else "all"
     if verbose:
@@ -43,10 +43,11 @@ def get_population_tuning_df(late_sessions=True, min_split_half_corr=0.5, min_r2
         distance_tuning_df = _get_session_distance_tuning(session)
         distance_tuning_df = distance_tuning_df.reset_index()
         distance_tuning_df = distance_tuning_df.rename(columns={"index": "cluster_unique_ID"}, level=0)
-        distance_metrics_df = session.cluster_distance_tuning_metrics
+        distance_metrics_df = session.cluster_distance_tuning_metrics.set_index(("cluster_unique_ID", ""))
+        distance_metrics_df = distance_metrics_df.xs(fit, axis=1, drop_level=False).reset_index()
         df = pd.merge(  # conbine tuning curves and (precomputed) tuning curve fit metrics
             distance_tuning_df,
-            distance_metrics_df.xs("gamma_4p", axis=1, drop_level=False),
+            distance_metrics_df,
             on="cluster_unique_ID",
             how="inner",
         )
