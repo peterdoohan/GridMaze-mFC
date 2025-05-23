@@ -306,7 +306,9 @@ class Cluster:
                 return None
             # filter data
             navigation_rates_df = navigation_rates_df.xs(self.cluster_unique_ID, level=1, axis=1).reset_index(drop=True)
-            distance_info = navigation_df[[("goal", ""), ("trial", ""), ("moving", ""), metrics]].droplevel(1, axis=1)
+            distance_info = navigation_df[
+                [("goal", ""), ("trial", ""), ("moving", ""), ("steps_to_goal", "future"), metrics]
+            ].droplevel(1, axis=1)
             distance_rates_df = pd.concat([distance_info, navigation_rates_df], axis=1)
             distance_tuning_df = distance_to_goal.get_distance_to_goal_tuning_df(distance_rates_df, metrics)
             return distance_tuning_df, metrics
