@@ -3,7 +3,8 @@
 # %% Imports
 import pandas as pd
 import matplotlib.pyplot as plt
-from GridMaze.analysis.distance_to_goal.distributions import get_distance_percentile
+from GridMaze.analysis.distance_to_goal import distributions as dd
+from GridMaze.analysis.core import convert
 from GridMaze.maze import plotting as mp
 from scipy.ndimage import gaussian_filter1d
 
@@ -30,13 +31,11 @@ def plot_session_distance_to_goal_tuning(session, metrics=("distance_to_goal", "
 def get_distance_to_goal_tuning_df(
     distance_rates_df,
     metrics=("distance_to_goal", "geodesic"),
-    bin_spacing=0.04,
-    n_bins=40,
+    bin_spacing=0.05,
     max_steps_to_goal=30,
     moving_only=False,
 ):
     """ """
-    distance_rates_df = distance_rates_df.copy()
     trial2goal = distance_rates_df.set_index("trial").goal.dropna().to_dict()
     # deal with moving only
     if moving_only:
@@ -45,12 +44,20 @@ def get_distance_to_goal_tuning_df(
         distance_rates_df = distance_rates_df[distance_rates_df.steps_to_goal < max_steps_to_goal]
     # remove frames where distance is above max (treat as outliers)
     if metrics[0] == "distance_to_goal":
-        max_distance = get_distance_percentile(metrics, 0.85)
+        max_distance = dd.get_distance_percentile(metrics, 0.85)
         n_bins = int(max_distance / bin_spacing)
         distance_rates_df = distance_rates_df[distance_rates_df[metrics[0]] < max_distance]
+        bins = convert._get_distance_bins(
+            binning_method="uniform",
+            n_distance_bins=n_bins,
+            distance_metrics=metrics,
+            max_distance=max_distance,
+        )
+    else:
+        NotImplementedError()
     # bin distances
-    distance_rates_df["distance_bin"] = pd.cut(
-        distance_rates_df[metrics[0]], bins=n_bins, include_lowest=True
+    distance_rates_df.loc[:, "distance_bin"] = pd.cut(
+        distance_rates_df[metrics[0]], bins=bins, include_lowest=True
     ).to_numpy()
     # average over frames in each bin over trials
     trial_av_rates = distance_rates_df.groupby(["trial", "distance_bin"], observed=True).firing_rate.mean().unstack()

@@ -94,6 +94,11 @@ def plot_non_gamma_tuned_heatmap(
     return
 
 
+def plot_gamma_fit_shape_distribution():
+    """ """
+    return
+
+
 def plot_gamma_tuned_heatmap(
     population_tuning_df, fit="gamma_2p", min_r2=0.5, smooth_SD=2, normalisation_method="max", ax=None
 ):

@@ -76,17 +76,19 @@ def get_distance_tuning_metrics_df(
             max_steps_to_goal=max_steps_to_goal,
             moving_only=moving_only,
         )
+        return distance_tuning_df
         mean_corr, p_val, sig = _get_distance_tuning_metrics(distance_tuning_df, n_reps=50, alpha=alpha)
         metrics_df.loc[cluster, ("split_half_corr", "value")] = mean_corr
         metrics_df.loc[cluster, ("split_half_corr", "pvalue")] = p_val
         metrics_df.loc[cluster, ("distance_tuned", "")] = sig
         if sig:
             tc = distance_tuning_df.distance.mean()
-            for fit_fn in curve_fit_fns:
-                params = tuning_curve_fit(tc, fit_fn)
+            for fit_fn in [gamma_4p]:  # curve_fit_fns:
+                params = tuning_curve_fit(tc, fit_fn, plot=True)
                 for param, value in params.items():
                     fn_name = fit_fn.__name__
                     metrics_df.loc[cluster, (fn_name, param)] = value
+    return
     # return
     metrics_df.reset_index(inplace=True)
     metrics_df.rename(columns={"index": "cluster_unique_ID"}, inplace=True)
@@ -154,6 +156,9 @@ def tuning_curve_fit(
         ax.plot(x, y, label="data")
         ax.plot(x, fn(x, *plot_params), label="fit")
         ax.set_title(f"r2: {plot_r2:.2f}")
+        ax.text(
+            0.5, -0.2, ", ".join([f"{p:.2g}" for p in plot_params]), transform=ax.transAxes, fontsize=8, ha="center"
+        )
         ax.legend()
     return best_fit
 
@@ -162,9 +167,9 @@ def _get_init_range(fn):
     """ """
     fn_name = fn.__name__
     if fn_name == "gamma_2p":
-        p0 = [[0, 1], [0, 1]]  # size, shape
+        p0 = [[-1, 1], [0, 1]]  # size, shape
     elif fn_name == "gamma_4p":
-        p0 = [[-1, 1], [0, 3], [0, 1], [0, 3]]  # size, shape, scale, shift
+        p0 = [[-1, 1], [0.1, 10], [0.1, 1], [0, 3]]  # size, shape, scale, shift
     elif fn_name == "gaussian_2p":
         p0 = [[0, 5], [0, 2]]  # amplitude, mean
     elif fn_name == "gaussian_4p":
@@ -180,13 +185,13 @@ def _get_bounds(fn):
     """ """
     fn_name = fn.__name__
     if fn_name == "gamma_2p":
-        bounds = [[0, 0], [np.inf, np.inf]]
+        bounds = [[-np.inf, 0], [np.inf, np.inf]]  # size, shape
     elif fn_name == "gamma_4p":
-        bounds = [[-np.inf, 0, 0, -50], [np.inf, np.inf, np.inf, 50]]
+        bounds = [[-np.inf, 0.05, 0.05, -50], [np.inf, np.inf, 2, 50]]  # size, shape, scale, shift
     elif fn_name == "gaussian_2p":
         bounds = [(-np.inf, -np.inf), (np.inf, np.inf)]
     elif fn_name == "gaussian_4p":
-        bounds = [[-np.inf, 0, 0, -50], [np.inf, np.inf, np.inf, 50]]
+        bounds = [[-np.inf, 0, 0.05, -50], [np.inf, np.inf, np.inf, 50]]
     elif fn_name == "polynomial_4p":
         bounds = [[-np.inf] * 4, [np.inf] * 4]
     else:
