@@ -14,9 +14,10 @@ from GridMaze.analysis.cluster_tuning import distance_to_goal as dtg
 
 from scipy.stats import ttest_1samp, zscore
 from scipy.stats import gamma, norm
-from scipy.optimize import curve_fit
+from scipy.optimize import curve_fit, minimize
 
 from sklearn.metrics import r2_score
+from sklearn.model_selection import KFold
 
 
 # %% Global Variables
@@ -76,15 +77,15 @@ def get_distance_tuning_metrics_df(
             max_steps_to_goal=max_steps_to_goal,
             moving_only=moving_only,
         )
-        return distance_tuning_df
         mean_corr, p_val, sig = _get_distance_tuning_metrics(distance_tuning_df, n_reps=50, alpha=alpha)
         metrics_df.loc[cluster, ("split_half_corr", "value")] = mean_corr
         metrics_df.loc[cluster, ("split_half_corr", "pvalue")] = p_val
         metrics_df.loc[cluster, ("distance_tuned", "")] = sig
         if sig:
-            tc = distance_tuning_df.distance.mean()
-            for fit_fn in [gamma_4p]:  # curve_fit_fns:
-                params = tuning_curve_fit(tc, fit_fn, plot=True)
+            print(cluster)
+            tc = distance_tuning_df.distance
+            for fit_fn, sign in [(gamma_4p, "neg")]:  # curve_fit_fns:
+                params = tuning_curve_fit_cv(tc, fit_fn, sign, plot=True)
                 for param, value in params.items():
                     fn_name = fit_fn.__name__
                     metrics_df.loc[cluster, (fn_name, param)] = value
@@ -115,6 +116,65 @@ def _get_distance_tuning_metrics(distance_tuning_df, n_reps=50, alpha=0.01):
 
 
 # %% Curve fitting functions
+
+
+def tuning_curve_fit_cv(tuning_df, fn, sign, n_splits=20, n_inits=3, alpha=0.01, plot=False, verbose=False):
+    """ """
+    init_range, bounds, param_names = _get_init_range(fn, sign), _get_bounds(fn, sign), _get_param_names(fn)
+    x = tuning_df.columns.values.astype(float)
+    idx = tuning_df.index.values
+    mid = len(idx) // 2
+    split_fits = []
+    for i in range(n_splits):
+        if verbose:
+            print(f"split {i}")
+        idx_shuffled = np.random.permutation(idx)
+        y_1 = tuning_df.loc[idx_shuffled[:mid]].mean().values
+        y_2 = tuning_df.loc[idx_shuffled[mid:]].mean().values
+        itter_fits = []
+        for j in range(n_inits):
+            if verbose:
+                print(f"innit {j}")
+            p0 = [np.random.uniform(*x) for x in init_range]
+            try:
+                p_opt, _ = curve_fit(
+                    fn,
+                    x,
+                    y_1,
+                    p0=p0,
+                    bounds=bounds,
+                    maxfev=10_000,
+                )
+                r2 = r2_score(y_2, fn(x, *p_opt))
+            except RuntimeError:
+                p_opt = [np.nan] * len(param_names)
+                r2 = np.nan
+            itter_fits.append({param: p_opt[i] for i, param in enumerate(param_names)})
+            itter_fits[-1]["r2"] = r2
+        best_fit = max(itter_fits, key=lambda x: x["r2"])
+        if verbose:
+            print(f"best fit: {best_fit}")
+        split_fits.append(best_fit)
+    mean_params = pd.DataFrame(split_fits).median().to_dict()
+    result = ttest_1samp([fit["r2"] for fit in split_fits], 0, alternative="greater")
+    mean_params["p_value"] = result.pvalue
+    mean_params["sig"] = True if mean_params["p_value"] < alpha else False
+    if plot:
+        f, ax = plt.subplots(1, 1, figsize=(2, 2))
+        plot_params = list(mean_params.values())[:-3]
+        y_all = tuning_df.mean().values
+        ax.plot(x, y_all, label="data")
+        ax.plot(x, fn(x, *plot_params), label="fit")
+        ax.text(
+            0.5,
+            -0.2,
+            ", ".join([f"{p}:{v:.2g}" for p, v in mean_params.items()]),
+            transform=ax.transAxes,
+            fontsize=6,
+            ha="center",
+        )
+        ax.legend()
+    return mean_params
 
 
 def tuning_curve_fit(
@@ -163,13 +223,16 @@ def tuning_curve_fit(
     return best_fit
 
 
-def _get_init_range(fn):
+def _get_init_range(fn, sign="pos"):
     """ """
     fn_name = fn.__name__
     if fn_name == "gamma_2p":
         p0 = [[-1, 1], [0, 1]]  # size, shape
     elif fn_name == "gamma_4p":
-        p0 = [[-1, 1], [0.1, 10], [0.1, 1], [0, 3]]  # size, shape, scale, shift
+        if sign == "pos":
+            p0 = [[0, 1], [0.1, 10], [0.1, 1], [0, 3]]  # size, shape, scale, shift
+        else:  # neg
+            p0 = [[-1, 0], [0.1, 10], [0.1, 1], [0, 3]]  # size, shape, scale, shift
     elif fn_name == "gaussian_2p":
         p0 = [[0, 5], [0, 2]]  # amplitude, mean
     elif fn_name == "gaussian_4p":
@@ -181,13 +244,16 @@ def _get_init_range(fn):
     return p0
 
 
-def _get_bounds(fn):
+def _get_bounds(fn, sign="pos"):
     """ """
     fn_name = fn.__name__
     if fn_name == "gamma_2p":
         bounds = [[-np.inf, 0], [np.inf, np.inf]]  # size, shape
     elif fn_name == "gamma_4p":
-        bounds = [[-np.inf, 0.05, 0.05, -50], [np.inf, np.inf, 2, 50]]  # size, shape, scale, shift
+        if sign == "pos":
+            bounds = [[0, 0.05, 0.05, -100], [np.inf, 20, 20, 100]]  # size, shape, scale, shift
+        else:  # neg
+            bounds = [[-np.inf, 0.05, 0.05, -100], [0, 20, 20, 100]]
     elif fn_name == "gaussian_2p":
         bounds = [(-np.inf, -np.inf), (np.inf, np.inf)]
     elif fn_name == "gaussian_4p":
