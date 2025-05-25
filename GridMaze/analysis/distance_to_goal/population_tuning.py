@@ -4,13 +4,23 @@ Library for distance to goal tuning analyses: curve fits, headmaps etc.
 
 # %% Imports
 import json
+from math import dist
+import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 import seaborn as sns
+from sklearn.cluster import KMeans
+from sklearn.cluster import AgglomerativeClustering
+from scipy.spatial.distance import cdist
+
+
 from GridMaze.analysis.core import get_sessions as gs
+from GridMaze.analysis.core import convert
 
 from GridMaze.analysis.cluster_tuning import distance_to_goal as dtg
 from GridMaze.analysis.distance_to_goal import distributions as dd
+from scipy.ndimage import gaussian_filter1d
+from scipy.stats import zscore
 
 # %% Global Variables
 from GridMaze.paths import EXPERIMENT_INFO_PATH
@@ -25,7 +35,96 @@ CURVE_FITS = ["gamma_4p", "gaussian_4p", "polynomial_4p"]
 # %%
 
 
-def get_population_tuning_df(late_sessions=True, min_split_half_corr=0.5, min_r2=0.5, fit="gamma_4p", verbose=True):
+def plot_non_gamma_tuned_heatmap(
+    population_tuning_df,
+    fit="gamma_2p",
+    min_r2=0.5,
+    smooth_SD=2,
+    normalisation_method="max",
+    cluster_method="KMeans",
+    n_clusters=6,
+    ax=None,
+):
+    # process data
+    df = population_tuning_df[(population_tuning_df[fit]["r2"].lt(min_r2))].copy()
+    distance_tuning_df = df.distance_to_goal
+    if smooth_SD:
+        smoothed_data = gaussian_filter1d(distance_tuning_df.values, smooth_SD, axis=1)
+        distance_tuning_df = pd.DataFrame(
+            smoothed_data,
+            index=distance_tuning_df.index,
+            columns=distance_tuning_df.columns,
+        )
+    if normalisation_method == "max":
+        distance_tuning_df = distance_tuning_df.div(distance_tuning_df.max(axis=1), axis=0)
+    elif normalisation_method == "zscore":
+        distance_tuning_df = distance_tuning_df.apply(lambda x: zscore(x), axis=1)
+    else:
+        raise ValueError(f"Unknown normalisation method: {normalisation_method}")
+
+    if cluster_method == "KMeans":
+        # use split halfs to cross validate cluster ordering
+        kmeans = KMeans(n_clusters=n_clusters, random_state=0)
+        labels = kmeans.fit_predict(distance_tuning_df.values)
+
+    elif cluster_method == "Agglomerative":
+        # Cluster tuning_1 using Agglomerative Clustering
+        agg = AgglomerativeClustering(n_clusters=n_clusters)
+        labels = agg.fit_predict(distance_tuning_df.values)
+    distance_tuning_df["cluster_label"] = labels
+    #  reorder clusters by their max tuning
+    cluster_idx_max = distance_tuning_df.groupby("cluster_label").mean().idxmax(axis=1).sort_values()
+    distance_tuning_df["cluster_label"] = distance_tuning_df["cluster_label"].map(
+        {i: ind for i, ind in enumerate(cluster_idx_max.index.values)}
+    )
+    distance_tuning_df = distance_tuning_df.sort_values(by=["cluster_label"])
+
+    distance_tuning_df = distance_tuning_df.drop(columns=["cluster_label"])
+    D = distance_tuning_df.values
+
+    # plot
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(3, 5))
+    sns.heatmap(
+        D,
+        cmap="viridis",
+        ax=ax,
+        cbar_kws={"label": "Normalised Firing Rate", "shrink": 0.5},
+    )
+    return
+
+
+def plot_gamma_tuned_heatmap(
+    population_tuning_df, fit="gamma_2p", min_r2=0.5, smooth_SD=2, normalisation_method="max", ax=None
+):
+    """ """
+    # process
+    df = population_tuning_df[
+        (population_tuning_df[fit]["r2"].gt(min_r2)) & (population_tuning_df[fit]["size"].gt(0))
+    ].copy()
+    df = df.sort_values(by=[(fit, "shape")])
+    D = df.distance_to_goal.values
+    if smooth_SD:
+        D = gaussian_filter1d(D, smooth_SD, axis=1)
+    if normalisation_method == "max":
+        D = D / np.max(D, axis=1)[:, None]
+    elif normalisation_method == "zscore":
+        D = zscore(D, axis=1)
+    else:
+        raise ValueError(f"Unknown normalisation method: {normalisation_method}")
+    # plot
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(3, 5))
+    sns.heatmap(
+        D,
+        cmap="viridis",
+        ax=ax,
+        cbar_kws={"label": "Normalised Firing Rate", "shrink": 0.5},
+    )
+    return
+
+
+def get_population_tuning_df(late_sessions=True, min_split_half_corr=0.5, verbose=True):
     """ """
     days_on_maze = "late" if late_sessions else "all"
     if verbose:
@@ -43,8 +142,14 @@ def get_population_tuning_df(late_sessions=True, min_split_half_corr=0.5, min_r2
         distance_tuning_df = _get_session_distance_tuning(session)
         distance_tuning_df = distance_tuning_df.reset_index()
         distance_tuning_df = distance_tuning_df.rename(columns={"index": "cluster_unique_ID"}, level=0)
-        distance_metrics_df = session.cluster_distance_tuning_metrics.set_index(("cluster_unique_ID", ""))
-        distance_metrics_df = distance_metrics_df.xs(fit, axis=1, drop_level=False).reset_index()
+        distance_metrics_df = session.cluster_distance_tuning_metrics
+        if distance_metrics_df.index.name == "cluster_unique_ID":
+            distance_metrics_df = distance_metrics_df.reset_index()
+        distance_metrics_df = distance_metrics_df[distance_metrics_df.single_unit & distance_metrics_df.distance_tuned]
+        distance_tuning_df = distance_tuning_df[
+            distance_tuning_df.cluster_unique_ID.isin(distance_metrics_df.cluster_unique_ID)
+        ]
+        distance_metrics_df.set_index("cluster_unique_ID", inplace=True)
         df = pd.merge(  # conbine tuning curves and (precomputed) tuning curve fit metrics
             distance_tuning_df,
             distance_metrics_df,
@@ -52,7 +157,7 @@ def get_population_tuning_df(late_sessions=True, min_split_half_corr=0.5, min_r2
             how="inner",
         )
         # filter for distance tuned, split half corr, and r2
-        df = df[(df.distance_tuned) & (df.split_half_corr.value.gt(min_split_half_corr)) & (df[fit].r2 > min_r2)]
+        df = df[(df.distance_tuned) & (df.split_half_corr.value.gt(min_split_half_corr))]
         tuning_dfs.append(df)
     population_tuning_df = pd.concat(tuning_dfs, axis=0).reset_index(drop=True)
     return population_tuning_df
@@ -61,8 +166,7 @@ def get_population_tuning_df(late_sessions=True, min_split_half_corr=0.5, min_r2
 def _get_session_distance_tuning(
     session,
     metrics=("distance_to_goal", "geodesic"),
-    bin_spacing=0.04,
-    n_bins=40,
+    bin_spacing=0.05,
     max_steps_to_goal=30,
     moving_only=False,
 ):
@@ -78,9 +182,17 @@ def _get_session_distance_tuning(
         max_distance = dd.get_distance_percentile(metrics, 0.85)
         n_bins = int(max_distance / bin_spacing)
         navigation_rates_df = navigation_rates_df[navigation_rates_df[metrics] < max_distance]
+        bins = convert._get_distance_bins(
+            binning_method="uniform",
+            n_distance_bins=n_bins,
+            distance_metrics=metrics,
+            max_distance=max_distance,
+        )
+    else:
+        NotImplementedError()
     # bin distances
     navigation_rates_df.loc[:, ("distance_bin", "")] = pd.cut(
-        navigation_rates_df[metrics], bins=n_bins, include_lowest=True
+        navigation_rates_df[metrics], bins=bins, include_lowest=True
     ).to_numpy()
     # average over frames in each bin over trials
     trial_av_rates = navigation_rates_df.groupby(["trial", "distance_bin"], observed=True).firing_rate.mean()
