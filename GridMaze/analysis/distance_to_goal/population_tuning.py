@@ -19,6 +19,7 @@ from GridMaze.analysis.core import convert
 
 from GridMaze.analysis.cluster_tuning import distance_to_goal as dtg
 from GridMaze.analysis.distance_to_goal import distributions as dd
+from GridMaze.analysis.processing import get_distance_tuning_metrics_df as dtm
 from scipy.ndimage import gaussian_filter1d
 from scipy.stats import zscore
 
@@ -127,6 +128,60 @@ def plot_gamma_tuned_heatmap(
         cbar_kws={"label": "Normalised Firing Rate", "shrink": 0.5},
     )
     return
+
+
+# %%
+
+
+def test(population_tuning_df, sign="pos", smooth_SD=False, normalisation_method="zscore", ax=None):
+    """ """
+    df = population_tuning_df[population_tuning_df["gamma_4p_cv"].sig]
+    if sign == "pos":
+        sign_mask = df["gamma_4p"]["size"].gt(0)
+    elif sign == "neg":
+        sign_mask = df["gamma_4p"]["size"].lt(0)
+    else:
+        raise ValueError(f"Unknown sign: {sign}")
+    df = df[sign_mask]
+    x = df.distance_to_goal.columns.values.astype(float)
+    if sign == "pos":
+        df[("idx_max", "")] = df.apply(lambda row: get_idx_max(row, x, op="max"), axis=1)
+        df = df.sort_values(by=[("idx_max", "")])
+    elif sign == "neg":
+        df[("idx_min", "")] = df.apply(lambda row: get_idx_max(row, x, op="min"), axis=1)
+        df = df.sort_values(by=[("idx_min", "")])
+    D = df.distance_to_goal.values
+    if smooth_SD:
+        D = gaussian_filter1d(D, smooth_SD, axis=1)
+    if normalisation_method == "max":
+        D = D / np.max(D, axis=1)[:, None]
+    elif normalisation_method == "zscore":
+        D = zscore(D, axis=1)
+    else:
+        raise ValueError(f"Unknown normalisation method: {normalisation_method}")
+    # plot
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(3, 5))
+    sns.heatmap(
+        D,
+        cmap="coolwarm",
+        vmax=2,
+        vmin=-1,
+        ax=ax,
+        cbar_kws={"label": "Normalised Firing Rate", "shrink": 0.5},
+    )
+
+
+def get_idx_max(row, x, fit="gamma_4p", op="max"):
+    """ """
+    params = row[fit]
+    curve_fit = dtm.gamma_4p(x, params["size"], params["shape"], params["scale"], params["shift"])
+    if op == "max":
+        return np.argmax(curve_fit)
+    elif op == "min":
+        return np.argmin(curve_fit)
+    else:
+        NotImplementedError
 
 
 def get_population_tuning_df(late_sessions=True, min_split_half_corr=0.5, verbose=True):
