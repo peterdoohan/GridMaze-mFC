@@ -4,6 +4,7 @@
 import json
 import pandas as pd
 from joblib import Parallel, delayed
+from regex import D
 
 from .get_navigation_df import get_navigation_df
 from .get_navigation_spike_dfs import get_navigation_spike_rates_df, get_navigation_spike_counts_df
@@ -15,7 +16,7 @@ from .get_distance_tuning_metrics_df import get_distance_tuning_metrics_df
 
 # %% Global variables
 
-from ...paths import PROCESSED_DATA_PATH, ANALYSIS_DATA_PATH, EXPERIMENT_INFO_PATH
+from GridMaze.paths import PROCESSED_DATA_PATH, ANALYSIS_DATA_PATH, EXPERIMENT_INFO_PATH
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
@@ -57,7 +58,7 @@ ANALYSIS_DATA_STRUCTURES_DF = pd.DataFrame(
 # %% Process analysis data single process
 
 
-def populate_analysis_data(data_structures="all", overwrite=False, subject_IDs="all", max_jobs=20):
+def populate_analysis_data(data_structures="all", overwrite=False, subject_IDs="all", max_jobs=2):
     """ """
     subject_IDs = SUBJECT_IDS if subject_IDs == "all" else subject_IDs
     data_strucutres_df = (
@@ -65,32 +66,34 @@ def populate_analysis_data(data_structures="all", overwrite=False, subject_IDs="
         if data_structures == "all"
         else ANALYSIS_DATA_STRUCTURES_DF[ANALYSIS_DATA_STRUCTURES_DF.filename.isin(data_structures)]
     )
+    processed_data_paths, analysis_data_paths = [], []
     for subject in subject_IDs:
-        processed_data_paths = [f for f in (PROCESSED_DATA_PATH / subject).iterdir() if f.is_dir()]
-        analysis_data_paths = [ANALYSIS_DATA_PATH / subject / p.name for p in processed_data_paths]
+        _processed_data_paths = [f for f in (PROCESSED_DATA_PATH / subject).iterdir() if f.is_dir()]
+        processed_data_paths.extend(_processed_data_paths)
+        analysis_data_paths.extend([ANALYSIS_DATA_PATH / subject / p.name for p in _processed_data_paths])
 
-        def _process_session(processed_data_path, analysis_data_path):
-            if not analysis_data_path.exists():
-                analysis_data_path.mkdir(parents=True)
-            print(f"Saving analysis data for {processed_data_path}")
-            for _, row in data_strucutres_df.iterrows():
-                try:
-                    save_analysis_data(
-                        row.filename,
-                        row.function,
-                        row.session_types,
-                        processed_data_path,
-                        analysis_data_path,
-                        overwrite,
-                    )
-                except FileNotFoundError:
-                    print(f"FileNotFoundError: {row.function.__name__} failed for {processed_data_path}")
-                    pass
+    def _process_session(processed_data_path, analysis_data_path):
+        if not analysis_data_path.exists():
+            analysis_data_path.mkdir(parents=True)
+        print(f"Saving analysis data for {processed_data_path}")
+        for _, row in data_strucutres_df.iterrows():
+            try:
+                save_analysis_data(
+                    row.filename,
+                    row.function,
+                    row.session_types,
+                    processed_data_path,
+                    analysis_data_path,
+                    overwrite,
+                )
+            except FileNotFoundError:
+                print(f"FileNotFoundError: {row.function.__name__} failed for {processed_data_path}")
+                pass
 
-        Parallel(n_jobs=-1)(
-            delayed(_process_session)(processed_data_path, analysis_data_path)
-            for processed_data_path, analysis_data_path in zip(processed_data_paths, analysis_data_paths)
-        )
+    Parallel(n_jobs=max_jobs)(
+        delayed(_process_session)(processed_data_path, analysis_data_path)
+        for processed_data_path, analysis_data_path in zip(processed_data_paths, analysis_data_paths)
+    )
 
 
 def populate_analysis_data_single_session(

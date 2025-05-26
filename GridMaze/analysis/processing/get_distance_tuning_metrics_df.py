@@ -67,7 +67,8 @@ def get_distance_tuning_metrics_df(
         metrics_df[col] = metrics_df[col].astype(bool)
         metrics_df[col] = False  # false by default
     for fn in curve_fit_cv_fns:
-        metrics_df.loc[:, (fn.__name__ + "_cv", "sig")].astype(bool)
+        col = (fn.__name__ + "_cv", "sig")
+        metrics_df[col] = metrics_df[col].astype(bool)
     # loop through single unit, calculate distance tuning metrics
     for cluster in single_units:
         metrics_df.loc[cluster, ("single_unit", "")] = True
@@ -85,18 +86,17 @@ def get_distance_tuning_metrics_df(
         metrics_df.loc[cluster, ("split_half_corr", "pvalue")] = p_val
         metrics_df.loc[cluster, ("distance_tuned", "")] = sig
         if sig:
-            print(cluster)
             tuning_df = distance_tuning_df.distance
             for fit_fn in curve_fit_cv_fns:  # curve_fit_fns:
-                params = tuning_curve_fit_cv(tuning_df, fit_fn, plot=True)
+                params = tuning_curve_fit_cv(tuning_df, fit_fn, plot=False)
+                fn_name = fit_fn.__name__
                 for param, value in params.items():
-                    fn_name = fit_fn.__name__
                     metrics_df.loc[cluster, (fn_name + "_cv", param)] = value
             tc = tuning_df.mean()
             for fit_fn in curve_fit_fns:
-                params = tuning_curve_fit(tc, fit_fn, plot=True)
+                params = tuning_curve_fit(tc, fit_fn, plot=False)
+                fn_name = fit_fn.__name__
                 for param, value in params.items():
-                    fn_name = fit_fn.__name__
                     metrics_df.loc[cluster, (fn_name, param)] = value
     # return
     metrics_df.reset_index(inplace=True)
@@ -148,6 +148,10 @@ def tuning_curve_fit_cv(tuning_df, fn, n_splits=30, n_inits=5, alpha=0.05, plot=
         idx_shuffled = np.random.permutation(idx)
         y_1 = tuning_df.loc[idx_shuffled[:mid]].mean().values
         y_2 = tuning_df.loc[idx_shuffled[mid:]].mean().values
+        nan_mask = np.isnan(y_1) | np.isnan(y_2)
+        y_1 = y_1[~nan_mask]
+        y_2 = y_2[~nan_mask]
+        _x = x[~nan_mask]
         itter_fits = []
         for j in range(n_inits):
             if verbose:
@@ -156,13 +160,13 @@ def tuning_curve_fit_cv(tuning_df, fn, n_splits=30, n_inits=5, alpha=0.05, plot=
             try:
                 p_opt, _ = curve_fit(
                     fn,
-                    x,
+                    _x,
                     y_1,
                     p0=p0,
                     bounds=bounds,
                     maxfev=10_000,
                 )
-                r2 = r2_score(y_2, fn(x, *p_opt))
+                r2 = r2_score(y_2, fn(_x, *p_opt))
             except RuntimeError:
                 p_opt = [np.nan] * len(param_names)
                 r2 = np.nan
@@ -197,8 +201,8 @@ def tuning_curve_fit_cv(tuning_df, fn, n_splits=30, n_inits=5, alpha=0.05, plot=
         f, ax = plt.subplots(1, 1, figsize=(2, 2))
         plot_params = list(mean_params.values())[:-3]
         y_all = tuning_df.mean().values
-        ax.plot(x, y_all, label="data")
-        ax.plot(x, fn(x, *plot_params), label="fit")
+        ax.plot(_x, y_all, label="data")
+        ax.plot(_x, fn(x, *plot_params), label="fit")
         ax.text(
             0.5,
             -0.2,
@@ -222,6 +226,9 @@ def tuning_curve_fit(
     init_range, bounds, param_names = _get_init_range(fn), _get_bounds(fn), _get_param_names(fn)
     x = tuning_curve.index.values.astype(float)
     y = tuning_curve.values.astype(float)
+    nan_mask = np.isnan(y)
+    x = x[~nan_mask]
+    y = y[~nan_mask]
     itter_fits = []
     for i in range(n_itter):
         if verbose:
@@ -265,9 +272,9 @@ def _get_init_range(fn):
     elif fn_name == "gamma_4p":
         p0 = [[-5, 5], [0.1, 10], [0.1, 1], [0, 3]]  # size, shape, scale, shift
     elif fn_name == "gaussian_2p":
-        p0 = [[0, 5], [0, 2]]  # amplitude, mean
+        p0 = [[-5, 5], [0, 2]]  # amplitude, mean
     elif fn_name == "gaussian_4p":
-        p0 = [[-5, 5], [0, 2], [0, 1], [0, 3]]  # amplitude, mean, stddev, offset
+        p0 = [[-5, 5], [0, 2], [0.05, 1], [0, 3]]  # amplitude, mean, stddev, offset
     elif fn_name == "polynomial_4p":
         p0 = [[-1, 1], [-1, 1], [-1, 1], [-1, 1]]  # a, b, c, d
     else:
@@ -283,7 +290,7 @@ def _get_bounds(fn):
     elif fn_name == "gamma_4p":
         bounds = [[-np.inf, 0.05, 0.05, -100], [np.inf, 20, 2, 100]]  # size, shape, scale, shift
     elif fn_name == "gaussian_2p":
-        bounds = [(-np.inf, -np.inf), (np.inf, np.inf)]
+        bounds = [[-np.inf, -np.inf], [np.inf, np.inf]]
     elif fn_name == "gaussian_4p":
         bounds = [[-np.inf, 0, 0.05, -50], [np.inf, np.inf, np.inf, 50]]
     elif fn_name == "polynomial_4p":
