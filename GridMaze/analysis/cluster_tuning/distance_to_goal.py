@@ -81,7 +81,7 @@ def plot_distance_tuning(distance_tuning_df, metrics, goal_stratified=False, smo
     ax.set_ylabel("Firing Rate (Hz)")
     ax.set_xlabel(f"{metrics[0]}: {metrics[1]}")
     if metrics[0] == "distance_to_goal":
-        ax.set_xlim(0, get_distance_percentile(metrics, 0.85))
+        ax.set_xlim(0, dd.get_distance_percentile(metrics, 0.85))
     else:  # progress_to_goal
         ax.set_xlim(0, 1)
     # process data for plotting

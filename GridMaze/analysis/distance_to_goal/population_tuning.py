@@ -3,15 +3,12 @@ Library for distance to goal tuning analyses: curve fits, headmaps etc.
 """
 
 # %% Imports
+import re
 import json
-from math import dist
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 import seaborn as sns
-from sklearn.cluster import KMeans
-from sklearn.cluster import AgglomerativeClustering
-from scipy.spatial.distance import cdist
 
 
 from GridMaze.analysis.core import get_sessions as gs
@@ -33,7 +30,118 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 CURVE_FITS = ["gamma_4p", "gaussian_4p", "polynomial_4p"]
 
 
-# %%
+# %% anatomical differences?
+
+
+def plot_voxel_distance_tuning_heatmap(
+    population_anatomy_df,
+    ax=None,
+):
+    """ """
+    # process data
+    voxel_map = population_anatomy_df.groupby(["y", "x"]).tunned_distance.mean().unstack()
+    # plot
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(3, 3))
+    # plot heatmap
+    sns.heatmap(
+        voxel_map,
+        cmap="viridis_r",
+        cbar_kws={"label": "Tunned Distance", "shrink": 0.5},
+        square=True,
+        alpha=1,
+        ax=ax,
+    )
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+    ax.set_xlabel("Anterior -> Posterior")
+    ax.set_ylabel("Ventral -> Doral")
+
+
+def plot_region_distance_tuning_distributions(population_anatomy_df, ignore_layers=True, min_cells=20, axes=None):
+    """ """
+    if ignore_layers:
+        population_anatomy_df["region"] = population_anatomy_df.region.apply(
+            lambda x: re.match(r"([A-Za-z]+)(.*)", x).groups()[0]
+        )
+    if min_cells is not None:
+        cell_counts = population_anatomy_df.groupby("region").count().tunned_distance
+        regions = cell_counts[cell_counts.gt(min_cells)].index.values
+    else:
+        regions = population_anatomy_df.region.unique()
+    if axes is None:
+        f, axes = plt.subplots(len(regions), 1, figsize=(3, len(regions)), sharex=True, sharey=True)
+    for ax in axes:
+        ax.spines[["top", "right"]].set_visible(False)
+    for region, ax in zip(regions, axes.flatten()):
+        region_df = population_anatomy_df[population_anatomy_df.region == region]
+        sns.histplot(region_df, x="tunned_distance", stat="proportion", element="step", alpha=0.2, ax=ax, color="black")
+        ax.set_ylabel(region)
+
+    return
+
+
+def get_population_anatomy_df(subject_IDs="all", late_sessions=True, sign="pos", verbose=False):
+    """"""
+    days_on_maze = "late" if late_sessions else "all"
+    subject_IDs = SUBJECT_IDS if subject_IDs == "all" else subject_IDs
+    if verbose:
+        print("Loading sessions...")
+    sessions = gs.get_maze_sessions(
+        subject_IDs=subject_IDs,
+        maze_names="all",
+        days_on_maze=days_on_maze,
+        with_data=["navigation_df", "navigation_spike_rates_df", "cluster_metrics", "cluster_distance_tuning_metrics"],
+    )
+    anat_dfs = []
+    for session in sessions:
+        if verbose:
+            print(session.name)
+        anat_df = _get_session_anatomical_distance_tuning(session, sign=sign)
+        anat_dfs.append(anat_df)
+    results_df = pd.concat(anat_dfs, axis=0).reset_index(drop=True)
+    return results_df
+
+
+def _get_session_anatomical_distance_tuning(session, sign="pos", fit="gamma_4p"):
+    """
+    returns df with x,y voxel coordinates and distance tuning peak for each cluster
+    """
+    distance_tuning_df = _get_session_distance_tuning(session)
+    cluster_distance_tuning_metrics_df = session.cluster_distance_tuning_metrics
+    cluster_metrics_df = session.cluster_metrics
+    # filter for distance tunned clusters
+    distance_tuned_mask = (
+        cluster_metrics_df.single_unit
+        & cluster_distance_tuning_metrics_df.distance_tuned
+        & cluster_distance_tuning_metrics_df.gamma_4p_cv.sig
+    )
+    cluster_distance_tuning_metrics_df = cluster_distance_tuning_metrics_df[distance_tuned_mask]
+    cluster_metrics_df = cluster_metrics_df[distance_tuned_mask]
+    # filter for pos/neg fit tuned
+    if sign == "pos":
+        sign_mask = cluster_distance_tuning_metrics_df[fit]["size"].gt(0)
+    else:  # neg
+        sign_mask = cluster_distance_tuning_metrics_df[fit]["size"].lt(0)
+    cluster_distance_tuning_metrics_df = cluster_distance_tuning_metrics_df[sign_mask]
+    cluster_metrics_df = cluster_metrics_df[sign_mask]
+    distance_tuning_df = distance_tuning_df.loc[cluster_distance_tuning_metrics_df.cluster_unique_ID.values]
+    df = pd.concat(
+        [
+            distance_tuning_df.reset_index(drop=True),
+            cluster_distance_tuning_metrics_df.reset_index(drop=True),
+            cluster_metrics_df.reset_index(drop=True),
+        ],
+        axis=1,
+    )
+    # get distance tuning peak
+    x = df.distance_to_goal.columns.values.astype(float)
+    anat_df = df.voxel[["x", "y"]]
+    anat_df["tunned_distance"] = df.apply(lambda row: get_idx_order(row, x, fit=fit, op="max"), axis=1)
+    anat_df["region"] = df.region.acronym
+    return anat_df
 
 
 # %%
@@ -43,6 +151,7 @@ def plot_distance_tunned_heatmap(
     population_tuning_df, sign="pos", smooth_SD=2, fit="gamma_4p", normalisation_method="zscore", ax=None
 ):
     """ """
+    # include only "distance tuned" clusters (those with cv_r2 significanltly > 0)
     df = population_tuning_df[population_tuning_df["gamma_4p_cv"].sig]
     if sign == "pos":
         sign_mask = df[fit]["size"].gt(0)
@@ -78,6 +187,13 @@ def plot_distance_tunned_heatmap(
         ax=ax,
         cbar_kws={"label": "Firing Rate (z-score)", "shrink": 0.5},
     )
+    y_tick = len(D) // 10 * 10
+    ax.set_yticks([y_tick])
+    ax.set_yticklabels([f"{y_tick}"], rotation=90)
+    ax.set_ylabel("Neurons", labelpad=-10)
+    ax.set_xlabel("Shortest-path \n Distance to Goal (m)")
+    ax.set_xticks(np.arange(0, len(x), 5))
+    ax.set_xticklabels(np.arange(0, max(x), 0.25), rotation=0)
 
 
 def get_idx_order(row, x, fit="gamma_4p", op="max"):
@@ -85,14 +201,14 @@ def get_idx_order(row, x, fit="gamma_4p", op="max"):
     params = row[fit]
     curve_fit = dtm.gamma_4p(x, params["size"], params["shape"], params["scale"], params["shift"])
     if op == "max":
-        return np.argmax(curve_fit)
+        return x[np.argmax(curve_fit)]
     elif op == "min":
-        return np.argmin(curve_fit)
+        return x[np.argmin(curve_fit)]
     else:
         NotImplementedError
 
 
-def get_population_tuning_df(late_sessions=True, min_split_half_corr=0.5, verbose=True):
+def get_population_tuning_df(late_sessions=True, min_split_half_corr=0.5, verbose=False):
     """ """
     days_on_maze = "late" if late_sessions else "all"
     if verbose:
