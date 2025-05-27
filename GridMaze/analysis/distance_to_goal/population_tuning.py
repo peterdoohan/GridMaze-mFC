@@ -36,120 +36,28 @@ CURVE_FITS = ["gamma_4p", "gaussian_4p", "polynomial_4p"]
 # %%
 
 
-def plot_non_gamma_tuned_heatmap(
-    population_tuning_df,
-    fit="gamma_2p",
-    min_r2=0.5,
-    smooth_SD=2,
-    normalisation_method="max",
-    cluster_method="KMeans",
-    n_clusters=6,
-    ax=None,
-):
-    # process data
-    df = population_tuning_df[(population_tuning_df[fit]["r2"].lt(min_r2))].copy()
-    distance_tuning_df = df.distance_to_goal
-    if smooth_SD:
-        smoothed_data = gaussian_filter1d(distance_tuning_df.values, smooth_SD, axis=1)
-        distance_tuning_df = pd.DataFrame(
-            smoothed_data,
-            index=distance_tuning_df.index,
-            columns=distance_tuning_df.columns,
-        )
-    if normalisation_method == "max":
-        distance_tuning_df = distance_tuning_df.div(distance_tuning_df.max(axis=1), axis=0)
-    elif normalisation_method == "zscore":
-        distance_tuning_df = distance_tuning_df.apply(lambda x: zscore(x), axis=1)
-    else:
-        raise ValueError(f"Unknown normalisation method: {normalisation_method}")
-
-    if cluster_method == "KMeans":
-        # use split halfs to cross validate cluster ordering
-        kmeans = KMeans(n_clusters=n_clusters, random_state=0)
-        labels = kmeans.fit_predict(distance_tuning_df.values)
-
-    elif cluster_method == "Agglomerative":
-        # Cluster tuning_1 using Agglomerative Clustering
-        agg = AgglomerativeClustering(n_clusters=n_clusters)
-        labels = agg.fit_predict(distance_tuning_df.values)
-    distance_tuning_df["cluster_label"] = labels
-    #  reorder clusters by their max tuning
-    cluster_idx_max = distance_tuning_df.groupby("cluster_label").mean().idxmax(axis=1).sort_values()
-    distance_tuning_df["cluster_label"] = distance_tuning_df["cluster_label"].map(
-        {i: ind for i, ind in enumerate(cluster_idx_max.index.values)}
-    )
-    distance_tuning_df = distance_tuning_df.sort_values(by=["cluster_label"])
-
-    distance_tuning_df = distance_tuning_df.drop(columns=["cluster_label"])
-    D = distance_tuning_df.values
-
-    # plot
-    if ax is None:
-        f, ax = plt.subplots(1, 1, figsize=(3, 5))
-    sns.heatmap(
-        D,
-        cmap="viridis",
-        ax=ax,
-        cbar_kws={"label": "Normalised Firing Rate", "shrink": 0.5},
-    )
-    return
-
-
-def plot_gamma_fit_shape_distribution():
-    """ """
-    return
-
-
-def plot_gamma_tuned_heatmap(
-    population_tuning_df, fit="gamma_2p", min_r2=0.5, smooth_SD=2, normalisation_method="max", ax=None
-):
-    """ """
-    # process
-    df = population_tuning_df[
-        (population_tuning_df[fit]["r2"].gt(min_r2)) & (population_tuning_df[fit]["size"].gt(0))
-    ].copy()
-    df = df.sort_values(by=[(fit, "shape")])
-    D = df.distance_to_goal.values
-    if smooth_SD:
-        D = gaussian_filter1d(D, smooth_SD, axis=1)
-    if normalisation_method == "max":
-        D = D / np.max(D, axis=1)[:, None]
-    elif normalisation_method == "zscore":
-        D = zscore(D, axis=1)
-    else:
-        raise ValueError(f"Unknown normalisation method: {normalisation_method}")
-    # plot
-    if ax is None:
-        f, ax = plt.subplots(1, 1, figsize=(3, 5))
-    sns.heatmap(
-        D,
-        cmap="viridis",
-        ax=ax,
-        cbar_kws={"label": "Normalised Firing Rate", "shrink": 0.5},
-    )
-    return
-
-
 # %%
 
 
-def test(population_tuning_df, sign="pos", smooth_SD=False, normalisation_method="zscore", ax=None):
+def plot_distance_tunned_heatmap(
+    population_tuning_df, sign="pos", smooth_SD=2, fit="gamma_4p", normalisation_method="zscore", ax=None
+):
     """ """
     df = population_tuning_df[population_tuning_df["gamma_4p_cv"].sig]
     if sign == "pos":
-        sign_mask = df["gamma_4p"]["size"].gt(0)
+        sign_mask = df[fit]["size"].gt(0)
     elif sign == "neg":
-        sign_mask = df["gamma_4p"]["size"].lt(0)
+        sign_mask = df[fit]["size"].lt(0)
     else:
         raise ValueError(f"Unknown sign: {sign}")
     df = df[sign_mask]
     x = df.distance_to_goal.columns.values.astype(float)
     if sign == "pos":
-        df[("idx_max", "")] = df.apply(lambda row: get_idx_max(row, x, op="max"), axis=1)
-        df = df.sort_values(by=[("idx_max", "")])
+        df[("idx_max", "")] = df.apply(lambda row: get_idx_order(row, x, fit=fit, op="max"), axis=1)
+        df = df.sort_values(by=[("idx_max", "")], ascending=True)
     elif sign == "neg":
-        df[("idx_min", "")] = df.apply(lambda row: get_idx_max(row, x, op="min"), axis=1)
-        df = df.sort_values(by=[("idx_min", "")])
+        df[("idx_min", "")] = df.apply(lambda row: get_idx_order(row, x, fit=fit, op="min"), axis=1)
+        df = df.sort_values(by=[("idx_min", "")], ascending=True)
     D = df.distance_to_goal.values
     if smooth_SD:
         D = gaussian_filter1d(D, smooth_SD, axis=1)
@@ -168,11 +76,11 @@ def test(population_tuning_df, sign="pos", smooth_SD=False, normalisation_method
         vmax=2,
         vmin=-1,
         ax=ax,
-        cbar_kws={"label": "Normalised Firing Rate", "shrink": 0.5},
+        cbar_kws={"label": "Firing Rate (z-score)", "shrink": 0.5},
     )
 
 
-def get_idx_max(row, x, fit="gamma_4p", op="max"):
+def get_idx_order(row, x, fit="gamma_4p", op="max"):
     """ """
     params = row[fit]
     curve_fit = dtm.gamma_4p(x, params["size"], params["shape"], params["scale"], params["shift"])
