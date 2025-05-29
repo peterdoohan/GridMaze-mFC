@@ -4,7 +4,8 @@ Eg, you want to downsample navigating input data from FRAME RATe (native) to 0.5
 """
 
 # %% Imports
-
+import pandas as pd
+from scipy.ndimage import gaussian_filter1d
 
 # %% Global Variables
 FRAME_RATE = 60  # Hz
@@ -18,6 +19,8 @@ def downsample_nav_spikes_data(
     """ """
     # downsample spike counts by suming spikes within resolution window
     ds_frames = int(FRAME_RATE * resolution)
+    if ds_frames < 1:
+        raise ValueError("resolution must be >= 1/FRAME_RATE seconds")
     ds_spike_counts_df = spike_counts_df.groupby(spike_counts_df.index // ds_frames).sum().reset_index(drop=True)
     # keep only relevant navigation info
     nav_info = navigation_df[
