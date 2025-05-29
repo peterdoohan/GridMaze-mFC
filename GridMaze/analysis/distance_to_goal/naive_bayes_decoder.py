@@ -29,24 +29,82 @@ FRAME_RATE = 60
 # %%
 
 
+def quick_plot2(results_df, osc="theta", metric=("distance_to_goal", "geodesic"), distance_range=(0, 0.5)):
+    """ """
+    df = results_df[results_df[metric].between(*distance_range)].copy()
+    df.loc[:, ("decoding_error", "")] = df[metric] - df.distance_to_goal.decoded
+    grouped_df = df.groupby([("lfp_phase_bin", osc)]).decoding_error
+    mean_df = grouped_df.mean()
+    sem_df = grouped_df.sem()
+    f, ax = plt.subplots(1, 1, figsize=(3, 3))
+    ax.axhline(0, color="k", alpha=0.5, ls="--")
+    ax.plot(mean_df.index.values, mean_df.values, color="k", lw=2)
+    ax.fill_between(
+        mean_df.index.values,
+        mean_df.values - sem_df.values,
+        mean_df.values + sem_df.values,
+        color="k",
+        alpha=0.2,
+    )
+    ax.set_xlabel(f"{osc} phase")
+    ax.set_ylabel("Decoding error (m)")
+    return
+
+
+def quick_plot(results_df, metric=("distance_to_goal", "geodesic"), bin_spacing=0.1):
+    """ """
+    results_df.loc[:, ("decoding_error", "")] = results_df[metric] - results_df.distance_to_goal.decoded
+    max_distance = dd.get_distance_percentile(metric, 0.85)
+    n_bins = int(max_distance / bin_spacing)
+    results_df = results_df[results_df[metric] < max_distance]
+    bins = convert._get_distance_bins(
+        binning_method="uniform",
+        n_distance_bins=n_bins,
+        distance_metrics=metric,
+        max_distance=max_distance,
+    )
+    distance_bins = pd.cut(results_df[metric], bins=bins, include_lowest=True)
+    results_df.loc[:, ("distance_bin", "")] = distance_bins.apply(lambda x: x.mid).astype(float)
+    trial_summary_df = results_df.groupby(["trial", "distance_bin"]).decoding_error.mean()
+    grouped_df = trial_summary_df.groupby("distance_bin")
+    mean_df = grouped_df.mean()
+    sem_df = grouped_df.sem()
+    f, ax = plt.subplots(1, 1, figsize=(3, 3))
+    ax.axhline(0, color="k", alpha=0.5, ls="--")
+    ax.plot(mean_df.index.values, mean_df.values, color="k", lw=2)
+    ax.fill_between(
+        mean_df.index.values,
+        mean_df.values - sem_df.values,
+        mean_df.values + sem_df.values,
+        color="k",
+        alpha=0.2,
+    )
+    ax.set_xlabel("Distance to goal")
+    ax.set_ylabel("Decoding error (m)")
+    ax.set_ylim(-0.25, 1)
+    return
+
+
 def test(
     session,
     resolution=0.4,
-    step_size=None,
     metric=("distance_to_goal", "geodesic"),
+    n_folds=12,
     bin_spacing=0.1,
     min_r2=0.5,
     n_lfp_phase_bins=12,
     test_trial_phases=["navigation"],
     verbose=True,
+    plot=True,
 ):
     """ """
     max_distance = dd.get_distance_percentile(metric, 0.85)
-    input_data = get_input_data(session, resolution, n_lfp_phase_bins=n_lfp_phase_bins)
-    distance_tuning_df = get_distance_tuning_df(input_data, metric, step_size, bin_spacing)
+    input_data = get_input_data(session, metric, resolution, n_lfp_phase_bins=n_lfp_phase_bins)
+    distance_tuning_df = get_distance_tuning_df(input_data, metric, resolution, bin_spacing)
     empirical_tuning_curves = distance_tuning_df.groupby("distance_bin").mean().spike_count
     distances = empirical_tuning_curves.index.values
-    folds_df = folds.get_folds_df(session, goal_stratified=False, return_unique_IDs=False, n_folds=8)
+    x_bounds = (min(distances), max(distances))
+    folds_df = folds.get_folds_df(session, goal_stratified=False, return_unique_IDs=False, n_folds=n_folds)
     _folds = folds_df.columns.get_level_values(0).unique()
     params_df = get_fold_params_df(distance_tuning_df, folds_df, plot=False)
     # remove non distance tuned clusters
@@ -57,31 +115,59 @@ def test(
             print(f"removing {len(reject_clusters)} clusters with mean r2 <= {min_r2}")
         params_df = params_df[~params_df.cluster_unique_ID.isin(reject_clusters)]
         input_data.drop(columns=[("spike_count", c) for c in reject_clusters], inplace=True)
-    for fold in _folds:
-        fold_df = folds_df[fold]
-        test_trials = fold_df["test"].unstack().dropna().values
-        test_df = input_data[
-            input_data.trial.isin(test_trials)
-            & input_data.trial_phase.isin(test_trial_phases)
-            & input_data[metric].lt(max_distance)
-        ]
-        fold_params = params_df[params_df.fold == fold][
-            ["size", "shape", "scale", "shift"]
-        ].values.T  # n_params, n_clusters
-        observed_spikes = test_df.spike_count.values  # n_samples, n_clusters
-        d_hats = []
-        for i in range(observed_spikes.shape[0]):
-            d_hat = decode_distance(
-                fold_params,
-                observed_spikes[i],
-                tuning_curves=empirical_tuning_curves,
-                x_bounds=(min(distances), max(distances)),
-                resolution=resolution,
-                p0_set=[0.1, 0.3, 0.8, 1.4],
-                max_distance=max_distance,
-            )
-            d_hats.append(d_hat)
-        return np.array(d_hats), test_df[metric].values
+    if verbose:
+        print(f"decoding distance to goal across folds in parallel")
+    results_df = Parallel(n_jobs=len(_folds))(
+        delayed(_decode_fold)(
+            input_data,
+            folds_df,
+            fold,
+            test_trial_phases,
+            metric,
+            max_distance,
+            params_df,
+            x_bounds,
+            resolution,
+        )
+        for fold in _folds
+    )
+    results_df = pd.concat(results_df, axis=0).sort_index()
+    if plot:
+        quick_plot(results_df, metric, bin_spacing)
+        quick_plot2(results_df, osc="theta", metric=metric)
+        quick_plot2(results_df, osc="4Hz", metric=metric)
+    return results_df
+
+
+def _decode_fold(input_data, folds_df, fold, test_trial_phases, metric, max_distance, params_df, x_bounds, resolution):
+    """ """
+    fold_df = folds_df[fold]
+    test_trials = fold_df["test"].unstack().dropna().values
+    test_df = input_data[
+        input_data.trial.isin(test_trials)
+        & input_data.trial_phase.isin(test_trial_phases)
+        & input_data[metric].lt(max_distance)
+    ]
+    fold_params = params_df[params_df.fold == fold][
+        ["size", "shape", "scale", "shift"]
+    ].values.T  # n_params, n_clusters
+    observed_spikes = test_df.spike_count.values  # n_samples, n_clusters
+    d_hats = []
+    for i in range(observed_spikes.shape[0]):
+        d_hat = decode_distance(
+            fold_params,
+            observed_spikes[i],
+            tuning_curves=None,
+            x_bounds=x_bounds,
+            resolution=resolution,
+            p0_set=[0.1, 0.3, 0.8, 1.4],
+            max_distance=max_distance,
+        )
+        d_hats.append(d_hat)
+    results_df = test_df.copy()
+    results_df.drop(columns=["spike_count"], inplace=True, level=0)
+    results_df.loc[:, ("distance_to_goal", "decoded")] = d_hats
+    return results_df
 
 
 def decode_distance(
@@ -200,7 +286,7 @@ def get_distance_tuning_df(
     resolution=0.4,
     bin_spacing=0.1,
     moving_only=False,
-    max_steps_to_goal=30,
+    max_steps_to_goal=20,
 ):
     """
     Need new version of this funcion that operates with spikes not rates.
