@@ -96,13 +96,12 @@ def PC_plot(condition_aligned_rates, PCs=(0, 1, 2), pre_cue=0, post_ERC=4, ax=No
     ax.set_xlabel(f"PC{PCs[0]}")
     ax.set_ylabel(f"PC{PCs[1]}")
     ax.set_zlabel(f"PC{PCs[2]}")
-    # remove time before cue
+    # remove times
     pre_cue_mask = condition_aligned_rates.columns.get_level_values(1) > -pre_cue
     post_ERC_mask = (
         condition_aligned_rates.columns.get_level_values(1)
         < INTRA_TRIAL_INTERVAL_TIMES["end_reward_consumption"] + post_ERC
     )
-
     condition_aligned_rates = condition_aligned_rates[condition_aligned_rates.columns[pre_cue_mask & post_ERC_mask]]
     # get event timpoints
     timepoints = condition_aligned_rates.columns.get_level_values(1).unique().values
