@@ -4,6 +4,8 @@ Library for population dynamics analysis on GridMaze data
 
 # %% Imports
 import json
+from turtle import color
+from click import INT
 import numpy as np
 import pandas as pd
 from scipy.ndimage import gaussian_filter1d
@@ -29,8 +31,8 @@ with open(ANALYSIS_INFO_PATH / "intra_trial_interval_times.json", "r") as input_
 
 
 def test(
-    maze_name="maze_2",
-    goal_subset="subset_1",
+    maze_name="maze_1",
+    goal_subset="subset_2",
     late_sessions=False,
     PCs=(0, 1, 2),
     single_units=True,
@@ -77,40 +79,61 @@ def test(
     return
 
 
-def PC_plot(condition_aligned_rates, PCs=(0, 1, 2), ax=None):
+def PC_plot(condition_aligned_rates, PCs=(0, 1, 2), pre_cue=0, post_ERC=4, ax=None):
     """ """
     # set up figure
     if ax is None:
         f = plt.figure(figsize=(8, 6))
         ax = f.add_subplot(111, projection="3d")
+    # make the panes transparent
+    ax.xaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+    ax.yaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+    ax.zaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+    # make the grid lines transparent
+    ax.xaxis._axinfo["grid"]["color"] = (1, 1, 1, 0)
+    ax.yaxis._axinfo["grid"]["color"] = (1, 1, 1, 0)
+    ax.zaxis._axinfo["grid"]["color"] = (1, 1, 1, 0)
     ax.set_xlabel(f"PC{PCs[0]}")
     ax.set_ylabel(f"PC{PCs[1]}")
     ax.set_zlabel(f"PC{PCs[2]}")
     # remove time before cue
-    condition_aligned_rates = condition_aligned_rates[
-        condition_aligned_rates.columns[condition_aligned_rates.columns.get_level_values(1) > 0]
-    ]
+    pre_cue_mask = condition_aligned_rates.columns.get_level_values(1) > -pre_cue
+    post_ERC_mask = (
+        condition_aligned_rates.columns.get_level_values(1)
+        < INTRA_TRIAL_INTERVAL_TIMES["end_reward_consumption"] + post_ERC
+    )
+
+    condition_aligned_rates = condition_aligned_rates[condition_aligned_rates.columns[pre_cue_mask & post_ERC_mask]]
     # get event timpoints
     timepoints = condition_aligned_rates.columns.get_level_values(1).unique().values
     event2t_ind = {}
     for event, time in INTRA_TRIAL_INTERVAL_TIMES.items():
         event2t_ind[event] = np.argmin(abs(timepoints - time).astype(float))
+    mask = timepoints < INTRA_TRIAL_INTERVAL_TIMES["reward"]
     # do PCA
     X = condition_aligned_rates.values
-    pca = PCA(n_components=12)
+    pca = PCA()
     pca.fit(X.T)
     pc_componets = pca.components_
     # plot condition (goal) trajectories in PCA space
     goals = condition_aligned_rates.columns.get_level_values(2).unique().values
-    for goal in goals:
+    colors = cm.get_cmap("jet", len(goals))  # use tab10 colormap
+    for i, goal in enumerate(goals):
         condition_activity = condition_aligned_rates.xs(goal, level=2, axis=1)
         C = condition_activity.values  # [n_clusters x timepoints]
         traj_x = C.T @ pc_componets[PCs[0], :]
         traj_y = C.T @ pc_componets[PCs[1], :]
         traj_z = C.T @ pc_componets[PCs[2], :]
-        ax.plot(traj_x, traj_y, traj_z, label=goal, alpha=1)
-        # plot markers for
-        for key, t_ind in zip(["$C$", "$R$", "$E$", "$I$"], event2t_ind.values()):
+        ax.plot(
+            traj_x[~mask],
+            traj_y[~mask],
+            traj_z[~mask],
+            label=goal,
+            alpha=1,
+            color=colors(i),
+        )
+        # plot markers fo
+        for key, t_ind in zip(["$R$", "$E$"], [event2t_ind["reward"], event2t_ind["ITI_end"]]):
             ax.scatter(
                 traj_x[t_ind],
                 traj_y[t_ind],
