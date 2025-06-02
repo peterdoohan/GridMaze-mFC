@@ -29,9 +29,12 @@ FRAME_RATE = 60
 # %%
 
 
-def quick_plot2(results_df, osc="theta", metric=("distance_to_goal", "geodesic"), distance_range=(0, 0.5)):
+def quick_plot2(results_df, osc="theta", metric=("distance_to_goal", "geodesic"), distance_range=None):
     """ """
-    df = results_df[results_df[metric].between(*distance_range)].copy()
+    if distance_range is None:
+        df = results_df.copy()
+    else:
+        df = results_df[results_df[metric].between(*distance_range)].copy()
     df.loc[:, ("decoding_error", "")] = df[metric] - df.distance_to_goal.decoded
     grouped_df = df.groupby([("lfp_phase_bin", osc)]).decoding_error
     mean_df = grouped_df.mean()
@@ -87,7 +90,7 @@ def quick_plot(results_df, metric=("distance_to_goal", "geodesic"), bin_spacing=
 
 def test(
     session,
-    resolution=0.4,
+    resolution=0.05,
     metric=("distance_to_goal", "geodesic"),
     n_folds=12,
     bin_spacing=0.1,
