@@ -28,54 +28,13 @@ with open(ANALYSIS_INFO_PATH / "intra_trial_interval_times.json", "r") as input_
 # %% New
 
 
-def test2(condition_aligned_rates):
-    """ """
-    df = condition_aligned_rates.firing_rate
-    goals = df.columns.get_level_values(1).unique().values
-    n_neurons = df.shape[0]
-    n_goals = len(goals)
-    n_timepoints = len(df.columns.get_level_values(0).unique())
-    X = np.zeros((n_neurons, n_goals, n_timepoints))
-    for i, goal in enumerate(goals):
-        X[:, i, :] = df.xs(goal, level=1, axis=1).values
-    # demean
-    X = X - np.mean(X, axis=2, keepdims=True)  # [n_neurons x n_goals x n_timepoints]
-    # do dPCA
-    dpca = dPCA.dPCA(
-        labels="gt",
-        n_components=3,
-        regularizer=None,
-    )
-    Z = dpca.fit_transform(X)
-    # plotting
-    f = plt.figure(figsize=(8, 6))
-    ax = f.add_subplot(111, projection="3d")
-    # make the panes transparent
-    ax.xaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
-    ax.yaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
-    ax.zaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
-    # make the grid lines transparent
-    ax.xaxis._axinfo["grid"]["color"] = (1, 1, 1, 0)
-    ax.yaxis._axinfo["grid"]["color"] = (1, 1, 1, 0)
-    ax.zaxis._axinfo["grid"]["color"] = (1, 1, 1, 0)
-    # plot
-    for i in range(n_goals):
-        x_traj = Z["t"][0, i, :]
-        y_traj = Z["t"][1, i, :]
-        z_traj = Z["gt"][0, i, :]
-        ax.plot(x_traj, y_traj, z_traj, label=goals[i], alpha=1)
-
-    return
-
-
-def test(
+def plot_example_PC_trajectories(
     maze_name="maze_1",
     goal_subset="subset_2",
     late_sessions=False,
     PCs=(0, 1, 2),
     single_units=True,
     smooth_SD=20,
-    ax=None,
 ):
     """ """
 
@@ -112,29 +71,17 @@ def test(
     condition_aligned_rates = trial_x_goal_aligned_rates.unstack().sort_index(
         axis=1, level=[0, 2]
     )  # clusters x [timepoints x goals]
-    return condition_aligned_rates
     PC_plot(condition_aligned_rates, PCs=PCs)
-
+    # plot maze legend
+    # finally plot maze legend
+    simple_maze = sessions[0].simple_maze()
+    goals = session.goals
+    mp.plot_maze_legend(simple_maze, goals, cmap="coolwarm")
     return
 
 
-def PC_plot(condition_aligned_rates, PCs=(0, 1, 2), pre_cue=0, post_ERC=4, ax=None):
+def PC_plot(condition_aligned_rates, PCs=(0, 1, 2), pre_cue=0, post_ERC=4):
     """ """
-    # set up figure
-    if ax is None:
-        f = plt.figure(figsize=(8, 6))
-        ax = f.add_subplot(111, projection="3d")
-    # make the panes transparent
-    ax.xaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
-    ax.yaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
-    ax.zaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
-    # make the grid lines transparent
-    ax.xaxis._axinfo["grid"]["color"] = (1, 1, 1, 0)
-    ax.yaxis._axinfo["grid"]["color"] = (1, 1, 1, 0)
-    ax.zaxis._axinfo["grid"]["color"] = (1, 1, 1, 0)
-    ax.set_xlabel(f"PC{PCs[0]}")
-    ax.set_ylabel(f"PC{PCs[1]}")
-    ax.set_zlabel(f"PC{PCs[2]}")
     # remove times
     pre_cue_mask = condition_aligned_rates.columns.get_level_values(1) > -pre_cue
     post_ERC_mask = (
@@ -147,7 +94,8 @@ def PC_plot(condition_aligned_rates, PCs=(0, 1, 2), pre_cue=0, post_ERC=4, ax=No
     event2t_ind = {}
     for event, time in INTRA_TRIAL_INTERVAL_TIMES.items():
         event2t_ind[event] = np.argmin(abs(timepoints - time).astype(float))
-    mask = timepoints < INTRA_TRIAL_INTERVAL_TIMES["reward"]
+    pre_reward_mask = timepoints < INTRA_TRIAL_INTERVAL_TIMES["reward"]
+    post_reward_mask = timepoints > INTRA_TRIAL_INTERVAL_TIMES["reward"]
     # do PCA
     X = condition_aligned_rates.values
     pca = PCA()
@@ -155,34 +103,99 @@ def PC_plot(condition_aligned_rates, PCs=(0, 1, 2), pre_cue=0, post_ERC=4, ax=No
     pc_componets = pca.components_
     # plot condition (goal) trajectories in PCA space
     goals = condition_aligned_rates.columns.get_level_values(2).unique().values
-    colors = cm.get_cmap("jet", len(goals))  # use tab10 colormap
+    colors = cm.get_cmap("coolwarm", len(goals))
+    # plot 2D fig
+    f2D, ax2D = plt.subplots(1, 1, figsize=(3, 3))
+    ax2D.spines[["top", "right"]].set_visible(False)
+    ax2D.set_xlabel(f"PC{PCs[0]}")
+    ax2D.set_ylabel(f"PC{PCs[1]}")
+    ax2D.set_xticks([])
+    ax2D.set_yticks([])
+    f3D_1, ax3D_1 = _init_3D_plot(PCs)
+    f3D_1, ax3D_2 = _init_3D_plot(PCs)
     for i, goal in enumerate(goals):
         condition_activity = condition_aligned_rates.xs(goal, level=2, axis=1)
         C = condition_activity.values  # [n_clusters x timepoints]
+        color = colors(i)
         traj_x = C.T @ pc_componets[PCs[0], :]
         traj_y = C.T @ pc_componets[PCs[1], :]
         traj_z = C.T @ pc_componets[PCs[2], :]
-        ax.plot(
-            traj_x[~mask],
-            traj_y[~mask],
-            traj_z[~mask],
-            label=goal,
-            alpha=1,
-            color=colors(i),
-        )
-        # plot markers fo
-        for key, t_ind in zip(["$R$", "$E$"], [event2t_ind["reward"], event2t_ind["ITI_end"]]):
-            ax.scatter(
+        # 2D
+        ax2D.plot(traj_x, traj_y, color=color, label=goal, alpha=1)
+        for key, t_ind in zip(
+            ["o", "^", "s"],
+            [
+                event2t_ind["cue"],
+                event2t_ind["reward"],
+                event2t_ind["ITI_end"],
+            ],
+        ):
+            ax2D.scatter(
                 traj_x[t_ind],
                 traj_y[t_ind],
                 traj_z[t_ind],
                 marker=key,
-                color="k",
-                s=50,
-                alpha=0.5,
+                color=color,
+                alpha=1,
             )
 
+        # # 3D pre reward
+        ax3D_1.plot(
+            traj_x[pre_reward_mask],
+            traj_y[pre_reward_mask],
+            traj_z[pre_reward_mask],
+            label=goal,
+            alpha=1,
+            color=color,
+        )
+        for key, t_ind in zip(["o", "^"], [event2t_ind["cue"], event2t_ind["reward"]]):
+            ax3D_1.scatter(
+                traj_x[t_ind],
+                traj_y[t_ind],
+                traj_z[t_ind],
+                marker=key,
+                color=color,
+                alpha=1,
+            )
+        # # 3D post reward
+        ax3D_2.plot(
+            traj_x[post_reward_mask],
+            traj_y[post_reward_mask],
+            traj_z[post_reward_mask],
+            label=goal,
+            alpha=1,
+            color=color,
+        )
+        for key, t_ind in zip(["^", "s"], [event2t_ind["reward"], event2t_ind["ITI_end"]]):
+            ax3D_2.scatter(
+                traj_x[t_ind],
+                traj_y[t_ind],
+                traj_z[t_ind],
+                marker=key,
+                color=color,
+                alpha=1,
+            )
     return
+
+
+def _init_3D_plot(PCs):
+    f = plt.figure(figsize=(3, 3))
+    ax = f.add_subplot(111, projection="3d")
+    # make the panes transparent
+    ax.xaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+    ax.yaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+    ax.zaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+    # make the grid lines transparent
+    ax.xaxis._axinfo["grid"]["color"] = (1, 1, 1, 0)
+    ax.yaxis._axinfo["grid"]["color"] = (1, 1, 1, 0)
+    ax.zaxis._axinfo["grid"]["color"] = (1, 1, 1, 0)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_zticks([])
+    ax.set_xlabel(f"PC{PCs[0]}")
+    ax.set_ylabel(f"PC{PCs[1]}")
+    ax.set_zlabel(f"PC{PCs[2]}")
+    return f, ax
 
 
 # %% Functions
