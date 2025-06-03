@@ -4,7 +4,6 @@
 import json
 import pandas as pd
 from joblib import Parallel, delayed
-from regex import D
 
 from .get_navigation_df import get_navigation_df
 from .get_navigation_spike_dfs import get_navigation_spike_rates_df, get_navigation_spike_counts_df
@@ -13,6 +12,7 @@ from .get_navigation_strategies_dfs import get_navigation_strategies_df
 from .get_trajectory_decisions_dfs import get_trajectory_decisions_df
 
 from .get_distance_tuning_metrics_df import get_distance_tuning_metrics_df
+from .get_place_direction_metrics_df import get_place_direcion_tuning_metrics_df
 
 # %% Global variables
 
@@ -46,6 +46,11 @@ ANALYSIS_DATA_STRUCTURES_DF = pd.DataFrame(
         {
             "filename": "clusters.distanceTuningMetrics.parquet",
             "function": get_distance_tuning_metrics_df,
+            "session_types": ["maze"],
+        },
+        {
+            "filename": "clusters.placeDirectionTuningMetrics.parquet",
+            "function": get_place_direcion_tuning_metrics_df,
             "session_types": ["maze"],
         },
     ]

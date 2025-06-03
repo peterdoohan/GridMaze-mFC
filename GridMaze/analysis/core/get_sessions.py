@@ -37,6 +37,7 @@ MAZE_ANALYSIS_DATA_STRUCTURE2FILENAME = {
     "navigation_strategies_df": "navigation_strategies.parquet",
     "trajectory_decisions_df": "trajectory_decisions.parquet",
     "cluster_distance_tuning_metrics": "clusters.distanceTuningMetrics.parquet",
+    "cluster_place_direction_tuning_metrics": "clusters.placeDirectionTuningMetrics.parquet",
 }
 
 ALL_MAZE_DATA_STRUCTURES2FILENAME = {**MAZE_PROCESSED_DATA_STRUCTURE2FILENAME, **MAZE_ANALYSIS_DATA_STRUCTURE2FILENAME}
