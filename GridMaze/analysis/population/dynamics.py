@@ -77,7 +77,7 @@ def plot_example_PC_trajectories(
     return
 
 
-def PC_plot(condition_aligned_rates, PCs=(0, 1, 2), pre_cue=0, post_ERC=4):
+def PC_plot(condition_aligned_rates, PCs=(0, 1, 2), pre_cue=0, post_ERC=6):
     """ """
     # remove times
     pre_cue_mask = condition_aligned_rates.columns.get_level_values(1) > -pre_cue
