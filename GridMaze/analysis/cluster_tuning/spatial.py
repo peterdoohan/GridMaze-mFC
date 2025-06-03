@@ -33,7 +33,6 @@ def plot_session_place_direction_tuning(session):
         minimum_occupancy=0.5,
         max_steps_from_goal=30,
     )
-    simple_maze = session.simple_maze()
     cluster_unique_IDs = navigation_rates_df.firing_rate.columns.values
     for cluster_unique_ID in cluster_unique_IDs:
         place_direction_tuning = place_direction_tuning_df.loc[cluster_unique_ID]
