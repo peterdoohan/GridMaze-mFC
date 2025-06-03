@@ -4,13 +4,11 @@ Library for population dynamics analysis on GridMaze data
 
 # %% Imports
 import json
-from turtle import color
-from click import INT
 import numpy as np
 import pandas as pd
 from scipy.ndimage import gaussian_filter1d
 from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler
+from dPCA import dPCA
 
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
@@ -28,6 +26,46 @@ with open(ANALYSIS_INFO_PATH / "intra_trial_interval_times.json", "r") as input_
     INTRA_TRIAL_INTERVAL_TIMES = json.load(input_file)
 
 # %% New
+
+
+def test2(condition_aligned_rates):
+    """ """
+    df = condition_aligned_rates.firing_rate
+    goals = df.columns.get_level_values(1).unique().values
+    n_neurons = df.shape[0]
+    n_goals = len(goals)
+    n_timepoints = len(df.columns.get_level_values(0).unique())
+    X = np.zeros((n_neurons, n_goals, n_timepoints))
+    for i, goal in enumerate(goals):
+        X[:, i, :] = df.xs(goal, level=1, axis=1).values
+    # demean
+    X = X - np.mean(X, axis=2, keepdims=True)  # [n_neurons x n_goals x n_timepoints]
+    # do dPCA
+    dpca = dPCA.dPCA(
+        labels="gt",
+        n_components=3,
+        regularizer=None,
+    )
+    Z = dpca.fit_transform(X)
+    # plotting
+    f = plt.figure(figsize=(8, 6))
+    ax = f.add_subplot(111, projection="3d")
+    # make the panes transparent
+    ax.xaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+    ax.yaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+    ax.zaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+    # make the grid lines transparent
+    ax.xaxis._axinfo["grid"]["color"] = (1, 1, 1, 0)
+    ax.yaxis._axinfo["grid"]["color"] = (1, 1, 1, 0)
+    ax.zaxis._axinfo["grid"]["color"] = (1, 1, 1, 0)
+    # plot
+    for i in range(n_goals):
+        x_traj = Z["t"][0, i, :]
+        y_traj = Z["t"][1, i, :]
+        z_traj = Z["gt"][0, i, :]
+        ax.plot(x_traj, y_traj, z_traj, label=goals[i], alpha=1)
+
+    return
 
 
 def test(
@@ -74,6 +112,7 @@ def test(
     condition_aligned_rates = trial_x_goal_aligned_rates.unstack().sort_index(
         axis=1, level=[0, 2]
     )  # clusters x [timepoints x goals]
+    return condition_aligned_rates
     PC_plot(condition_aligned_rates, PCs=PCs)
 
     return
