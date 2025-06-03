@@ -8,11 +8,8 @@ import numpy as np
 import pandas as pd
 from scipy.ndimage import gaussian_filter1d
 from sklearn.decomposition import PCA
-from dPCA import dPCA
 
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-from matplotlib.colors import LinearSegmentedColormap
 import matplotlib.cm as cm
 
 
