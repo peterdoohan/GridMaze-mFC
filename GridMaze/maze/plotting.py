@@ -528,15 +528,14 @@ def get_coords2value(maze, nodes_and_edges2value):
 # %% Figure legend plotting
 
 
-def plot_maze_legend(simple_maze, goals, ax=None, node_size=30, edge_size=3):
-    """ """
+def plot_maze_legend(simple_maze, goals, node_size=30, edge_size=3, cmap="gist_rainbow", ax=None):
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=(1.5, 1.6))
     node_labels = np.array([i for i in nx.get_node_attributes(simple_maze, "label").values()])
-    goal2standard_color = get_goal2standard_color()
-    node2color = {
-        node_label: goal2standard_color[node_label] if node_label in goals else "silver" for node_label in node_labels
-    }
+    cmap = cm.get_cmap(cmap, len(goals))
+    color_list = [mcolors.rgb2hex(cmap(i)) for i in range(len(goals))]
+    goal2color = {goal: color for goal, color in zip(goals, color_list)}
+    node2color = {node_label: goal2color[node_label] if node_label in goals else "silver" for node_label in node_labels}
     plot_simple_maze_silhouette(
         simple_maze,
         ax,
@@ -545,13 +544,6 @@ def plot_maze_legend(simple_maze, goals, ax=None, node_size=30, edge_size=3):
         edge_size=edge_size,
         special_location2color=node2color,
     )
-
-
-def get_goal2standard_color(colormap="gist_rainbow"):
-    all_goals = MAZE_CONFIGS["maze_1"]["goal_sets"]["all"]
-    cmap = cm.get_cmap(colormap, len(all_goals) + 2)
-    color_list = [mcolors.rgb2hex(cmap(i)) for i in range(len(all_goals) + 2)][1:-1]
-    return {goal: color for goal, color in zip(all_goals, color_list)}
 
 
 # %% Other functions (some depreciated)
