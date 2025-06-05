@@ -12,7 +12,6 @@ from matplotlib.colors import Normalize
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 # %% Global variables
-plt.rcParams["pdf.fonttype"] = 42
 
 # %%
 

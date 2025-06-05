@@ -9,7 +9,8 @@ import numpy as np
 import pandas as pd
 
 from GridMaze.analysis.core import get_sessions as gs
-from GridMaze.analysis.processing.get_cluster_heatmap_dfs import _get_place_direction_df
+
+# from GridMaze.analysis.processing.get_cluster_heatmap_dfs import _get_place_direction_df
 from GridMaze.analysis.efficient_coding import control_behaviour as cb
 from GridMaze.maze import representations as mr
 from GridMaze.analysis.core import filter as filt

@@ -3,11 +3,13 @@
 # %% Imports
 import pandas as pd
 import numpy as np
+from matplotlib import pyplot as plt
 from joblib import Parallel, delayed
 
 from sklearn.decomposition import NMF, PCA
 from sklearn.metrics import explained_variance_score
 
+from GridMaze.maze import plotting as mp
 from GridMaze.analysis.cluster_tuning import spatial
 from GridMaze.analysis.core import get_sessions as gs
 
@@ -18,17 +20,33 @@ from GridMaze.analysis.core import get_sessions as gs
 # %% Functions
 
 
+def plot_nmf_components(population_tuning_df, simple_maze, n_components=8, cmap="Reds", axes=None):
+    """ """
+    nmf_df = get_nmf_df(population_tuning_df, n_components)
+    if axes is None:
+        f, axes = plt.subplots(1, n_components, figsize=(6 * n_components, 6))
+    for i in range(n_components):
+        c = nmf_df[i]
+        ax = axes[i]
+        mp.plot_directed_heatmap(
+            simple_maze,
+            c,
+            ax,
+            colormap=cmap,
+            silhouette_node_size=500,
+            silhouette_edge_size=10,
+            star_base_length=0.045,
+            max_point_length=0.03,
+        )
+
+    return
+
+
 def get_nmf_df(
     place_direction_df,
     n_components=8,
-    kwargs={
-        "init": "random",
-        "random_state": 0,
-        "beta_loss": "kullback-leibler",
-        "max_iter": 1000,
-    },
 ):
-    model = NMF(n_components=n_components, **kwargs)
+    model = NMF(n_components=n_components, init="random", random_state=0, max_iter=10_000)
     data_matrix = place_direction_df.to_numpy()
     decomp_components = model.fit(data_matrix).components_
     nmf_df = pd.DataFrame(data=decomp_components.T, index=place_direction_df.columns, columns=range(n_components))
@@ -45,9 +63,17 @@ def get_pca_df(place_direction_df, n_components=8):
     return pca_df
 
 
-def get_population_place_direction_tuning(subject_IDs="all", maze_name="maze_1", late_sessions=True, return_list=False):
+def get_population_place_direction_tuning(
+    subject_IDs="all",
+    maze_name="maze_1",
+    late_sessions=True,
+    return_list=False,
+    verbose=False,
+):
     """ """
     days_on_maze = "late" if late_sessions else "all"
+    if verbose:
+        print("Loading sessions ...")
     sessions = gs.get_maze_sessions(
         subject_IDs=subject_IDs,
         maze_names=[maze_name],
@@ -62,7 +88,8 @@ def get_population_place_direction_tuning(subject_IDs="all", maze_name="maze_1",
     )
     dfs = []
     for session in sessions:
-        print(session.name)
+        if verbose:
+            print(session.name)
         df = _get_session_place_direction_tuning(session)
         if df is None:
             continue  # not pd tuned clusters
@@ -79,13 +106,13 @@ def _get_session_place_direction_tuning(
     fill_nans="mean",
     normalisation="length",
     place_direction_tuned=True,
-    min_split_corr=0.4,
+    min_split_corr=0.5,
     navigation_only=True,
     moving_only=True,
     exclude_time_at_goal=True,
     minimum_occupancy=0.5,
     max_steps_from_goal=30,
-    verbose=True,
+    verbose=False,
 ):
     """
     Returns place-direction tuning for all place-direction tuned clusters in a session.
