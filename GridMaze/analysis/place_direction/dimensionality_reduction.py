@@ -3,12 +3,14 @@
 # %% Imports
 import pandas as pd
 import numpy as np
+from joblib import Parallel, delayed
 
 from sklearn.decomposition import NMF, PCA
-
+from sklearn.metrics import explained_variance_score
 
 from GridMaze.analysis.cluster_tuning import spatial
 from GridMaze.analysis.core import get_sessions as gs
+
 
 # %% Global Variables
 
@@ -22,7 +24,6 @@ def get_nmf_df(
     kwargs={
         "init": "random",
         "random_state": 0,
-        "solver": "mu",
         "beta_loss": "kullback-leibler",
         "max_iter": 1000,
     },
@@ -44,7 +45,7 @@ def get_pca_df(place_direction_df, n_components=8):
     return pca_df
 
 
-def get_population_place_direction_tuning(subject_IDs="all", maze_name="maze_1", late_sessions=True):
+def get_population_place_direction_tuning(subject_IDs="all", maze_name="maze_1", late_sessions=True, return_list=False):
     """ """
     days_on_maze = "late" if late_sessions else "all"
     sessions = gs.get_maze_sessions(
@@ -66,8 +67,11 @@ def get_population_place_direction_tuning(subject_IDs="all", maze_name="maze_1",
         if df is None:
             continue  # not pd tuned clusters
         dfs.append(df)
-    pop_pd_tuning_df = pd.concat(dfs, axis=0, ignore_index=True)
-    return pop_pd_tuning_df
+    if return_list:
+        return dfs, sessions
+    else:
+        pop_pd_tuning_df = pd.concat(dfs, axis=0, ignore_index=True)
+        return pop_pd_tuning_df
 
 
 def _get_session_place_direction_tuning(
@@ -136,3 +140,45 @@ def _get_session_place_direction_tuning(
     place_direction_df.columns.names = ["maze_position", "direction"]
     place_direction_df.sort_index(axis=1, inplace=True)
     return place_direction_df
+
+
+# %% get CV var exp to determine best number of components
+
+
+def test(tuning_dfs, sessions, component_range=(1, 20), max_jobs=20):
+    """ """
+    results = []
+    for i in range(len(sessions)):
+        test_session = sessions[i]
+        print(test_session.name)
+        test_df = tuning_dfs[i]
+        train_df = pd.concat(tuning_dfs[:i] + tuning_dfs[i + 1 :], axis=0)
+        # do CV NMF for each number of components
+        X_train = train_df.values  # [n_neurons, n_place_directions]
+        X_test = test_df.values
+        fold_results = Parallel(n_jobs=max_jobs)(
+            delayed(_process_fold)(X_train, X_test, test_session, n_components)
+            for n_components in range(component_range[0], component_range[1] + 1)
+        )
+        results.extend(fold_results)
+    return results
+
+
+def _process_fold(X_train, X_test, test_session, n_components):
+    """ """
+    nmf = NMF(n_components=n_components, random_state=0, max_iter=10_000)
+    W_train = nmf.fit_transform(X_train)
+    H = nmf.components_
+    X_train_pred = W_train @ H
+    # project test data onto learned components
+    W_test = nmf.transform(X_test)
+    X_test_pred = W_test @ H
+    # calculate variance explained
+    return {
+        "subject_ID": test_session.subject_ID,
+        "maze_name": test_session.maze_name,
+        "day_on_maze": test_session.day_on_maze,
+        "n_components": n_components,
+        "train_var_exp": explained_variance_score(X_train, X_train_pred),
+        "test_var_exp": explained_variance_score(X_test, X_test_pred),
+    }

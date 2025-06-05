@@ -148,7 +148,14 @@ def _get_session_anatomical_distance_tuning(session, sign="pos", fit="gamma_4p")
 
 
 def plot_distance_tunned_heatmap(
-    population_tuning_df, sign="pos", smooth_SD=2, fit="gamma_4p", normalisation_method="zscore", ax=None
+    population_tuning_df,
+    sign="pos",
+    smooth_SD=2,
+    fit="gamma_4p",
+    normalisation_method="zscore",
+    cmap="coolwarm",
+    v_range=(-1, 2),
+    ax=None,
 ):
     """ """
     # include only "distance tuned" clusters (those with cv_r2 significanltly > 0)
@@ -181,9 +188,9 @@ def plot_distance_tunned_heatmap(
         f, ax = plt.subplots(1, 1, figsize=(3, 5))
     sns.heatmap(
         D,
-        cmap="coolwarm",
-        vmax=2,
-        vmin=-1,
+        cmap=cmap,
+        vmax=v_range[1],
+        vmin=v_range[0],
         ax=ax,
         cbar_kws={"label": "Firing Rate (z-score)", "shrink": 0.5},
     )

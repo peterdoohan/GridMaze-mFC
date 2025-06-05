@@ -68,16 +68,17 @@ def plot_example_PC_trajectories(
     condition_aligned_rates = trial_x_goal_aligned_rates.unstack().sort_index(
         axis=1, level=[0, 2]
     )  # clusters x [timepoints x goals]
-    PC_plot(condition_aligned_rates, PCs=PCs)
+    f2D, f3D_1, f3D_2 = PC_plot(condition_aligned_rates, PCs=PCs)
     # plot maze legend
     # finally plot maze legend
     simple_maze = sessions[0].simple_maze()
     goals = session.goals
-    mp.plot_maze_legend(simple_maze, goals, cmap="coolwarm")
-    return
+    fL, ax = plt.subplots(1, 1, figsize=(1.5, 1.6))
+    mp.plot_maze_legend(simple_maze, goals, cmap="coolwarm", ax=ax)
+    return f2D, f3D_1, f3D_2, fL
 
 
-def PC_plot(condition_aligned_rates, PCs=(0, 1, 2), pre_cue=0, post_ERC=6):
+def PC_plot(condition_aligned_rates, PCs=(0, 1, 2), pre_cue=0, post_ERC=4):
     """ """
     # remove times
     pre_cue_mask = condition_aligned_rates.columns.get_level_values(1) > -pre_cue
@@ -109,7 +110,7 @@ def PC_plot(condition_aligned_rates, PCs=(0, 1, 2), pre_cue=0, post_ERC=6):
     ax2D.set_xticks([])
     ax2D.set_yticks([])
     f3D_1, ax3D_1 = _init_3D_plot(PCs)
-    f3D_1, ax3D_2 = _init_3D_plot(PCs)
+    f3D_2, ax3D_2 = _init_3D_plot(PCs)
     for i, goal in enumerate(goals):
         condition_activity = condition_aligned_rates.xs(goal, level=2, axis=1)
         C = condition_activity.values  # [n_clusters x timepoints]
@@ -172,7 +173,7 @@ def PC_plot(condition_aligned_rates, PCs=(0, 1, 2), pre_cue=0, post_ERC=6):
                 color=color,
                 alpha=1,
             )
-    return
+    return f2D, f3D_1, f3D_2
 
 
 def _init_3D_plot(PCs):
