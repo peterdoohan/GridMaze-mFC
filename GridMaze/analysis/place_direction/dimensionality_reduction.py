@@ -6,7 +6,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 from joblib import Parallel, delayed
 
-from sklearn.decomposition import NMF, PCA
+from sklearn.decomposition import NMF, PCA, TruncatedSVD
 from sklearn.metrics import explained_variance_score
 
 from GridMaze.maze import plotting as mp
@@ -61,6 +61,17 @@ def get_pca_df(place_direction_df, n_components=8):
         data=decomp_components.T, index=place_direction_df.columns, columns=range(len(decomp_components))
     )
     return pca_df
+
+
+def get_svd_df(place_direction_df, n_components=8):
+    """ """
+    model = TruncatedSVD(n_components=n_components, random_state=0)
+    data_matrix = place_direction_df.to_numpy()
+    decomp_components = model.fit(data_matrix).components_
+    svd_df = pd.DataFrame(
+        data=decomp_components.T, index=place_direction_df.columns, columns=range(len(decomp_components))
+    )
+    return svd_df
 
 
 def get_population_place_direction_tuning(

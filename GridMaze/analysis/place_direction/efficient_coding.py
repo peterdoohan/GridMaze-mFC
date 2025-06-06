@@ -78,7 +78,7 @@ def test_within_across_subject_ve(maze="maze_2", demean=True, norm_length=True):
 # %% Null vs subject behaviour
 
 
-def test(maze="maze_1", demean=True, norm_length=True):
+def test(maze="maze_1", demean=False, norm_length=True):
     """
     Switch to behaviour -explains-> neurons so that neurons are constant and behaviour is changed.
     Do analysis sepeartely for each subject, with output metric auc BeN / auc NeN -> t-test across
@@ -96,8 +96,8 @@ def test(maze="maze_1", demean=True, norm_length=True):
         BeBs, BeNs, NeBs = [], [], []  # [n_splits, n_policies]
         for i, (train_sessions, test_sessions) in enumerate(split_sessions):
             print(f"Split {i+1} of {len(split_sessions)}")
-            train_neural = _get_neural_tuning(train_sessions)
-            test_neural = _get_neural_tuning(test_sessions)
+            train_neural = pdr.get_population_place_direction_tuning(sessions=train_sessions)
+            test_neural = pdr.get_population_place_direction_tuning(sessions=test_sessions)
             # fill missing neural values with mean
             train_neural = train_neural.apply(lambda row: row.fillna(row.mean()), axis=1).values
             test_neural = test_neural.apply(lambda row: row.fillna(row.mean()), axis=1).values
@@ -231,7 +231,7 @@ def plot_subject_cum_ve(NeNs, BeBs, BeNs, NeBs, policies=["Real", "Random", "For
 # %% Variance explained analysis (SVD)
 
 
-def run_main_analysis(X, ve_method="svd", demean=True, norm_length=True, plot=True):
+def run_neuron_to_behaviour_variance_explained_analysis(X, ve_method="pca", demean=False, norm_length=True, plot=True):
     """"""
     if ve_method == "pca":
         ve_fn = get_pca_variance_explained
@@ -242,7 +242,6 @@ def run_main_analysis(X, ve_method="svd", demean=True, norm_length=True, plot=Tr
     n_components = X[0]["neurons"]["train"].shape[-1]
     results = np.zeros((len(X), 4, n_components + 1))  # [n_splits, 4, n_components]
     for i, data in enumerate(X):
-        print(i)
         # neural data
         train_neurons, test_neurons = data["neurons"]["train"], data["neurons"]["test"]
         # fill nans in neural data with mean (unvistied place-directions)
@@ -265,10 +264,6 @@ def run_main_analysis(X, ve_method="svd", demean=True, norm_length=True, plot=Tr
         nen = ve_fn(train_neurons, test_neurons)
         ben = ve_fn(train_behaviour, test_neurons)
         neb = ve_fn(train_neurons, test_behaviour)
-        print(beb.shape)
-        print(nen.shape)
-        print(ben.shape)
-        print(neb.shape)
         results[i] = np.array([beb, nen, ben, neb])
     # plotting (make pretty later)
     if plot:
@@ -343,19 +338,17 @@ def get_joint_neural_behaviour_place_direction_dfs(sessions, n_splits=5, test_si
     X = []
     for train_sessions, test_sessions in split_sessions:
         split_data = {}
-        split_data["neurons"] = (
-            {  # df [n_neurons, n_place_directions]
-                "train": pdr.get_population_place_direction_tuning(sessions=train_sessions),
-                "test": pdr.get_population_place_direction_tuning(sessions=test_sessions),
-            },
-        )
+        split_data["neurons"] = {  # df [n_neurons, n_place_directions]
+            "train": pdr.get_population_place_direction_tuning(sessions=train_sessions),
+            "test": pdr.get_population_place_direction_tuning(sessions=test_sessions),
+        }
+
         if not synthetic_behaviour:
-            split_data["behaviour"] = (
-                {  # df [n_trials, n_place_directions]
-                    "train": bdr.get_maze_behavioural_sequences_df(sessions=train_sessions),
-                    "test": bdr.get_maze_behavioural_sequences_df(sessions=test_sessions),
-                },
-            )
+            split_data["behaviour"] = {  # df [n_trials, n_place_directions]
+                "train": bdr.get_maze_behavioural_sequences_df(sessions=train_sessions),
+                "test": bdr.get_maze_behavioural_sequences_df(sessions=test_sessions),
+            }
+
         else:
             policy = synthetic_behaviour
             split_data["behaviour"] = {  # df [n_trials, n_place_directions]

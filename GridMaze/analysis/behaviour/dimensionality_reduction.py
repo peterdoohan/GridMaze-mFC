@@ -11,7 +11,7 @@ from GridMaze.maze import plotting as mp
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import filter as filt
 
-from GridMaze.analysis.place_direction.dimensionality_reduction import get_nmf_df, get_pca_df
+from GridMaze.analysis.place_direction.dimensionality_reduction import get_nmf_df, get_pca_df, get_svd_df
 
 # %% Global Variables
 
