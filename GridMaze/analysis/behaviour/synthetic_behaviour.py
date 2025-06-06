@@ -22,20 +22,23 @@ def get_synthetic_maze_behavioural_sequences_df(
     policy="random_diffusion",
     subject_IDs="all",
     maze_name="maze_1",
+    sessions=None,
     late_sessions=True,
     verbose=False,
 ):
     """ """
-    days_on_maze = "late" if late_sessions else "all"
-    if verbose:
-        print("Loading sessions ...")
-    sessions = gs.get_maze_sessions(
-        subject_IDs=subject_IDs,
-        maze_names=[maze_name],
-        days_on_maze=days_on_maze,
-        with_data=["navigation_df"],
-        must_have_data=True,
-    )
+    # if session objects are not input, generate them from input filters
+    if sessions is None:
+        days_on_maze = "late" if late_sessions else "all"
+        if verbose:
+            print("Loading sessions ...")
+        sessions = gs.get_maze_sessions(
+            subject_IDs=subject_IDs,
+            maze_names=[maze_name],
+            days_on_maze=days_on_maze,
+            with_data=["navigation_df"],
+            must_have_data=True,
+        )
     dfs = []
     for session in sessions:
         if verbose:
