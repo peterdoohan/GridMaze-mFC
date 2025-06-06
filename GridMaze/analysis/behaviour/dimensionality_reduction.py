@@ -103,7 +103,7 @@ def get_session_behavioural_sequences(
 
 
 def get_session_get_behavioural_sequences_fr(
-    sessions,
+    session,
     navigation_only=True,
     moving_only=True,
     exclude_time_at_goal=True,
@@ -113,31 +113,28 @@ def get_session_get_behavioural_sequences_fr(
     Behavioural sequences defined over frames not node-egde-node transitions as in get_behavioural_sequences
     Note same nav filter kwargs as used to generlate place-direction heatmaps
     """
-    trial_sequences = []
-    place_direction2idx = {_pd: i for i, _pd in enumerate(mr.get_maze_place_direction_pairs(sessions[0].simple_maze()))}
-    for session in sessions:
-        navigation_df = session.navigation_df
-        navigation_df = filt.filter_navigation_rates_df(
-            navigation_df,
-            navigation_only,
-            moving_only,
-            exclude_time_at_goal,
-            max_steps_from_goal,
-        )
-        # filter edge cases that lack place-direction information
-        navigation_df = navigation_df[navigation_df.maze_position.simple.notnull()]
-        navigation_df = navigation_df[navigation_df.cardinal_movement_direction.notnull()]
-        trials = navigation_df.trial.unique()
-        # build binary reps of trails in place-direction space
-        session_sequences = np.zeros((len(trials), len(place_direction2idx)), dtype=int)
-        for i, trial in enumerate(trials):
-            trial_df = navigation_df[navigation_df.trial == trial]
-            place_direction_sequence = list(zip(trial_df.maze_position.simple, trial_df.cardinal_movement_direction))
-            for j in place_direction_sequence:
-                session_sequences[i, place_direction2idx[j]] += 1
-        trial_sequences.append(session_sequences)
+    place_direction2idx = {_pd: i for i, _pd in enumerate(mr.get_maze_place_direction_pairs(session.simple_maze()))}
+    navigation_df = session.navigation_df
+    navigation_df = filt.filter_navigation_rates_df(
+        navigation_df,
+        navigation_only,
+        moving_only,
+        exclude_time_at_goal,
+        max_steps_from_goal,
+    )
+    # filter edge cases that lack place-direction information
+    navigation_df = navigation_df[navigation_df.maze_position.simple.notnull()]
+    navigation_df = navigation_df[navigation_df.cardinal_movement_direction.notnull()]
+    trials = navigation_df.trial.unique()
+    # build binary reps of trails in place-direction space
+    session_sequences = np.zeros((len(trials), len(place_direction2idx)), dtype=int)
+    for i, trial in enumerate(trials):
+        trial_df = navigation_df[navigation_df.trial == trial]
+        place_direction_sequence = list(zip(trial_df.maze_position.simple, trial_df.cardinal_movement_direction))
+        for j in place_direction_sequence:
+            session_sequences[i, place_direction2idx[j]] += 1
     behaviour_df = pd.DataFrame(
-        data=np.vstack(trial_sequences),
-        columns=pd.MultiIndex.from_tuples(place_direction2idx.keys(), names=["maze_position", "direction"]),
+        data=np.vstack(session_sequences),
+        columns=pd.MultiIndex.from_tuples(place_direction2idx.keys()),
     )
     return behaviour_df.sort_index(axis=1)

@@ -9,6 +9,7 @@ import pandas as pd
 import random
 import networkx as nx
 from GridMaze.maze import representations as mr
+from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.processing import get_trajectory_decisions_dfs as tdf
 from GridMaze.analysis.processing.get_navigation_df import get_cardinal_movement_direction
 
@@ -17,6 +18,52 @@ from GridMaze.analysis.processing.get_navigation_df import get_cardinal_movement
 # %% Functions
 
 
+def get_synthetic_maze_behavioural_sequences_df(
+    policy="random_diffusion",
+    subject_IDs="all",
+    maze_name="maze_1",
+    late_sessions=True,
+    verbose=False,
+):
+    """ """
+    days_on_maze = "late" if late_sessions else "all"
+    if verbose:
+        print("Loading sessions ...")
+    sessions = gs.get_maze_sessions(
+        subject_IDs=subject_IDs,
+        maze_names=[maze_name],
+        days_on_maze=days_on_maze,
+        with_data=["navigation_df"],
+        must_have_data=True,
+    )
+    dfs = []
+    for session in sessions:
+        if verbose:
+            print(session.name)
+        dfs.append(get_session_synthetic_behavioural_sequences(session, policy))
+    output_df = pd.concat(dfs, axis=0, ignore_index=True)
+    return output_df.sort_index(axis=1)
+
+
+def get_session_synthetic_behavioural_sequences(session, policy="random_diffusion"):
+    """ """
+    place_direction2idx = {_pd: i for i, _pd in enumerate(mr.get_maze_place_direction_pairs(session.simple_maze()))}
+    trajectories_df = get_synthetic_behaviour(session, policy)
+    trajectories_df = trajectories_df[(trajectories_df.trial_phase == "navigation")]
+    trajectories_df = trajectories_df[(trajectories_df.maze_position.notnull())]
+    trajectories_df = trajectories_df[(trajectories_df.action.notnull())]
+    trials = trajectories_df.trial.unique()
+    session_sequences = np.zeros((len(trials), len(place_direction2idx)), dtype=int)
+    for i, trial in enumerate(trials):
+        trial_df = trajectories_df[trajectories_df.trial == trial]
+        place_direction_sequence = list(zip(trial_df.maze_position, trial_df.action))
+        for j in place_direction_sequence:
+            session_sequences[i, place_direction2idx[j]] += 1
+    behaviour_df = pd.DataFrame(data=session_sequences, columns=pd.MultiIndex.from_tuples(place_direction2idx.keys()))
+    return behaviour_df.sort_index(axis=1)
+
+
+# %% Core function for generating trajectory_decisions_df-like data structures for synthetic behaviour
 def get_synthetic_behaviour(session, policy="random_diffusion"):
     """
     TODO: add vector nav policy option
