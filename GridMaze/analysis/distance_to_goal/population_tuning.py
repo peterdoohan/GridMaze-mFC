@@ -340,12 +340,13 @@ def plot_cross_subject_curve_fit_comparison(summary_df, curve_fits=CURVE_FITS, a
         x="fit",
         y="r2",
         hue="subject_ID",
+        palette="mako",
         errorbar=None,
         dodge=False,
         markers="o",
         linestyles="-",
         legend=False,
-        markersize=8,
+        markersize=10,
         linewidth=4,
     )
     ax.tick_params(axis="x", which="both", top=False, bottom=True, labeltop=False, labelbottom=True, labelrotation=45)

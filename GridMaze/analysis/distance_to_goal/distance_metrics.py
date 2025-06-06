@@ -82,7 +82,12 @@ def plot_CPD_timeseries(summary_df, axes=None, comparison="geodesic_vs_euclidean
 
 
 def plot_cross_subject_CPD_comparison(
-    summary_df, comparison="geodesic_vs_euclidean", maze_names=["maze_1", "maze_2"], late_sessions=True, ax=None
+    summary_df,
+    comparison="geodesic_vs_euclidean",
+    maze_names=["maze_1", "maze_2"],
+    late_sessions=True,
+    outlier_threshold=-0.1,
+    ax=None,
 ):
     """ """
     # filter data
@@ -91,13 +96,17 @@ def plot_cross_subject_CPD_comparison(
         df = df[df.apply(_is_late_session, axis=1)]
     df.drop(columns=[("maze_name", ""), ("day_on_maze", "")], inplace=True)
     df.set_index("subject_ID", append=True, inplace=True)
+    df = df[comparison]
+    # filter for outliers where clusters were not fit well
+    outlier_mask = df.lt(outlier_threshold).any(axis=1)
+    df = df[~outlier_mask].copy()
     # process data
-    mean_cpd = df[comparison].groupby("subject_ID").mean().unstack().reset_index()
+    mean_cpd = df.groupby("subject_ID").mean().unstack().reset_index()
     mean_cpd.columns = ["metric", "subject_ID", "CPD"]
     # plot
     mean_cpd["CPD"] = mean_cpd["CPD"].mul(100)  # convert to %
     if ax is None:
-        f, ax = plt.subplots(1, 1, figsize=(2, 2))
+        f, ax = plt.subplots(1, 1, figsize=(3, 3))
 
     ax.spines[["top", "right"]].set_visible(False)
     ax.set_ylabel("CPD (%)")
@@ -107,12 +116,13 @@ def plot_cross_subject_CPD_comparison(
         x="metric",
         y="CPD",
         hue="subject_ID",
+        palette="mako",
         errorbar=None,
         dodge=False,
         markers="o",
         linestyles="-",
         legend=False,
-        markersize=8,
+        markersize=10,
         linewidth=4,
     )
     ax.set_ylim(-1, 2)
