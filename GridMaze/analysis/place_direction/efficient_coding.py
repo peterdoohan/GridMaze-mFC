@@ -10,7 +10,8 @@ import pandas as pd
 from GridMaze.analysis.core import get_sessions as gs
 
 from GridMaze.analysis.behaviour import synthetic_behaviour as sb
-from GridMaze.analysis.place_direction import dimensionality_reduction as dr
+from GridMaze.analysis.place_direction import dimensionality_reduction as pdr
+from GridMaze.analysis.behaviour import dimensionality_reduction as bdr
 
 from GridMaze.maze import representations as mr
 from GridMaze.analysis.core import filter as filt
@@ -334,27 +335,41 @@ def get_pca_variance_explained(A, B):  # A & B: [n_samples, n_features]
 # %% Main input data function
 
 
-def get_joint_neural_behaviour_place_direction_dfs(sessions, n_splits=5, test_size=0.2):
-    """ """
+def get_joint_neural_behaviour_place_direction_dfs(sessions, n_splits=5, test_size=0.2, synthetic_behaviour=False):
+    """
+    synthetic_behaviour in [False, "random_diffusion", "forward_diffusion", "vector", "optimal"]
+    """
     split_sessions = _get_session_splits(sessions, n_splits, test_size)
     X = []
-    for train_sessions, test_session in split_sessions:
-        X.append(
-            {
-                "neurons": {
-                    "train": _get_neural_tuning(train_sessions),  # df [n_neurons, n_place_directions]
-                    "test": _get_neural_tuning(test_session),
-                },
-                "behaviour": {
-                    "train": _get_behavioural_sequences(train_sessions),  # df [n_trials, n_place_directions]
-                    "test": _get_behavioural_sequences(test_session),
-                },
-            }
+    for train_sessions, test_sessions in split_sessions:
+        split_data = {}
+        split_data["neurons"] = (
+            {  # df [n_neurons, n_place_directions]
+                "train": pdr.get_population_place_direction_tuning(sessions=train_sessions),
+                "test": pdr.get_population_place_direction_tuning(sessions=test_sessions),
+            },
         )
+        if not synthetic_behaviour:
+            split_data["behaviour"] = (
+                {  # df [n_trials, n_place_directions]
+                    "train": bdr.get_maze_behavioural_sequences_df(sessions=train_sessions),
+                    "test": bdr.get_maze_behavioural_sequences_df(sessions=test_sessions),
+                },
+            )
+        else:
+            policy = synthetic_behaviour
+            split_data["behaviour"] = {  # df [n_trials, n_place_directions]
+                "train": sb.get_synthetic_maze_behavioural_sequences_df(
+                    policy=policy,
+                    sessions=train_sessions,
+                ),
+                "test": sb.get_synthetic_maze_behavioural_sequences_df(
+                    policy=policy,
+                    sessions=test_sessions,
+                ),
+            }
+        X.append(split_data)
     return X
-
-
-# %% load data
 
 
 def _get_session_splits(sessions, n_splits, test_size):
