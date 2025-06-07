@@ -231,8 +231,18 @@ def plot_subject_cum_ve(NeNs, BeBs, BeNs, NeBs, policies=["Real", "Random", "For
 # %% Variance explained analysis (SVD)
 
 
-def run_neuron_to_behaviour_variance_explained_analysis(X, ve_method="pca", demean=False, norm_length=True, plot=True):
-    """"""
+def run_neuron_to_behaviour_variance_explained_analysis(
+    X, ve_method="pca", demean=(False, False), norm_length=(True, True), plot=True
+):
+    """
+    X[0].keys = ["neurons, "behaviour]
+    demean[0]: bool, demean neural data
+    demean[1]: bool, demean behaviour data
+    norm_length[0]: bool, normalise length of neural data
+    norm_length[1]: bool, normalise length of behaviour data
+
+    Note neural data in X already has nans filled with mean from fn: get_population_place_direction_tuning
+    """
     if ve_method == "pca":
         ve_fn = get_pca_variance_explained
     elif ve_method == "svd":
@@ -242,24 +252,28 @@ def run_neuron_to_behaviour_variance_explained_analysis(X, ve_method="pca", deme
     n_components = X[0]["neurons"]["train"].shape[-1]
     results = np.zeros((len(X), 4, n_components + 1))  # [n_splits, 4, n_components]
     for i, data in enumerate(X):
-        # neural data
-        train_neurons, test_neurons = data["neurons"]["train"], data["neurons"]["test"]
-        # fill nans in neural data with mean (unvistied place-directions)
-        train_neurons = train_neurons.apply(lambda row: row.fillna(row.mean()), axis=1).values
-        test_neurons = test_neurons.apply(lambda row: row.fillna(row.mean()), axis=1).values
-        # behaviour data
+        # neural and behavioural data
+        train_neurons, test_neurons = data["neurons"]["train"].values, data["neurons"]["test"].values
         train_behaviour, test_behaviour = data["behaviour"]["train"].values, data["behaviour"]["test"].values
-        if demean:
-            train_neurons, test_neurons, train_behaviour, test_behaviour = [
-                arr - arr.mean(-1, keepdims=True)
-                for arr in [train_neurons, test_neurons, train_behaviour, test_behaviour]
-            ]
-        if norm_length:
-            train_neurons, test_neurons, train_behaviour, test_behaviour = [
-                arr / np.linalg.norm(arr, axis=1, keepdims=True)
-                for arr in [train_neurons, test_neurons, train_behaviour, test_behaviour]
-            ]
-
+        # demean
+        data = []
+        for (test, train), _demean in zip([(test_neurons, train_neurons), (test_behaviour, train_behaviour)], demean):
+            if _demean:
+                test, train = [arr - arr.mean(-1, keepdims=True) for arr in [test, train]]
+            data.append(test)
+            data.append(train)
+        test_neurons, train_neurons, test_behaviour, train_behaviour = data
+        # normalise length
+        data = []
+        for (test, train), _norm_length in zip(
+            [(test_neurons, train_neurons), (test_behaviour, train_behaviour)], norm_length
+        ):
+            if _norm_length:
+                test, train = [arr / np.linalg.norm(arr, axis=1, keepdims=True) for arr in [test, train]]
+            data.append(test)
+            data.append(train)
+        test_neurons, train_neurons, test_behaviour, train_behaviour = data
+        # calculate variance explained
         beb = ve_fn(train_behaviour, test_behaviour)
         nen = ve_fn(train_neurons, test_neurons)
         ben = ve_fn(train_behaviour, test_neurons)
@@ -339,8 +353,12 @@ def get_joint_neural_behaviour_place_direction_dfs(sessions, n_splits=5, test_si
     for train_sessions, test_sessions in split_sessions:
         split_data = {}
         split_data["neurons"] = {  # df [n_neurons, n_place_directions]
-            "train": pdr.get_population_place_direction_tuning(sessions=train_sessions),
-            "test": pdr.get_population_place_direction_tuning(sessions=test_sessions),
+            "train": pdr.get_population_place_direction_tuning(
+                sessions=train_sessions, fill_nans="mean", normalisation=False
+            ),
+            "test": pdr.get_population_place_direction_tuning(
+                sessions=test_sessions, fill_nans="mean", normalisation=False
+            ),
         }
 
         if not synthetic_behaviour:
