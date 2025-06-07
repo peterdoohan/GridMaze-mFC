@@ -1,9 +1,10 @@
-""" 
+"""
 Library for plotting results from exps that compare the input features of the embedding model.
 """
 
 # %% Imports
 import json
+import re
 import numpy as np
 import pandas as pd
 from . import plot_latents
@@ -411,7 +412,7 @@ def _plot_results(results_df, x_label_order=None, ax=None):
         hue=hue,
         dodge=dodge,
         linestyle="none",
-        alpha=0.3,
+        alpha=0.8,
         markeredgewidth=0,
         markersize=5,
         err_kws={"linewidth": 2},
@@ -434,9 +435,19 @@ def _plot_results(results_df, x_label_order=None, ax=None):
     ax.set_xlabel("")
 
 
-def plot_state_action_interaction_results():
+def plot_state_action_interaction_results(
+    include_models=[
+        "exp_action",
+        "exp_state",
+        "exp_state_action_linear",
+        "exp_state_action_nonlinear",
+    ],
+    ax=None,
+):
     """ """
     results_df = _load_state_action_interaction_results()
+    if include_models:
+        results_df = results_df[results_df.abbrev.isin(include_models)]
     # process data
     x_label_order = [
         "action_no-embedding",
@@ -453,7 +464,8 @@ def plot_state_action_interaction_results():
         "exp_state_action_conjunctive",
         "softplus_state_action_conjunctive",
     ]
-    _plot_results(results_df, x_label_order)
+    x_label_order = [x for x in x_label_order if x in include_models]
+    _plot_results(results_df, x_label_order, ax=ax)
 
 
 # %% state-action distance interaction experiments
@@ -515,6 +527,50 @@ def plot_state_action_distance_interaction_results():
         "state-action_distance_nonlinear-gaussian",
     ]
     _plot_results(results_df, x_label_order)
+
+
+def plot_state_action_distance_CPD(ax=None):
+    """ """
+    # quickly calc "CPD", not sure if truely CPD
+    relevant_models = ["exp_state-action_distance_linear", "exp_state-action", "exp_distance"]
+    results_df = _load_state_action_distance_interaction_results()
+    results_df = results_df[results_df.abbrev.isin(relevant_models)]
+    subject_IDs = results_df.subject_ID.unique()
+    results = []
+    for subject_ID in subject_IDs:
+        subject_df = results_df[results_df.subject_ID == subject_ID]
+        var_exp_df = subject_df.set_index(["cluster_unique_ID", "abbrev"]).cv_performance.unstack()
+        df = pd.DataFrame(index=var_exp_df.index)
+        df["distance_cpd"] = var_exp_df["exp_state-action_distance_linear"] - var_exp_df["exp_state-action"]
+        df["state-action_cpd"] = var_exp_df["exp_state-action_distance_linear"] - var_exp_df["exp_distance"]
+        df["subject_ID"] = subject_ID
+        df.reset_index(inplace=True)
+        results.append(df)
+    results_df = pd.concat(results, axis=0).reset_index(drop=True)
+    # plotting
+    av_cpd = results_df.groupby("subject_ID")[["distance_cpd", "state-action_cpd"]].mean().mul(100)
+    av_cpd_long = av_cpd.stack().reset_index()
+    av_cpd_long.columns = ["subject_ID", "feature", "cpd"]
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(3, 3))
+
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_ylabel("CPD (%)")
+    ax.axhline(0, color="k", linestyle="--", alpha=0.5)
+    sns.pointplot(
+        data=av_cpd_long,
+        x="feature",
+        y="cpd",
+        hue="subject_ID",
+        errorbar=None,
+        dodge=False,
+        markers="o",
+        linestyles="-",
+        legend=False,
+        markersize=10,
+        linewidth=4,
+    )
+    ax.set_ylim(-1, 10.5)
 
 
 # %% distance metrics comparison
