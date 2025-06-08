@@ -106,7 +106,7 @@ def get_population_place_direction_tuning(
     for session in sessions:
         if verbose:
             print(session.name)
-        df = _get_session_place_direction_tuning(session, fill_nans, normalisation)
+        df = get_session_place_direction_tuning(session, fill_nans, normalisation)
         if df is None:
             continue  # not pd tuned clusters
         dfs.append(df)
@@ -117,8 +117,9 @@ def get_population_place_direction_tuning(
         return pop_pd_tuning_df
 
 
-def _get_session_place_direction_tuning(
+def get_session_place_direction_tuning(
     session,
+    navigation_rates_df=None,
     fill_nans="mean",
     normalisation="length",
     place_direction_tuned=True,
@@ -137,8 +138,9 @@ def _get_session_place_direction_tuning(
     """
     # load data
     simple_maze = session.simple_maze()
-    navigation_rates_df = session.get_navigation_activity_df(type="rates", cluster_kwargs={"single_units": True})
     pd_tuning_metrics = session.cluster_place_direction_tuning_metrics
+    if navigation_rates_df is None:
+        navigation_rates_df = session.get_navigation_activity_df(type="rates", cluster_kwargs={"single_units": True})
     # filter for place_direction tuned clusters (roughly partitioned via split correlations)
     # see analysis/processing/get_place_direction_tuning_metrics.py
     cluster_filters = [pd_tuning_metrics.single_unit]
@@ -164,21 +166,23 @@ def _get_session_place_direction_tuning(
         max_steps_from_goal,
     )
     # fill nan values of unvisited place-directions
-    if fill_nans == "mean":
-        place_direction_df.T.fillna(place_direction_df.mean(axis=1), inplace=True)  # replace nans with the mean
-    elif fill_nans == "zero":
-        place_direction_df.fillna(0, inplace=True)
-    else:
-        raise ValueError(f"Unknown fill_nans method: {fill_nans}")
+    if fill_nans:
+        if fill_nans == "mean":
+            place_direction_df.T.fillna(place_direction_df.mean(axis=1), inplace=True)  # replace nans with the mean
+        elif fill_nans == "zero":
+            place_direction_df.fillna(0, inplace=True)
+        else:
+            raise ValueError(f"Unknown fill_nans method: {fill_nans}")
     # normalise over clusters
-    if normalisation == "mean":
-        place_direction_df = place_direction_df.div(place_direction_df.mean(axis=1), axis=0)
-    elif normalisation == "length":
-        place_direction_df = place_direction_df.div(place_direction_df.pow(2).sum(axis=1).pow(0.5), axis=0)
-    elif normalisation == "max":
-        place_direction_df = place_direction_df.div(place_direction_df.max(axis=1), axis=0)
-    else:
-        raise ValueError(f"Unknown normalisation method: {normalisation}")
+    if normalisation:
+        if normalisation == "mean":
+            place_direction_df = place_direction_df.div(place_direction_df.mean(axis=1), axis=0)
+        elif normalisation == "length":
+            place_direction_df = place_direction_df.div(place_direction_df.pow(2).sum(axis=1).pow(0.5), axis=0)
+        elif normalisation == "max":
+            place_direction_df = place_direction_df.div(place_direction_df.max(axis=1), axis=0)
+        else:
+            raise ValueError(f"Unknown normalisation method: {normalisation}")
     # return df
     place_direction_df.columns.names = ["maze_position", "direction"]
     place_direction_df.sort_index(axis=1, inplace=True)

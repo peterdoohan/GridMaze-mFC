@@ -232,7 +232,7 @@ def plot_subject_cum_ve(NeNs, BeBs, BeNs, NeBs, policies=["Real", "Random", "For
 
 
 def run_neuron_to_behaviour_variance_explained_analysis(
-    X, ve_method="pca", demean=(False, False), norm_length=(True, True), plot=True
+    X, ve_method="pca", demean=(True, True), norm_length=(True, True), plot=True
 ):
     """
     X[0].keys = ["neurons, "behaviour]
@@ -312,8 +312,6 @@ def run_neuron_to_behaviour_variance_explained_analysis(
         axes[1].set_title("Neurons explained by")
         f.tight_layout()
         f.subplots_adjust(wspace=0.8)
-        # axes[0].set_xlim([0, 20])
-        # axes[1].set_xlim([0, 20])
     return results
 
 
