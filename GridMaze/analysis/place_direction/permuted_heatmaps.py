@@ -14,6 +14,8 @@ from sklearn.decomposition import PCA
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import permute
 from GridMaze.analysis.place_direction import dimensionality_reduction as pdr
+from GridMaze.analysis.behaviour import dimensionality_reduction as bdr
+from GridMaze.analysis.place_direction import efficient_coding as ec
 
 # %% Global Variables
 from GridMaze.paths import RESULTS_PATH, EXPERIMENT_INFO_PATH
@@ -24,17 +26,63 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as f:
 RESULTS_DIR = RESULTS_PATH / "place_direction" / "permuted_heatmaps"
 
 MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
+
+# %% control analysis of permuted place-direction heatmaps expalining the low d strucutre of behaviour
+
+
+def test(maze_name="maze_1", subject_IDs="all"):
+    """
+    not cross validataed
+    interesting result permuted heatmaps to a better job of explaing variance in
+    the behaviour that the real data...
+    """
+    # load real data
+    population_tuning_df = pdr.get_population_place_direction_tuning(
+        subject_IDs=subject_IDs,
+        maze_name=maze_name,
+        late_sessions=True,
+        fill_nans="mean",
+        normalisation="length",
+    )
+    behavioural_sequences_df = bdr.get_maze_behavioural_sequences_df(
+        subject_IDs, maze_name, late_sessions=True, normalisation="length"
+    )
+    N = population_tuning_df.values
+    B = behavioural_sequences_df.values
+    # load permuted data
+    permuted_heatmaps_df = load_permuted_place_direction_heatmaps(maze_name, subject_IDs)
+    n_permutations = permuted_heatmaps_df.index.get_level_values(2).max()
+
+    # get auc of neurons explain behaviour for every set of permuted heatmaps
+    def get_auc(N, B):
+        cumsum = ec.get_pca_variance_explained(N, B)
+        auc = np.trapz(cumsum, dx=1 / len(cumsum))
+        return auc
+
+    permuted_aucs = []
+    for i in range(100):
+        print(i)
+        permuted_df = permuted_heatmaps_df.xs(i, level="permutation", drop_level=False)
+        N_perm = permuted_df.values
+        auc = get_auc(N_perm, B)
+        permuted_aucs.append(auc)
+    permuted_aucs = np.array(permuted_aucs)
+    # get true value
+    true_auc = get_auc(N, B)
+    return true_auc, permuted_aucs
+
+
 # %% control analysis for low dimensional structure in place-direction tuning
 
 
-def plot_permuted_place_direction_pca_auc(true_value, permuted_values, ax=None):
+def plot_permutation_test_results(true_value, permuted_values, xlabel="AUC", ax=None):
     """ """
     if ax is None:
         f, ax = plt.subplots(figsize=(3, 1.5))
     ax.spines[["top", "right"]].set_visible(False)
     sns.histplot(permuted_values, ax=ax, color="gray", element="step", label="permuted")
     ax.axvline(true_value, color="red", label="true")
-    ax.set_xlabel("AUC")
+    ax.set_xlabel(xlabel)
     ax.set_ylabel("Count")
 
 
@@ -63,7 +111,8 @@ def pca_auc(X):
     pca = PCA(random_state=0)
     pca.fit(X)
     explained_variance = pca.explained_variance_ratio_
-    auc = np.trapz(np.cumsum(explained_variance), dx=1 / len(explained_variance))
+    cumsum = np.cumsum(explained_variance) / np.sum(explained_variance)
+    auc = np.trapz(cumsum, dx=1 / len(explained_variance))
     return auc
 
 
@@ -71,7 +120,9 @@ def pca_auc(X):
 
 
 def load_permuted_place_direction_heatmaps(maze_name, subject_IDs="all"):
-    """ """
+    """
+    later add options to fill nans and normalise at this level
+    """
     save_path = RESULTS_DIR / f"{maze_name}.parquet"
     if not save_path.exists():
         raise FileNotFoundError(f"Permuted place direction heatmaps for {maze_name} not found at {save_path}.")
@@ -87,6 +138,8 @@ def load_permuted_place_direction_heatmaps(maze_name, subject_IDs="all"):
 def populate_permuted_place_direction_heatmaps(n_permutation=5_000, max_jopbs=15, verbose=True, overwrite=False):
     """
     Note update to save as parquet TODO
+    Note that place_direction heatmaps are saved out normalised to length one, should
+    remove this a repopulation TODO
     """
 
     for maze in MAZE_NAMES:
