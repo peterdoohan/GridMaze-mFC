@@ -3,6 +3,7 @@ Lib for generating permuted place-direction heatmaps for control analyses
 """
 
 # %% Imports
+import json
 import pandas as pd
 import numpy as np
 from joblib import Parallel, delayed
@@ -12,28 +13,70 @@ from GridMaze.analysis.core import permute
 from GridMaze.analysis.place_direction import dimensionality_reduction as pdr
 
 # %% Global Variables
-from GridMaze.paths import RESULTS_PATH
+from GridMaze.paths import RESULTS_PATH, EXPERIMENT_INFO_PATH
+
+with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as f:
+    subject_IDs = json.load(f)
 
 RESULTS_DIR = RESULTS_PATH / "place_direction" / "permuted_heatmaps"
 
 MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
-# %% Functions
+# %% control analysis for low dimensional structure in place-direction tuning
 
 
-def populate_permuted_place_direction_heatmaps():
+def test(maze_name="maze_1", subject_IDs="all"):
     """ """
+    population_tuning_df = pdr.get_population_place_direction_tuning(
+        subject_IDs=subject_IDs, maze_name=maze_name, late_sessions=True
+    )
+    permuted_heatmap_dfs = load_permuted_place_direction_heatmaps(maze_name, subject_IDs)
+    return
 
-    output_df = get_permuted_population_place_direction_tuning()
-    output_df.to_csv(RESULTS_DIR / "permuted_place_direction_heatmaps.csv", index=True)
-    return output_df
+
+# %% load data from disk
+
+
+def load_permuted_place_direction_heatmaps(maze_name, subject_IDs="all"):
+    """ """
+    save_path = RESULTS_DIR / f"{maze_name}.parquet"
+    if not save_path.exists():
+        raise FileNotFoundError(f"Permuted place direction heatmaps for {maze_name} not found at {save_path}.")
+    df = pd.read_parquet(save_path)
+    if not subject_IDs == "all":
+        df = df.loc[:, subject_IDs, :]
+    return df
+
+
+# %% Generate permuted heatmap functions
+
+
+def populate_permuted_place_direction_heatmaps(n_permutation=5_000, max_jopbs=15, verbose=True, overwrite=False):
+    """
+    Note update to save as parquet TODO
+    """
+
+    for maze in MAZE_NAMES:
+        save_path = RESULTS_DIR / f"{maze}.csv"
+        if save_path.exists() and not overwrite:
+            if verbose:
+                print(f"File {save_path} already exists. Skipping.")
+            continue
+        else:
+            if verbose:
+                print(f"Generating permuted place direction heatmaps for {maze} ...")
+        permuted_heatmaps_df = get_permuted_population_place_direction_tuning(
+            maze, n_permutation, verbose=verbose, max_jobs=max_jopbs
+        )
+        permuted_heatmaps_df.to_csv(save_path)
+    return print(f"Permuted place direction heatmaps saved to {RESULTS_DIR}.")
 
 
 def get_permuted_population_place_direction_tuning(
     maze_name="maze_1",
-    n_permutations=10,
+    n_permutations=15,
     late_sessions=True,
     verbose=True,
-    max_jobs=20,
+    max_jobs=15,
 ):
     """ """
     # if session objects are not input, generate them from input filters
@@ -56,7 +99,7 @@ def get_permuted_population_place_direction_tuning(
     permuted_dfs = Parallel(n_jobs=max_jobs)(
         delayed(_process_permutation)(sessions, i, verbose) for i in range(n_permutations)
     )
-    output_df = pd.concat(permuted_dfs, axis=0, ignore_index=True)
+    output_df = pd.concat(permuted_dfs, axis=0)
     return output_df
 
 
@@ -76,7 +119,7 @@ def _process_permutation(sessions, i, verbose):
         df[("permutation", "")] = i
         df.set_index(["subject_ID", "permutation"], append=True, inplace=True)
         dfs.append(df)
-    pop_pd_tuning_df = pd.concat(dfs, axis=0, ignore_index=True)
+    pop_pd_tuning_df = pd.concat(dfs, axis=0)
     return pop_pd_tuning_df
 
 
