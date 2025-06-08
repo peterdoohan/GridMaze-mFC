@@ -12,6 +12,8 @@ from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.behaviour import synthetic_behaviour as sb
 from GridMaze.analysis.place_direction import dimensionality_reduction as pdr
 from GridMaze.analysis.behaviour import dimensionality_reduction as bdr
+from GridMaze.analysis.behaviour import synthetic_behaviour as sb
+
 
 from GridMaze.maze import representations as mr
 from GridMaze.analysis.core import filter as filt
@@ -78,7 +80,7 @@ def test_within_across_subject_ve(maze="maze_2", demean=True, norm_length=True):
 # %% Null vs subject behaviour
 
 
-def test(maze="maze_1", demean=False, norm_length=True):
+def test(maze="maze_1", demean=True, norm_length=True):
     """
     Switch to behaviour -explains-> neurons so that neurons are constant and behaviour is changed.
     Do analysis sepeartely for each subject, with output metric auc BeN / auc NeN -> t-test across
@@ -96,18 +98,30 @@ def test(maze="maze_1", demean=False, norm_length=True):
         BeBs, BeNs, NeBs = [], [], []  # [n_splits, n_policies]
         for i, (train_sessions, test_sessions) in enumerate(split_sessions):
             print(f"Split {i+1} of {len(split_sessions)}")
-            train_neural = pdr.get_population_place_direction_tuning(sessions=train_sessions)
-            test_neural = pdr.get_population_place_direction_tuning(sessions=test_sessions)
-            # fill missing neural values with mean
-            train_neural = train_neural.apply(lambda row: row.fillna(row.mean()), axis=1).values
-            test_neural = test_neural.apply(lambda row: row.fillna(row.mean()), axis=1).values
+            train_neural = pdr.get_population_place_direction_tuning(
+                sessions=train_sessions, fill_nans="mean", normalisation=False
+            )
+            test_neural = pdr.get_population_place_direction_tuning(
+                sessions=test_sessions, fill_nans="mean", normalisation=False
+            )
             # get varaince explained under different behavioural policues (real data or synthetic)
             split_BeNs, split_BeBs, split_NeBs = [], [], []
-            for policy in [False, "random_diffusion", "forward_diffusion", "vector", "optimal"]:
+            for policy in [None, "random_diffusion", "forward_diffusion", "vector", "optimal"]:
                 print(f"Policy: {policy}")
-                train_behaviour = _get_behavioural_sequences(train_sessions, synthetic=policy).values
-                test_behaviour = _get_behavioural_sequences(test_sessions, synthetic=policy).values
-                # demean and normalise
+                if policy is None:  # real data
+                    train_behaviour = bdr.get_maze_behavioural_sequences_df(
+                        sessions=train_sessions, normalisation=False
+                    ).values
+                    test_behaviour = bdr.get_maze_behavioural_sequences_df(
+                        sessions=test_sessions, normalisation=False
+                    ).values
+                else:
+                    train_behaviour = sb.get_synthetic_maze_behavioural_sequences_df(
+                        policy=policy, sessions=train_sessions, normalisation=False
+                    )
+                    test_behaviour = sb.get_synthetic_maze_behavioural_sequences_df(
+                        policy=policy, sessions=test_sessions, normalisation=False
+                    )
                 if demean:
                     train_neural, test_neural, train_behaviour, test_behaviour = [
                         arr - arr.mean(-1, keepdims=True)
@@ -145,8 +159,7 @@ def test(maze="maze_1", demean=False, norm_length=True):
                 auc_df.append({"subject": subject, "policy": policy, "fold": j, "auc": AUC_beb, "type": "BeB"})
                 auc_df.append({"subject": subject, "policy": policy, "fold": j, "auc": AUC_neb, "type": "NeB"})
     auc_df = pd.DataFrame(auc_df)
-
-    return np.array(subject_NeNs), np.array(subject_BeBs), np.array(subject_BeNs), np.array(subject_NeBs)
+    return auc_df
 
 
 def test_ve_diff(auc_df):

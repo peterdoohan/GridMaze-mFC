@@ -24,6 +24,7 @@ def get_synthetic_maze_behavioural_sequences_df(
     maze_name="maze_1",
     sessions=None,
     late_sessions=True,
+    normalisation=False,
     verbose=False,
 ):
     """ """
@@ -43,12 +44,16 @@ def get_synthetic_maze_behavioural_sequences_df(
     for session in sessions:
         if verbose:
             print(session.name)
-        dfs.append(get_session_synthetic_behavioural_sequences(session, policy))
+        dfs.append(get_session_synthetic_behavioural_sequences(session, policy, normalisation))
     output_df = pd.concat(dfs, axis=0, ignore_index=True)
     return output_df.sort_index(axis=1)
 
 
-def get_session_synthetic_behavioural_sequences(session, policy="random_diffusion"):
+def get_session_synthetic_behavioural_sequences(
+    session,
+    policy="random_diffusion",
+    normalisation=False,
+):
     """ """
     place_direction2idx = {_pd: i for i, _pd in enumerate(mr.get_maze_place_direction_pairs(session.simple_maze()))}
     trajectories_df = get_synthetic_behaviour(session, policy)
@@ -63,7 +68,17 @@ def get_session_synthetic_behavioural_sequences(session, policy="random_diffusio
         for j in place_direction_sequence:
             session_sequences[i, place_direction2idx[j]] += 1
     behaviour_df = pd.DataFrame(data=session_sequences, columns=pd.MultiIndex.from_tuples(place_direction2idx.keys()))
-    return behaviour_df.sort_index(axis=1)
+    behaviour_df = behaviour_df.sort_index(axis=1)
+    if normalisation:
+        if normalisation == "mean":
+            behaviour_df = behaviour_df.div(behaviour_df.mean(axis=1), axis=0)
+        elif normalisation == "length":
+            behaviour_df = behaviour_df.div(behaviour_df.pow(2).sum(axis=1).pow(0.5), axis=0)
+        elif normalisation == "max":
+            behaviour_df = behaviour_df.div(behaviour_df.max(axis=1), axis=0)
+        else:
+            raise ValueError(f"Unknown normalisation method: {normalisation}")
+    return behaviour_df
 
 
 # %% Core function for generating trajectory_decisions_df-like data structures for synthetic behaviour

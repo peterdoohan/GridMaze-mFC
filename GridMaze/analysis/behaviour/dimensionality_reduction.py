@@ -2,16 +2,19 @@
 
 # %% Imports
 import json
+from cv2 import norm
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
+from sklearn.decomposition import PCA
 
 from GridMaze.maze import representations as mr
 from GridMaze.maze import plotting as mp
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import filter as filt
 
-from GridMaze.analysis.place_direction.dimensionality_reduction import get_nmf_df, get_pca_df, get_svd_df
+from GridMaze.analysis.place_direction.dimensionality_reduction import get_nmf_df
+from GridMaze.analysis.behaviour import synthetic_behaviour as sb
 
 # %% Global Variables
 
@@ -23,8 +26,41 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 # %%
 
 
-def test():
-    return
+def get_synthetic_behaviour_dimensionality_comparison(maze_name="maze_1"):
+    results = []
+    for subject in SUBJECT_IDS:
+        print(subject)
+        true_behaviour_df = get_maze_behavioural_sequences_df(
+            subject_IDs=[subject],
+            maze_name=maze_name,
+            normalisation="length",
+        )
+        true_auc = pca_auc(true_behaviour_df.values)
+        r = {"subject": subject, "true_auc": true_auc}
+        for policy in ["random_diffusion", "forward_diffusion", "vector", "optimal"]:
+            synthetic_behaviur_df = sb.get_synthetic_maze_behavioural_sequences_df(
+                policy=policy,
+                subject_IDs=[subject],
+                maze_name=maze_name,
+                normalisation="length",
+            )
+            synth_auc = pca_auc(synthetic_behaviur_df.values)
+            r[f"{policy}_auc"] = synth_auc
+        results.append(r)
+    return pd.DataFrame(results)
+
+
+def pca_auc(X):
+    """
+    returns the AUC of the PCA explained variance curve for a given matrix,
+    not cross validated
+    """
+    pca = PCA(random_state=0)
+    pca.fit(X)
+    explained_variance = pca.explained_variance_ratio_
+    cumsum = np.cumsum(explained_variance) / np.sum(explained_variance)
+    auc = np.trapz(cumsum, dx=1 / len(explained_variance))
+    return auc
 
 
 # %% Functions
