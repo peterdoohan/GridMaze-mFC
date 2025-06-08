@@ -143,7 +143,7 @@ def populate_permuted_place_direction_heatmaps(n_permutation=5_000, max_jopbs=15
     """
 
     for maze in MAZE_NAMES:
-        save_path = RESULTS_DIR / f"{maze}.csv"
+        save_path = RESULTS_DIR / f"{maze}.parquet"
         if save_path.exists() and not overwrite:
             if verbose:
                 print(f"File {save_path} already exists. Skipping.")
@@ -154,7 +154,7 @@ def populate_permuted_place_direction_heatmaps(n_permutation=5_000, max_jopbs=15
         permuted_heatmaps_df = get_permuted_population_place_direction_tuning(
             maze, n_permutation, verbose=verbose, max_jobs=max_jopbs
         )
-        permuted_heatmaps_df.to_csv(save_path)
+        permuted_heatmaps_df.to_parquet(save_path)
     return print(f"Permuted place direction heatmaps saved to {RESULTS_DIR}.")
 
 
