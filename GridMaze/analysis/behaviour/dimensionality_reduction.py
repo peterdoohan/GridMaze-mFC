@@ -20,6 +20,12 @@ from GridMaze.paths import EXPERIMENT_INFO_PATH
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
 
+# %%
+
+
+def test():
+    return
+
 
 # %% Functions
 
