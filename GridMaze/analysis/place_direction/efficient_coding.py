@@ -100,10 +100,10 @@ def test(maze="maze_1", demean=True, norm_length=True):
             print(f"Split {i+1} of {len(split_sessions)}")
             train_neural = pdr.get_population_place_direction_tuning(
                 sessions=train_sessions, fill_nans="mean", normalisation=False
-            )
+            ).values
             test_neural = pdr.get_population_place_direction_tuning(
                 sessions=test_sessions, fill_nans="mean", normalisation=False
-            )
+            ).values
             # get varaince explained under different behavioural policues (real data or synthetic)
             split_BeNs, split_BeBs, split_NeBs = [], [], []
             for policy in [None, "random_diffusion", "forward_diffusion", "vector", "optimal"]:
@@ -118,10 +118,10 @@ def test(maze="maze_1", demean=True, norm_length=True):
                 else:
                     train_behaviour = sb.get_synthetic_maze_behavioural_sequences_df(
                         policy=policy, sessions=train_sessions, normalisation=False
-                    )
+                    ).values
                     test_behaviour = sb.get_synthetic_maze_behavioural_sequences_df(
                         policy=policy, sessions=test_sessions, normalisation=False
-                    )
+                    ).values
                 if demean:
                     train_neural, test_neural, train_behaviour, test_behaviour = [
                         arr - arr.mean(-1, keepdims=True)
@@ -133,13 +133,13 @@ def test(maze="maze_1", demean=True, norm_length=True):
                         for arr in [train_neural, test_neural, train_behaviour, test_behaviour]
                     ]
                 # variance explained
-                split_BeNs.append(get_svd_variance_explained(train_behaviour, test_neural))
-                split_BeBs.append(get_svd_variance_explained(train_behaviour, test_behaviour))
-                split_NeBs.append(get_svd_variance_explained(train_neural, test_behaviour))
+                split_BeNs.append(get_svd_variance_explained(train_behaviour, test_neural, pad=True))
+                split_BeBs.append(get_svd_variance_explained(train_behaviour, test_behaviour, pad=True))
+                split_NeBs.append(get_svd_variance_explained(train_neural, test_behaviour, pad=True))
             BeNs.append(np.array(split_BeNs))
             BeBs.append(np.array(split_BeBs))
             NeBs.append(np.array(split_NeBs))
-            NeN = get_svd_variance_explained(train_neural, test_neural)
+            NeN = get_svd_variance_explained(train_neural, test_neural, pad=True)
             NeNs.append(NeN)
         subject_NeNs.append(np.array(NeNs))
         subject_BeBs.append(np.array(BeBs))
