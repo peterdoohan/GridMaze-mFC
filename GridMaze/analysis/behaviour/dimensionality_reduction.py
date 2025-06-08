@@ -51,6 +51,7 @@ def get_maze_behavioural_sequences_df(
     late_sessions=True,
     sessions=None,
     max_steps_to_goal=30,
+    normalisation=False,
     verbose=False,
 ):
     """
@@ -74,7 +75,7 @@ def get_maze_behavioural_sequences_df(
     for session in sessions:
         if verbose:
             print(session.name)
-        dfs.append(get_session_behavioural_sequences(session, max_steps_to_goal))
+        dfs.append(get_session_behavioural_sequences(session, max_steps_to_goal, normalisation))
     output_df = pd.concat(dfs, axis=0, ignore_index=True)
     return output_df.sort_index(axis=1)
 
@@ -82,6 +83,7 @@ def get_maze_behavioural_sequences_df(
 def get_session_behavioural_sequences(
     session,
     max_steps_to_goal=30,
+    normalisation=False,
 ):
     """
     Behavioural sequences are binary vectors of place-direction pairs visited in each trial
@@ -102,7 +104,17 @@ def get_session_behavioural_sequences(
         for j in place_direction_sequence:
             session_sequences[i, place_direction2idx[j]] += 1
     behaviour_df = pd.DataFrame(data=session_sequences, columns=pd.MultiIndex.from_tuples(place_direction2idx.keys()))
-    return behaviour_df.sort_index(axis=1)
+    behaviour_df = behaviour_df.sort_index(axis=1)
+    if normalisation:
+        if normalisation == "mean":
+            behaviour_df = behaviour_df.div(behaviour_df.mean(axis=1), axis=0)
+        elif normalisation == "length":
+            behaviour_df = behaviour_df.div(behaviour_df.pow(2).sum(axis=1).pow(0.5), axis=0)
+        elif normalisation == "max":
+            behaviour_df = behaviour_df.div(behaviour_df.max(axis=1), axis=0)
+        else:
+            raise ValueError(f"Unknown normalisation method: {normalisation}")
+    return behaviour_df
 
 
 def get_session_get_behavioural_sequences_fr(
