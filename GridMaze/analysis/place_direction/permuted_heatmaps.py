@@ -6,7 +6,10 @@ Lib for generating permuted place-direction heatmaps for control analyses
 import json
 import pandas as pd
 import numpy as np
+from matplotlib import pyplot as plt
+import seaborn as sns
 from joblib import Parallel, delayed
+from sklearn.decomposition import PCA
 
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import permute
@@ -24,13 +27,44 @@ MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
 # %% control analysis for low dimensional structure in place-direction tuning
 
 
-def test(maze_name="maze_1", subject_IDs="all"):
+def plot_permuted_place_direction_pca_auc(true_value, permuted_values, ax=None):
+    """ """
+    if ax is None:
+        f, ax = plt.subplots(figsize=(3, 1.5))
+    ax.spines[["top", "right"]].set_visible(False)
+    sns.histplot(permuted_values, ax=ax, color="gray", element="step", label="permuted")
+    ax.axvline(true_value, color="red", label="true")
+    ax.set_xlabel("AUC")
+    ax.set_ylabel("Count")
+
+
+def get_permuted_place_direction_pca_auc(maze_name="maze_1", subject_IDs="all"):
     """ """
     population_tuning_df = pdr.get_population_place_direction_tuning(
         subject_IDs=subject_IDs, maze_name=maze_name, late_sessions=True
     )
-    permuted_heatmap_dfs = load_permuted_place_direction_heatmaps(maze_name, subject_IDs)
-    return
+    permuted_heatmaps_df = load_permuted_place_direction_heatmaps(maze_name, subject_IDs)
+    n_permutations = permuted_heatmaps_df.index.get_level_values(2).max()
+    auc_values = []
+    for i in range(n_permutations + 1):
+        permuted_df = permuted_heatmaps_df.xs(i, level="permutation", drop_level=False)
+        auc = pca_auc(permuted_df.values)
+        auc_values.append(auc)
+    permuted_auc_values = np.array(auc_values)
+    true_auc_value = pca_auc(population_tuning_df.values)
+    return true_auc_value, permuted_auc_values
+
+
+def pca_auc(X):
+    """
+    returns the AUC of the PCA explained variance curve for a given matrix,
+    not cross validated
+    """
+    pca = PCA(random_state=0)
+    pca.fit(X)
+    explained_variance = pca.explained_variance_ratio_
+    auc = np.trapz(np.cumsum(explained_variance), dx=1 / len(explained_variance))
+    return auc
 
 
 # %% load data from disk

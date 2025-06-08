@@ -106,7 +106,7 @@ def get_population_place_direction_tuning(
     for session in sessions:
         if verbose:
             print(session.name)
-        df = get_session_place_direction_tuning(session, fill_nans, normalisation)
+        df = get_session_place_direction_tuning(session, fill_nans=fill_nans, normalisation=normalisation)
         if df is None:
             continue  # not pd tuned clusters
         dfs.append(df)
