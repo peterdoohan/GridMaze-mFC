@@ -40,7 +40,7 @@ MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
 #     ax.set_ylabel("Count")
 
 
-def get_true_vs_permuted_PC95(n_resamples=500, max_jobs=10, verbose=True):
+def get_true_vs_permuted_PC95(n_resamples=500, max_jobs=5, verbose=True):
     """
     Compare the number of principal components explaining 95% variance (and AUC of explained variance curve)
     in the true place-direction heatmaps to that of permuted heatmaps.

@@ -82,7 +82,7 @@ def get_population_place_direction_tuning(
     return_list=False,
     fill_nans="mean",
     normalisation="length",
-    min_split_corr=0.4,
+    min_split_corr=0.5,
     verbose=False,
 ):
     """ """
@@ -115,11 +115,14 @@ def get_population_place_direction_tuning(
         )
         if df is None:
             continue  # not pd tuned clusters
+        df.index.name = "cluster_unique_ID"
+        df[("subject_ID", "")] = session.subject_ID
+        df.set_index(["subject_ID"], append=True, inplace=True)
         dfs.append(df)
     if return_list:
         return dfs, sessions
     else:
-        pop_pd_tuning_df = pd.concat(dfs, axis=0, ignore_index=True)
+        pop_pd_tuning_df = pd.concat(dfs, axis=0)
         return pop_pd_tuning_df
 
 
