@@ -82,6 +82,7 @@ def get_population_place_direction_tuning(
     return_list=False,
     fill_nans="mean",
     normalisation="length",
+    min_split_corr=0.4,
     verbose=False,
 ):
     """ """
@@ -106,7 +107,12 @@ def get_population_place_direction_tuning(
     for session in sessions:
         if verbose:
             print(session.name)
-        df = get_session_place_direction_tuning(session, fill_nans=fill_nans, normalisation=normalisation)
+        df = get_session_place_direction_tuning(
+            session,
+            fill_nans=fill_nans,
+            normalisation=normalisation,
+            min_split_corr=min_split_corr,
+        )
         if df is None:
             continue  # not pd tuned clusters
         dfs.append(df)

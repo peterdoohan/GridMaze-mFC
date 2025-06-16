@@ -21,7 +21,7 @@ from GridMaze.analysis.place_direction import efficient_coding as ec
 from GridMaze.paths import RESULTS_PATH, EXPERIMENT_INFO_PATH
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as f:
-    subject_IDs = json.load(f)
+    SUBJECT_IDS = json.load(f)
 
 RESULTS_DIR = RESULTS_PATH / "place_direction" / "permuted_heatmaps"
 
@@ -86,21 +86,52 @@ def plot_permutation_test_results(true_value, permuted_values, xlabel="AUC", ax=
     ax.set_ylabel("Count")
 
 
-def get_permuted_place_direction_pca_auc(maze_name="maze_1", subject_IDs="all"):
+def get_permuted_place_direction_PC95_comparison(verbose=False):
+    """
+    how many PCs are needed to explain 95% of the variance in the population place-direction tuning heatmaps
+    in true data and in permuted data? Done separately for each subject and maze.
+
+    returns a dict with the following structure:
+    {"maze_name": {"subject_ID": {"true": true_value, "permuted": permuted_values}}}
+    """
+    results = {}
+    for maze_name in MAZE_NAMES:
+        if verbose:
+            print(f"Processing {maze_name} ...")
+        subject_results = {}
+        for subject in SUBJECT_IDS:
+            if verbose:
+                print(f"Processing subject {subject} ...")
+            population_tuning_df = pdr.get_population_place_direction_tuning(
+                subject_IDs=[subject],
+                maze_name=maze_name,
+                late_sessions=True,
+                fill_nans="mean",
+                normalisation="length",
+            )
+            permuted_heatmaps_df = load_permuted_place_direction_heatmaps(maze_name, [subject])
+            n_permutations = permuted_heatmaps_df.index.get_level_values(2).max()
+            perm_PC95_values = []
+            for i in range(n_permutations + 1):
+                permuted_df = permuted_heatmaps_df.xs(i, level="permutation", drop_level=False)
+                perm_PC95_values.append(pca_n_components(permuted_df.values, target_variance=0.95))
+            true_value = pca_n_components(population_tuning_df.values)
+            subject_results[subject] = {
+                "true": true_value,
+                "permuted": perm_PC95_values,
+            }
+        results[maze_name] = subject_results
+    return results
+
+
+def pca_n_components(X, target_variance=0.95):
     """ """
-    population_tuning_df = pdr.get_population_place_direction_tuning(
-        subject_IDs=subject_IDs, maze_name=maze_name, late_sessions=True
-    )
-    permuted_heatmaps_df = load_permuted_place_direction_heatmaps(maze_name, subject_IDs)
-    n_permutations = permuted_heatmaps_df.index.get_level_values(2).max()
-    auc_values = []
-    for i in range(n_permutations + 1):
-        permuted_df = permuted_heatmaps_df.xs(i, level="permutation", drop_level=False)
-        auc = pca_auc(permuted_df.values)
-        auc_values.append(auc)
-    permuted_auc_values = np.array(auc_values)
-    true_auc_value = pca_auc(population_tuning_df.values)
-    return true_auc_value, permuted_auc_values
+    pca = PCA(random_state=0)
+    pca.fit(X)
+    explained_variance = pca.explained_variance_ratio_
+    cumsum = np.cumsum(explained_variance)
+    n_components = np.searchsorted(cumsum, target_variance) + 1
+    return n_components
 
 
 def pca_auc(X):
@@ -119,7 +150,11 @@ def pca_auc(X):
 # %% load data from disk
 
 
-def load_permuted_place_direction_heatmaps(maze_name, subject_IDs="all"):
+def load_permuted_place_direction_heatmaps(
+    maze_name,
+    subject_IDs="all",
+    normalisation="length",
+):
     """
     later add options to fill nans and normalise at this level
     """
@@ -129,6 +164,15 @@ def load_permuted_place_direction_heatmaps(maze_name, subject_IDs="all"):
     df = pd.read_parquet(save_path)
     if not subject_IDs == "all":
         df = df.loc[:, subject_IDs, :]
+    if normalisation:
+        if normalisation == "mean":
+            df = df.div(df.mean(axis=1), axis=0)
+        elif normalisation == "length":
+            df = df.div(df.pow(2).sum(axis=1).pow(0.5), axis=0)
+        elif normalisation == "max":
+            df = df.div(df.max(axis=1), axis=0)
+        else:
+            raise ValueError(f"Unknown normalisation method: {normalisation}")
     return df
 
 
@@ -137,7 +181,6 @@ def load_permuted_place_direction_heatmaps(maze_name, subject_IDs="all"):
 
 def populate_permuted_place_direction_heatmaps(n_permutation=5_000, max_jopbs=15, verbose=True, overwrite=False):
     """
-    Note update to save as parquet TODO
     Note that place_direction heatmaps are saved out normalised to length one, should
     remove this a repopulation TODO
     """
@@ -219,6 +262,9 @@ def get_session_permuted_place_direction_tuning(session):
     # get place_direction heatmaps from permuted data
     navigation_rates_df = pd.concat([navigation_df, _rates_df.reset_index(drop=True)], axis=1)
     place_direction_tuning = pdr.get_session_place_direction_tuning(
-        session, navigation_rates_df, fill_nans="mean", normalisation="length"
+        session,
+        navigation_rates_df,
+        fill_nans="mean",
+        normalisation=False,
     )
     return place_direction_tuning
