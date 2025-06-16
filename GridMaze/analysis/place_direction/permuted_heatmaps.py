@@ -94,6 +94,13 @@ def get_permuted_place_direction_PC95_comparison(verbose=False):
     returns a dict with the following structure:
     {"maze_name": {"subject_ID": {"true": true_value, "permuted": permuted_values}}}
     """
+    save_path = RESULTS_DIR / "PC95_comparison_results.json"
+    if save_path.exists():
+        if verbose:
+            print(f"Loading results from {save_path} ...")
+        with open(save_path, "r") as f:
+            results = json.load(f)
+        return results
     results = {}
     for maze_name in MAZE_NAMES:
         if verbose:
@@ -121,7 +128,35 @@ def get_permuted_place_direction_PC95_comparison(verbose=False):
                 "permuted": perm_PC95_values,
             }
         results[maze_name] = subject_results
+    # save results to disk
+    results = convert_numpy_ints(results)  # convert numpy ints to python ints for json serialization
+    with open(save_path, "w") as f:
+        json.dump(results, f, indent=4)
+    if verbose:
+        print(f"Results saved to {save_path}.")
     return results
+
+
+def convert_numpy_ints(obj):
+    """
+    Recursively walk through obj (which can be a dict, list, tuple, or scalar)
+    and convert any numpy integer types to Python ints.
+    """
+    # Dict: convert each value (and keys, if they happen to be numpy ints)
+    if isinstance(obj, dict):
+        return {convert_numpy_ints(k): convert_numpy_ints(v) for k, v in obj.items()}
+    # List: convert each element
+    elif isinstance(obj, list):
+        return [convert_numpy_ints(v) for v in obj]
+    # Tuple: convert each element and re-pack as tuple
+    elif isinstance(obj, tuple):
+        return tuple(convert_numpy_ints(v) for v in obj)
+    # Any numpy integer type → Python int
+    elif isinstance(obj, np.integer):
+        return int(obj)
+    # Everything else → leave as-is
+    else:
+        return obj
 
 
 def pca_n_components(X, target_variance=0.95):
