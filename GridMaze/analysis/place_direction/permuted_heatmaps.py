@@ -72,6 +72,9 @@ def get_true_vs_permuted_PC95(n_resamples=500, n_permutations=100, max_jobs=5, v
         n_features = population_tuning_df.shape[1]
         if n_permutations is None:
             n_permutations = permuted_heatmaps_df.index.get_level_values(2).max()
+        if verbose:
+            print(f"Number of features: {n_features}")
+            print(f"Number of permutations: {n_permutations}")
         # prestratify dfs by subject
         subject_data = {}
         for subject in SUBJECT_IDS:
