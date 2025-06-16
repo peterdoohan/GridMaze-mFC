@@ -54,18 +54,6 @@ def test(session, forced_only=True, window=(-3, 3), step_size=0.2):
     cluster_unique_IDs = action_tuning_df.cluster_unique_ID.unique()
     for cluster in cluster_unique_IDs:
         cluster_df = action_tuning_df[action_tuning_df.cluster_unique_ID == cluster]
-        df = _format_cluster_df(cluster_df)
-        model = smf.ols("firing_rate ~ C(action) * C(timepoint)", data=df).fit()
-        anova_results = sm.stats.anova_lm(model, typ=2)
-        action_F = anova_results.loc["C(action)", "F"]
-        action_p = anova_results.loc["C(action)", "PR(>F)"]
-        interaction_F = anova_results.loc["C(action):C(timepoint)", "F"]
-        interaction_p = anova_results.loc["C(action):C(timepoint)", "PR(>F)"]
-        f, ax = plt.subplots(1, 1, figsize=(6, 4), clear=True)
-        Clust = gc.get_cluster(cluster)
-        Clust.plot_tuning("actions", feature_kwargs={"concise": True}, ax=ax)
-        ax.set_title(f"F={interaction_F:.2f}, p={interaction_p:.3f}\nF={action_F:.2f}, p={action_p:.3f}")
-    return
 
 
 def _format_cluster_df(cluster_df):
