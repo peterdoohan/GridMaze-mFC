@@ -75,88 +75,100 @@ def test(maze_name="maze_1", subject_IDs="all"):
 # %% control analysis for low dimensional structure in place-direction tuning
 
 
-def plot_permutation_test_results(true_value, permuted_values, xlabel="AUC", ax=None):
-    """ """
-    if ax is None:
-        f, ax = plt.subplots(figsize=(3, 1.5))
-    ax.spines[["top", "right"]].set_visible(False)
-    sns.histplot(permuted_values, ax=ax, color="gray", element="step", label="permuted")
-    ax.axvline(true_value, color="red", label="true")
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel("Count")
+# def plot_permutation_test_results(true_value, permuted_values, xlabel="AUC", ax=None):
+#     """ """
+#     if ax is None:
+#         f, ax = plt.subplots(figsize=(3, 1.5))
+#     ax.spines[["top", "right"]].set_visible(False)
+#     sns.histplot(permuted_values, ax=ax, color="gray", element="step", label="permuted")
+#     ax.axvline(true_value, color="red", label="true")
+#     ax.set_xlabel(xlabel)
+#     ax.set_ylabel("Count")
 
 
-def get_permuted_place_direction_PC95_comparison(verbose=False):
+def get_true_vs_permuted_PC95(n_resamples=500, max_jobs=10, verbose=True):
     """
-    how many PCs are needed to explain 95% of the variance in the population place-direction tuning heatmaps
-    in true data and in permuted data? Done separately for each subject and maze.
-
-    returns a dict with the following structure:
-    {"maze_name": {"subject_ID": {"true": true_value, "permuted": permuted_values}}}
+    Compare the number of principal components explaining 95% variance (and AUC of explained variance curve)
+    in the true place-direction heatmaps to that of permuted heatmaps.
+    subjects are bootstrap resampled for heatmaps going into true and permuted conditions. Need to combine heatmaps across subjects
+    due to high number of place-direction pairs on each maze.
     """
-    save_path = RESULTS_DIR / "PC95_comparison_results.json"
+    save_path = RESULTS_DIR / "true_vs_permuted_PC95.parquet"
     if save_path.exists():
         if verbose:
-            print(f"Loading results from {save_path} ...")
-        with open(save_path, "r") as f:
-            results = json.load(f)
-        return results
-    results = {}
-    for maze_name in MAZE_NAMES:
-        if verbose:
-            print(f"Processing {maze_name} ...")
-        subject_results = {}
+            print(f"Loading {save_path} from disk")
+        results_df = pd.read_parquet(save_path)
+        return results_df
+    results = []
+    for maze in MAZE_NAMES[:1]:
+        print(f"Loading data for {maze} ...")
+        population_tuning_df = pdr.get_population_place_direction_tuning(
+            subject_IDs="all",
+            maze_name="maze_1",
+            late_sessions=True,
+            fill_nans="mean",
+            normalisation="length",
+            min_split_corr=0.5,
+        )
+        permuted_heatmaps_df = load_permuted_place_direction_heatmaps(
+            maze,
+            subject_IDs="all",
+            normalisation="length",
+        )
+        n_features = population_tuning_df.shape[1]
+        n_permutations = permuted_heatmaps_df.index.get_level_values(2).max()
+        # prestratify dfs by subject
+        subject_data = {}
         for subject in SUBJECT_IDS:
-            if verbose:
-                print(f"Processing subject {subject} ...")
-            population_tuning_df = pdr.get_population_place_direction_tuning(
-                subject_IDs=[subject],
-                maze_name=maze_name,
-                late_sessions=True,
-                fill_nans="mean",
-                normalisation="length",
-            )
-            permuted_heatmaps_df = load_permuted_place_direction_heatmaps(maze_name, [subject])
-            n_permutations = permuted_heatmaps_df.index.get_level_values(2).max()
-            perm_PC95_values = []
-            for i in range(n_permutations + 1):
-                permuted_df = permuted_heatmaps_df.xs(i, level="permutation", drop_level=False)
-                perm_PC95_values.append(pca_n_components(permuted_df.values, target_variance=0.95))
-            true_value = pca_n_components(population_tuning_df.values)
-            subject_results[subject] = {
-                "true": true_value,
-                "permuted": perm_PC95_values,
+            subject_data[subject] = {
+                "true": population_tuning_df.xs(subject, level="subject_ID").reset_index(drop=True),
+                "permuted": permuted_heatmaps_df.xs(subject, level="subject_ID").reset_index(level=0, drop=True),
             }
-        results[maze_name] = subject_results
-    # save results to disk
-    results = convert_numpy_ints(results)  # convert numpy ints to python ints for json serialization
-    with open(save_path, "w") as f:
-        json.dump(results, f, indent=4)
+        # bootstrapped resample over subjects
+        maze_results = Parallel(n_jobs=max_jobs)(
+            delayed(_process_resample)(subject_data, n_features, n_permutations, maze, i, verbose)
+            for i in range(n_resamples)
+        )
+        maze_results = [r for r in results if r is not None]  # filter out None results
+        results.extend(maze_results)
+    results_df = pd.DataFrame(results)
+    # save results
+    results_df.to_parquet(save_path)
     if verbose:
-        print(f"Results saved to {save_path}.")
-    return results
+        print(f"Results saved to {save_path}")
+    return results_df
 
 
-def convert_numpy_ints(obj):
-    """
-    Recursively walk through obj (which can be a dict, list, tuple, or scalar)
-    and convert any numpy integer types to Python ints.
-    """
-    # Dict: convert each value (and keys, if they happen to be numpy ints)
-    if isinstance(obj, dict):
-        return {convert_numpy_ints(k): convert_numpy_ints(v) for k, v in obj.items()}
-    # List: convert each element
-    elif isinstance(obj, list):
-        return [convert_numpy_ints(v) for v in obj]
-    # Tuple: convert each element and re-pack as tuple
-    elif isinstance(obj, tuple):
-        return tuple(convert_numpy_ints(v) for v in obj)
-    # Any numpy integer type → Python int
-    elif isinstance(obj, np.integer):
-        return int(obj)
-    # Everything else → leave as-is
-    else:
-        return obj
+def _process_resample(subject_data, n_features, n_permutations, maze, i, verbose):
+    if verbose:
+        print(i)
+    sampled_subjects = np.random.choice(SUBJECT_IDS, size=len(SUBJECT_IDS), replace=True)
+    # combine neurons across resampled subjects and calculate PC95
+    true_df = pd.concat([subject_data[subject]["true"] for subject in sampled_subjects], axis=0)
+    if true_df.shape[0] < n_features:
+        print(f"Skipping {maze} for {sampled_subjects} as not enough features ({true_df.shape[0]} < {n_features})")
+        return None
+    true_PC95 = pca_n_components(true_df.values, target_variance=0.95)
+    true_auc = pca_auc(true_df.values)
+    # for each set of permuted heatmaps, combine neurons across resampled subjects and calculate PC95
+    perms_df = pd.concat([subject_data[subject]["permuted"] for subject in sampled_subjects], axis=0)
+    perm_PC95s, perm_aucs = [], []
+    for j in range(n_permutations):
+        _perm_df = perms_df.loc[j]
+        permuted_PC95 = pca_n_components(_perm_df.values, target_variance=0.95)
+        perm_PC95s.append(permuted_PC95)
+        permuted_auc = pca_auc(_perm_df.values)
+        perm_aucs.append(permuted_auc)
+    mean_perm_PC95 = np.mean(perm_PC95s)
+    mean_perm_auc = np.mean(perm_aucs)
+    return {
+        "maze": maze,
+        "n": i,
+        "true_PC95": true_PC95,
+        "permuted_PC95": mean_perm_PC95,
+        "true_auc": true_auc,
+        "permuted_auc": mean_perm_auc,
+    }
 
 
 def pca_n_components(X, target_variance=0.95):
@@ -301,5 +313,7 @@ def get_session_permuted_place_direction_tuning(session):
         navigation_rates_df,
         fill_nans="mean",
         normalisation=False,
+        place_direction_tuned=False,  # do all cluster filtering after the fact
+        min_split_corr=None,  # better to match units to filtered real data at time of analysis
     )
     return place_direction_tuning
