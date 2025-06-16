@@ -40,7 +40,7 @@ MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
 #     ax.set_ylabel("Count")
 
 
-def get_true_vs_permuted_PC95(n_resamples=500, max_jobs=5, verbose=True):
+def get_true_vs_permuted_PC95(n_resamples=500, n_permutations=100, max_jobs=5, verbose=True):
     """
     Compare the number of principal components explaining 95% variance (and AUC of explained variance curve)
     in the true place-direction heatmaps to that of permuted heatmaps.
@@ -54,7 +54,7 @@ def get_true_vs_permuted_PC95(n_resamples=500, max_jobs=5, verbose=True):
         results_df = pd.read_parquet(save_path)
         return results_df
     results = []
-    for maze in MAZE_NAMES[:1]:
+    for maze in MAZE_NAMES:
         print(f"Loading data for {maze} ...")
         population_tuning_df = pdr.get_population_place_direction_tuning(
             subject_IDs="all",
@@ -70,7 +70,8 @@ def get_true_vs_permuted_PC95(n_resamples=500, max_jobs=5, verbose=True):
             normalisation="length",
         )
         n_features = population_tuning_df.shape[1]
-        n_permutations = permuted_heatmaps_df.index.get_level_values(2).max()
+        if n_permutations is None:
+            n_permutations = permuted_heatmaps_df.index.get_level_values(2).max()
         # prestratify dfs by subject
         subject_data = {}
         for subject in SUBJECT_IDS:
@@ -83,7 +84,7 @@ def get_true_vs_permuted_PC95(n_resamples=500, max_jobs=5, verbose=True):
             delayed(_process_resample)(subject_data, n_features, n_permutations, maze, i, verbose)
             for i in range(n_resamples)
         )
-        maze_results = [r for r in results if r is not None]  # filter out None results
+        maze_results = [r for r in maze_results if r is not None]  # filter out None results
         results.extend(maze_results)
     results_df = pd.DataFrame(results)
     # save results
