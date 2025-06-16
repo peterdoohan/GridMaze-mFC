@@ -14,8 +14,6 @@ from sklearn.decomposition import PCA
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import permute
 from GridMaze.analysis.place_direction import dimensionality_reduction as pdr
-from GridMaze.analysis.behaviour import dimensionality_reduction as bdr
-from GridMaze.analysis.place_direction import efficient_coding as ec
 
 # %% Global Variables
 from GridMaze.paths import RESULTS_PATH, EXPERIMENT_INFO_PATH
@@ -26,50 +24,6 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as f:
 RESULTS_DIR = RESULTS_PATH / "place_direction" / "permuted_heatmaps"
 
 MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
-
-# %% control analysis of permuted place-direction heatmaps expalining the low d strucutre of behaviour
-
-
-def test(maze_name="maze_1", subject_IDs="all"):
-    """
-    not cross validataed
-    interesting result permuted heatmaps to a better job of explaing variance in
-    the behaviour that the real data...
-    """
-    # load real data
-    population_tuning_df = pdr.get_population_place_direction_tuning(
-        subject_IDs=subject_IDs,
-        maze_name=maze_name,
-        late_sessions=True,
-        fill_nans="mean",
-        normalisation="length",
-    )
-    behavioural_sequences_df = bdr.get_maze_behavioural_sequences_df(
-        subject_IDs, maze_name, late_sessions=True, normalisation="length"
-    )
-    N = population_tuning_df.values
-    B = behavioural_sequences_df.values
-    # load permuted data
-    permuted_heatmaps_df = load_permuted_place_direction_heatmaps(maze_name, subject_IDs)
-    n_permutations = permuted_heatmaps_df.index.get_level_values(2).max()
-
-    # get auc of neurons explain behaviour for every set of permuted heatmaps
-    def get_auc(N, B):
-        cumsum = ec.get_pca_variance_explained(N, B)
-        auc = np.trapz(cumsum, dx=1 / len(cumsum))
-        return auc
-
-    permuted_aucs = []
-    for i in range(100):
-        print(i)
-        permuted_df = permuted_heatmaps_df.xs(i, level="permutation", drop_level=False)
-        N_perm = permuted_df.values
-        auc = get_auc(N_perm, B)
-        permuted_aucs.append(auc)
-    permuted_aucs = np.array(permuted_aucs)
-    # get true value
-    true_auc = get_auc(N, B)
-    return true_auc, permuted_aucs
 
 
 # %% control analysis for low dimensional structure in place-direction tuning
