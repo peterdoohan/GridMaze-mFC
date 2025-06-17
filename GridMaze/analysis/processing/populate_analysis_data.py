@@ -13,6 +13,7 @@ from .get_trajectory_decisions_dfs import get_trajectory_decisions_df
 
 from .get_distance_tuning_metrics_df import get_distance_tuning_metrics_df
 from .get_place_direction_metrics_df import get_place_direcion_tuning_metrics_df
+from .get_action_tuning_metrics_df import get_egocentric_action_tuning_metrics_df
 
 # %% Global variables
 
@@ -51,6 +52,11 @@ ANALYSIS_DATA_STRUCTURES_DF = pd.DataFrame(
         {
             "filename": "clusters.placeDirectionTuningMetrics.parquet",
             "function": get_place_direcion_tuning_metrics_df,
+            "session_types": ["maze"],
+        },
+        {
+            "filename": "clusters.egocentricActionTuningMetrics.parquet",
+            "function": get_egocentric_action_tuning_metrics_df,
             "session_types": ["maze"],
         },
     ]
