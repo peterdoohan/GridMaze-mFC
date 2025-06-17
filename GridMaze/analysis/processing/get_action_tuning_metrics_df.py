@@ -21,7 +21,7 @@ FRAME_RATE = 60  # Hz
 # %% Functions
 
 
-def test(processed_data_path, analysis_data_path, window=(-3, 3), step_size=0.25):
+def get_egocentric_action_tuning_metrics_df(processed_data_path, analysis_data_path, window=(-3, 3), step_size=0.25):
     """
     note only loads actions during navigation
 
@@ -68,7 +68,6 @@ def test(processed_data_path, analysis_data_path, window=(-3, 3), step_size=0.25
     for cluster in cluster_unique_IDs:
         if cluster not in single_units:
             continue
-        print(cluster)
         cluster_df = action_tuning_df[action_tuning_df.cluster_unique_ID == cluster]
         metrics_df.loc[cluster, ("single_unit", "", "")] = True
         # free/forced action split half correlation
@@ -91,9 +90,7 @@ def test(processed_data_path, analysis_data_path, window=(-3, 3), step_size=0.25
     metrics_df.reset_index(inplace=True)
     metrics_df.rename(columns={"index": "cluster_unique_ID"}, inplace=True)
     # add convience column for filtering egocentric action tuned clusters
-    metrics_df[("egocentric_action_tuned")] = (
-        metrics_df.split_half_corr.free_action.sig & metrics_df.split_half_corr.forced_action.sig
-    )
+    metrics_df[("egocentric_action_tuned")] = metrics_df.split_half_corr.all_action.sig
     return metrics_df.sort_index(axis=1)
 
 
