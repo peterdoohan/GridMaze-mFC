@@ -29,45 +29,33 @@ MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
 # %% control analysis for low dimensional structure in place-direction tuning
 
 
-# def plot_permutation_test_results(true_value, permuted_values, xlabel="AUC", ax=None):
-#     """ """
-#     if ax is None:
-#         f, ax = plt.subplots(figsize=(3, 1.5))
-#     ax.spines[["top", "right"]].set_visible(False)
-#     sns.histplot(permuted_values, ax=ax, color="gray", element="step", label="permuted")
-#     ax.axvline(true_value, color="red", label="true")
-#     ax.set_xlabel(xlabel)
-#     ax.set_ylabel("Count")
-
-
 def plot_true_vs_permuted_PC95(results_df, ax=None):
     """ """
     # set up fig
     if ax is None:
-        f, axes = plt.subplots(1, 1, figsize=(3, 3), sharey=True)
-    for ax in axes:
-        ax.spines[["top", "right"]].set_visible(False)
+        f, ax = plt.subplots(1, 1, figsize=(3, 3), sharey=True)
+    ax.spines[["top", "right"]].set_visible(False)
     # plot results
-    for maze, ax in zip(MAZE_NAMES, axes):
-        maze_results = results_df[results_df.maze == maze]
-        long_df = maze_results[["true_PC95", "permuted_PC95"]].stack().reset_index(level=1)
-        long_df.columns = ["condition", "PC95"]
-        sns.pointplot(
-            data=long_df,
-            x="condition",
-            y="PC95",
-            errorbar=("ci", 99),
-            ax=ax,
-            order=[
-                "permuted_PC95",
-                "true_PC95",
-            ],
-            color="black",
-            linestyle="none",
-        )
-        ax.set_xlabel(maze)
-
-    return
+    long_df = results_df[["maze", "true_PC95", "permuted_PC95"]].melt(
+        id_vars=["maze"], value_vars=["true_PC95", "permuted_PC95"], var_name="condition", value_name="PC95"
+    )
+    sns.pointplot(
+        data=long_df,
+        x="maze",
+        y="PC95",
+        hue="condition",
+        errorbar=("ci", 99),
+        ax=ax,
+        order=MAZE_NAMES,
+        hue_order=[
+            "permuted_PC95",
+            "true_PC95",
+        ],
+        dodge=0.4,
+        scale=1.5,
+        palette=["gray", "red"],
+        linestyle="none",
+    )
 
 
 def get_true_vs_permuted_PC95(n_resamples=500, n_permutations=100, max_jobs=5, verbose=False):
