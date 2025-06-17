@@ -40,7 +40,37 @@ MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
 #     ax.set_ylabel("Count")
 
 
-def get_true_vs_permuted_PC95(n_resamples=500, n_permutations=100, max_jobs=5, verbose=True):
+def plot_true_vs_permuted_PC95(results_df, ax=None):
+    """ """
+    # set up fig
+    if ax is None:
+        f, axes = plt.subplots(1, 1, figsize=(3, 3), sharey=True)
+    for ax in axes:
+        ax.spines[["top", "right"]].set_visible(False)
+    # plot results
+    for maze, ax in zip(MAZE_NAMES, axes):
+        maze_results = results_df[results_df.maze == maze]
+        long_df = maze_results[["true_PC95", "permuted_PC95"]].stack().reset_index(level=1)
+        long_df.columns = ["condition", "PC95"]
+        sns.pointplot(
+            data=long_df,
+            x="condition",
+            y="PC95",
+            errorbar=("ci", 99),
+            ax=ax,
+            order=[
+                "permuted_PC95",
+                "true_PC95",
+            ],
+            color="black",
+            linestyle="none",
+        )
+        ax.set_xlabel(maze)
+
+    return
+
+
+def get_true_vs_permuted_PC95(n_resamples=500, n_permutations=100, max_jobs=5, verbose=False):
     """
     Compare the number of principal components explaining 95% variance (and AUC of explained variance curve)
     in the true place-direction heatmaps to that of permuted heatmaps.
