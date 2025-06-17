@@ -165,7 +165,7 @@ class Cluster:
                 "window": (-3, 3),
                 "smooth_SD": 5,
                 "concise": False,
-                "forced_only": True,
+                "action_type": "all",
             }
 
         elif feature == "angle_to_goal":
@@ -423,7 +423,7 @@ class Cluster:
         if feature == "actions":
             if feature_kwargs["concise"]:
                 actions.plot_action_tunning_concise(
-                    tuning_data, ax=ax, smooth_SD=feature_kwargs["smooth_SD"], forced_only=feature_kwargs["forced_only"]
+                    tuning_data, ax=ax, smooth_SD=feature_kwargs["smooth_SD"], action_type=feature_kwargs["action_type"]
                 )
             else:
                 actions.plot_action_tuning(

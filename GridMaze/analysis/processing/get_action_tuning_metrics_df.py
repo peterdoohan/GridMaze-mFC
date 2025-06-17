@@ -3,10 +3,11 @@ Library for visualising population tuning aligned to egocentric actions
 """
 
 # %% Imports
+from cv2 import mean
 import numpy as np
 import pandas as pd
-from regex import B
-from scipy.stats import ttest_1samp, zscore
+import scipy as sp
+from scipy.stats import ttest_1samp, spearmanr
 
 
 from GridMaze.analysis.cluster_tuning import actions as act
@@ -20,7 +21,7 @@ FRAME_RATE = 60  # Hz
 # %% Functions
 
 
-def test(processed_data_path, analysis_data_path, forced_only=True, window=(-3, 3), step_size=0.25):
+def test(processed_data_path, analysis_data_path, window=(-3, 3), step_size=0.25):
     """
     note only loads actions during navigation
 
@@ -52,29 +53,62 @@ def test(processed_data_path, analysis_data_path, forced_only=True, window=(-3, 
         action_tuning_df = pd.concat(
             [action_tuning_df.drop(columns=["action_aligned_rates"], level=0), ds_rates], axis=1
         )
-    # if forced_only:
-    #     action_tuning_df = action_tuning_df[action_tuning_df.choice_degree.gt(2)]
     cluster_unique_IDs = action_tuning_df.cluster_unique_ID.unique()
     # metrics df
+    conds = ["all_action", "free_action", "forced_action", "free_vs_forced"]
+    metrics = ["value", "p_value", "sig"]
+    cols = pd.MultiIndex.from_tuples(
+        [("single_unit", "", "")] + [("split_half_corr", cond, x) for cond in conds for x in metrics]
+    )
+    metrics_df = pd.DataFrame(index=cluster_unique_IDs, columns=cols, data=np.nan)
+    # fix boolian dtype columns
+    metrics_df[("single_unit", "", "")] = False
+    for cond in conds:
+        metrics_df[("split_half_corr", cond, "sig")] = False
     for cluster in cluster_unique_IDs:
         if cluster not in single_units:
             continue
+        print(cluster)
         cluster_df = action_tuning_df[action_tuning_df.cluster_unique_ID == cluster]
-        return cluster_df
-        split_corrs = get_split_half_corr(cluster_df)
-        mean_split_corr = np.mean(split_corrs)
+        metrics_df.loc[cluster, ("single_unit", "", "")] = True
+        # free/forced action split half correlation
+        for action_type in ["all", "free", "forced"]:
+            if session_info["maze_name"] == "rooms_maze" and action_type == "forced":
+                continue  # not forced actions in rooms maze
+            label = f"{action_type}_action"
+            mean_corr, sig, p_val = get_action_split_half_corr(cluster_df, action_type=action_type)
+            metrics_df.loc[cluster, ("split_half_corr", label, "value")] = mean_corr
+            metrics_df.loc[cluster, ("split_half_corr", label, "p_value")] = p_val
+            metrics_df.loc[cluster, ("split_half_corr", label, "sig")] = sig
+        # free_vs_forced action split half correlation
+        if session_info["maze_name"] == "rooms_maze":
+            continue
+        mean_corr, sig, p_val = get_free_forced_split_half_corr(cluster_df)
+        metrics_df.loc[cluster, ("split_half_corr", "free_vs_forced", "value")] = mean_corr
+        metrics_df.loc[cluster, ("split_half_corr", "free_vs_forced", "p_value")] = p_val
+        metrics_df.loc[cluster, ("split_half_corr", "free_vs_forced", "sig")] = sig
+    # reindex
+    metrics_df.reset_index(inplace=True)
+    metrics_df.rename(columns={"index": "cluster_unique_ID"}, inplace=True)
+    # add convience column for filtering egocentric action tuned clusters
+    metrics_df[("egocentric_action_tuned")] = (
+        metrics_df.split_half_corr.free_action.sig & metrics_df.split_half_corr.forced_action.sig
+    )
+    return metrics_df.sort_index(axis=1)
 
 
-def get_action_split_half_corr(cluster_df, action_type="free", n=100, alpha=0.01):
+def get_action_split_half_corr(cluster_df, action_type="free", n=50, alpha=0.01):
     """ """
     if action_type == "free":
         df = cluster_df[cluster_df.choice_degree.gt(2)]
     elif action_type == "forced":
         df = cluster_df[cluster_df.choice_degree.le(2)]
+    elif action_type == "all":
+        df = cluster_df.copy()
     else:
         raise ValueError("action_type must be 'free' or 'forced'")
     actions = ["turn_left", "turn_right", "go_forward"]
-    left_df, right_df, forward_df = [cluster_df[cluster_df.basic_action == action] for action in actions]
+    left_df, right_df, forward_df = [df[df.basic_action == action] for action in actions]
     left_ids, right_ids, forward_ids = [df.action_number.values for df in [left_df, right_df, forward_df]]
     mid_left, mid_right, mid_forward = [len(ids) // 2 for ids in [left_ids, right_ids, forward_ids]]
     corrs = []
@@ -91,15 +125,20 @@ def get_action_split_half_corr(cluster_df, action_type="free", n=100, alpha=0.01
             split_2_tuning.append(df[df.action_number.isin(split_2_ids)].action_aligned_rates.mean())
         left_1, right_1, forward_1 = split_1_tuning
         left_2, right_2, forward_2 = split_2_tuning
+        # demean
+        left_1, right_1, forward_1 = [a - np.mean(a) for a in [left_1, right_1, forward_1]]
+        left_2, right_2, forward_2 = [a - np.mean(a) for a in [left_2, right_2, forward_2]]
+        # calculate differences
         LF_1 = left_1 - forward_1
         LF_2 = left_2 - forward_2
         RF_1 = right_1 - forward_1
         RF_2 = right_2 - forward_2
         LR_1 = left_1 - right_1
         LR_2 = left_2 - right_2
+        # calculate split half correlation
         split_1 = np.hstack([LF_1, RF_1, LR_1])
         split_2 = np.hstack([LF_2, RF_2, LR_2])
-        split_corr = np.corrcoef(split_1, split_2)[0, 1]
+        split_corr = spearmanr(split_1, split_2)[0]
         corrs.append(split_corr)
     result = ttest_1samp(corrs, 0, alternative="greater")
     p_val = result.pvalue
@@ -108,7 +147,7 @@ def get_action_split_half_corr(cluster_df, action_type="free", n=100, alpha=0.01
     return mean_corr, sig, p_val
 
 
-def get_free_forced_split_half_corr(cluster_df, n=100, alpha=0.01):
+def get_free_forced_split_half_corr(cluster_df, n=50, alpha=0.01):
     """ """
     free_df = cluster_df[cluster_df.choice_degree.gt(2)]
     forced_df = cluster_df[cluster_df.choice_degree.le(2)]
@@ -137,11 +176,10 @@ def get_free_forced_split_half_corr(cluster_df, n=100, alpha=0.01):
             split_2.append(split_2_tuning)
         free_1, forced_1 = split_1
         free_2, forced_2 = split_2
-        free_m_forced_1 = np.hstack(
-            [a - b for a, b in zip(free_1, forced_1)]
-        )  # free_L - forced_L, free_R - forced_R, etc.
+        # free_L - forced_L, free_R - forced_R, etc.
+        free_m_forced_1 = np.hstack([a - b for a, b in zip(free_1, forced_1)])
         free_m_forced_2 = np.hstack([a - b for a, b in zip(free_2, forced_2)])
-        split_corr = np.corrcoef(free_m_forced_1, free_m_forced_2)[0, 1]
+        split_corr = spearmanr(free_m_forced_1, free_m_forced_2)[0]
         corrs.append(split_corr)
     result = ttest_1samp(corrs, 0, alternative="greater")
     p_val = result.pvalue
