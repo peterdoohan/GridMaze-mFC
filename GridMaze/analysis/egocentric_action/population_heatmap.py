@@ -3,10 +3,12 @@ Library for visualising population tuning aligned to egocentric actions
 """
 
 # %% Imports
+from turtle import left, right
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 from matplotlib import pyplot as plt
+from polars import Time
 import seaborn as sns
 from scipy.stats import zscore
 from scipy.ndimage import gaussian_filter1d
@@ -25,31 +27,64 @@ from GridMaze.analysis.core import get_clusters as gc
 def plot_KMeans_cluster_centroids(tuning_df, n_clusters=6, min_action_diff=3, axes=None):
     """ """
     # process data
-    n_timepoints = tuning_df.shape[1]
+    timepoints = tuning_df.columns.values.astype(float)
+    n_timepoints = len(timepoints)
     actions = ["turn_left", "go_forward", "turn_right"]
     wide_df = tuning_df.unstack().swaplevel(0, 1, axis=1).sort_index(axis=1)  # neurons, actions x timepoints
     wide_df = wide_df.reindex(columns=actions, level=0)  # top level order: left, forward, right
     # further filter neurons for diff between left and right tuning
     if min_action_diff:
-        max_diff = _get_max_action_diff(wide_df)
+        max_diff = _get_max_action_diff(tuning_df)
         wide_df = wide_df[max_diff >= min_action_diff]  # keep neurons with sufficient left-right diff
     kmeans = KMeans(n_clusters=n_clusters, random_state=0)
+    kmeans.fit(wide_df.values)
     centroids = kmeans.cluster_centers_
-    
-    return
+    # determine preferred action for each centroid for plotting
+    centroid2pref_action = {}
+    centroid2argmax = {}
+    for i, ct in enumerate(centroids):
+        centroid_tuning = ct.reshape(len(actions), n_timepoints)
+        pref_action_ind = np.argmax(np.max(centroid_tuning, axis=1))
+        pref_action_argmax = np.argmax(centroid_tuning[pref_action_ind])
+        centroid2argmax[i] = pref_action_argmax
+        centroid2pref_action[i] = actions[pref_action_ind]
+    # order cluster by their prefered action and their max tuning (time)
+    left_prefering = [c for c, a in centroid2pref_action.items() if a == "turn_left"]
+    left_order = sorted(left_prefering, key=lambda x: centroid2argmax[x])
+    right_prefering = [c for c, a in centroid2pref_action.items() if a == "turn_right"]
+    right_order = sorted(right_prefering, key=lambda x: centroid2argmax[x])
+    print(left_order, right_order)
+    # plotting
+    if axes is None:
+        f, axes = plt.subplots(n_clusters // 2, 2, figsize=(3, 1.5 * (n_clusters // 2)), sharey=True, sharex=True)
+    # plot left tuning clusters
+    for i, clust_order in enumerate([left_order, right_order]):
+        for j, ax in enumerate(axes[:, i]):
+            ax.spines[["top", "right"]].set_visible(False)
+            cluster_id = clust_order[j]
+            tuning = centroids[cluster_id].reshape(len(actions), n_timepoints)
+            ax.plot(timepoints, tuning[0], label="turn_left", color="darkorchid", lw=2)
+            ax.plot(timepoints, tuning[1], label="go_forward", color="grey", lw=2)
+            ax.plot(timepoints, tuning[2], label="turn_right", color="steelblue", lw=2)
+            if i == 0 and j == 2:
+                ax.set_ylabel("Activity (z-scored)")
+                ax.set_xlabel("Time (s)")
+                ax.legend()
+            ax.axvline(0, color="k", linestyle="--", alpha=0.5)
 
 
 def plot_egocentric_action_tuning_heatmap(
     tuning_df, cluster_method="KMeans", n_clusters=6, min_action_diff=3, axes=None
 ):
     # process data
-    n_timepoints = tuning_df.shape[1]
+    timepoints = tuning_df.columns.values.astype(float)
+    n_timepoints = len(timepoints)
     actions = ["turn_left", "go_forward", "turn_right"]
     wide_df = tuning_df.unstack().swaplevel(0, 1, axis=1).sort_index(axis=1)  # neurons, actions x timepoints
     wide_df = wide_df.reindex(columns=actions, level=0)  # top level order: left, forward, right
     # further filter neurons for diff between left and right tuning
     if min_action_diff:
-        max_diff = _get_max_action_diff(wide_df)
+        max_diff = _get_max_action_diff(tuning_df)
         wide_df = wide_df[max_diff >= min_action_diff]  # keep neurons with sufficient left-right diff
     # group neurons by KMeans cluster and plot in clustees together
     if cluster_method == "KMeans":
@@ -74,12 +109,23 @@ def plot_egocentric_action_tuning_heatmap(
     wide_df.sort_values(by=[("KMeans_cluster", "prefered_action"), ("KMeans_cluster", "argmax")], inplace=True)
     # plotting
     if axes is None:
-        f, axes = plt.subplots(1, len(actions), figsize=(3 * len(actions), 6), sharey=True)
+        f, axes = plt.subplots(1, len(actions), figsize=(3 * len(actions), 6), sharey=True, width_ratios=[1, 1, 1.2])
     for ax, action in zip(axes, actions):
         action_tuning = wide_df[action]
-        sns.heatmap(data=action_tuning, ax=ax, cmap="bwr", cbar=False, vmin=-1.5, vmax=3)
-
-    return centroid2pref_action
+        cbar = True if action == "turn_right" else False
+        sns.heatmap(data=action_tuning, ax=ax, cmap="bwr", cbar=cbar, vmin=-1.5, vmax=3)
+        y_tick = round(len(wide_df), -2)
+        ax.set_yticks([y_tick])
+        ax.set_yticklabels([f"{y_tick}"], rotation=90)
+        ax.set_xlabel("Time (s)")
+        ax.set_xticks(np.linspace(0, n_timepoints, 7))
+        ax.set_xticklabels(np.arange(min(timepoints), max(timepoints) + 1, 1), rotation=0)
+        ax.axvline(n_timepoints // 2, color="k", linestyle="--", alpha=0.5)
+        ax.set_title(action)
+        if action == "turn_left":
+            ax.set_ylabel("Neurons", labelpad=-10)
+        else:
+            ax.set_ylabel("")
 
 
 def _get_max_action_diff(tuning_df):
