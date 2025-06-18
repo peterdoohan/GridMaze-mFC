@@ -81,22 +81,93 @@ def test_within_across_subject_ve(maze="maze_2", demean=True, norm_length=True):
 # %% Null vs subject behaviour 2
 
 
-def test2():
+def get_neural_variance_explained_by_behaviour(
+    maze_name,
+    n_splits=5,
+    test_size=0.5,
+    late=True,
+    max_steps_to_goal=30,
+    demean=False,
+    norm_length=True,
+    n_resamples=500,
+    verobse=True,
+):
     """
     Similar to original version but with bootstrap resample across subjects, still with X val
     just interested in differences between how well real behaviour explains neurons and how well synthetic
     behaviour explains neurons.
     """
+    # get input data
+    subject2split_data = get_input_data(
+        maze_name="maze_2", n_splits=n_splits, test_size=0.5, late=True, max_steps_to_goal=30
+    )
 
-    return
+    # define helper functions
+    def _demean(X):
+        return X - X.mean(-1, keepdims=True)
+
+    def _norm_length(X):
+        return X / np.linalg.norm(X, axis=1, keepdims=True)
+
+    # proceses results across bootstrap resamples across subjects
+    all_results = []
+    for n in range(n_resamples):
+        print(n)
+        sampled_subjects = np.random.choice(SUBJECT_IDS, size=len(SUBJECT_IDS), replace=True)
+        resample_results = []
+        for i in range(n_splits):
+            data_types = [
+                "neural_data",
+                "true_behaviour",
+                "random_diffusion",
+                "forward_diffusion",
+                "vector",
+                "optimal",
+            ]
+            data_type2train_dfs = {data_type: [] for data_type in data_types}
+            data_type2test_dfs = {data_type: [] for data_type in data_types}
+            for subject in sampled_subjects:
+                split_data = subject2split_data[subject][i]
+                for data_type in data_types:
+                    data_type2train_dfs[data_type].append(split_data[data_type]["train"])
+                    data_type2test_dfs[data_type].append(split_data[data_type]["test"])
+            train_data2df = {data_type: pd.concat(data_type2train_dfs[data_type], axis=0) for data_type in data_types}
+            test_data2df = {data_type: pd.concat(data_type2test_dfs[data_type], axis=0) for data_type in data_types}
+            # calculate variance explained
+            split_results = {}
+            # explain var in test neural data with...
+            neural_test = test_data2df["neural_data"].values
+            if demean:
+                neural_test = _demean(neural_test)
+            if norm_length:
+                neural_test = _norm_length(neural_test)
+            # each data type
+            for data_type in data_types:
+                d_train = train_data2df[data_type].values
+                if demean:
+                    d_train = _demean(d_train)
+                if norm_length:
+                    d_train = _norm_length(d_train)
+                cumsum_ve = get_pca_variance_explained(d_train, neural_test)
+                auc = np.trapz(cumsum_ve, dx=1 / len(cumsum_ve))
+                split_results[data_type] = auc
+            split_results["split"] = i
+            resample_results.append(split_results)
+        df = pd.DataFrame(resample_results)
+        df["resample"] = n
+        all_results.append(df)
+    return pd.concat(all_results, axis=0)
 
 
-def get_split_input_data(maze_name, n_splits=5, test_size=0.2, late=True, max_steps_to_goal=30):
-    """ """
+def get_input_data(maze_name, n_splits=5, test_size=0.5, late=False, max_steps_to_goal=30):
+    """
+    should avoid data regeneeration when making per subject Xval splits but not sure if this is overkill
+    """
     days_on_maze = "late" if late == True else "all"
-    data = {}
+    all_data = {}
     subject2session_names = {}
     for subject in SUBJECT_IDS:
+        print(subject)
         sub_sessions = gs.get_maze_sessions(
             subject_IDs=[subject],
             maze_names=[maze_name],
@@ -114,7 +185,11 @@ def get_split_input_data(maze_name, n_splits=5, test_size=0.2, late=True, max_st
         for session in sub_sessions:
             session_data = {}
             session_data["neural_data"] = pdr.get_session_place_direction_tuning(
-                session, fill_nans="mean", normalisation=False, max_steps_from_goal=max_steps_to_goal
+                session,
+                fill_nans="mean",
+                normalisation=False,
+                min_split_corr=0.3,
+                max_steps_from_goal=max_steps_to_goal,
             )
             session_data["true_behaviour"] = bdr.get_session_behavioural_sequences(
                 session, normalisation=False, max_steps_to_goal=max_steps_to_goal
@@ -125,9 +200,10 @@ def get_split_input_data(maze_name, n_splits=5, test_size=0.2, late=True, max_st
                 )
             session_names.append(session.name)
             subject_data[session.name] = session_data
-        data[subject] = subject_data
+        all_data[subject] = subject_data
         subject2session_names[subject] = session_names
     # combine data per subject across Xvaled splits
+    print("recombining data")
     subject2split_data = {}
     ss = ShuffleSplit(n_splits=n_splits, test_size=test_size, random_state=0)
     for subject in SUBJECT_IDS:
@@ -136,7 +212,7 @@ def get_split_input_data(maze_name, n_splits=5, test_size=0.2, late=True, max_st
         split2data = {}
         for i, (train_index, test_index) in enumerate(ss.split(_session_names)):
             train, test = _session_names[train_index], _session_names[test_index]
-            data = {}
+            split_data = {}
             for data_type in [
                 "neural_data",
                 "true_behaviour",
@@ -145,13 +221,13 @@ def get_split_input_data(maze_name, n_splits=5, test_size=0.2, late=True, max_st
                 "vector",
                 "optimal",
             ]:
-                train_data = [data[subject][session][data_type] for session in train]
-                test_data = [data[subject][session][data_type] for session in test]
-                data[data_type] = {
+                train_data = [all_data[subject][session][data_type] for session in train]
+                test_data = [all_data[subject][session][data_type] for session in test]
+                split_data[data_type] = {
                     "train": pd.concat([df for df in train_data if df is not None], axis=0),
                     "test": pd.concat([df for df in test_data if df is not None], axis=0),
                 }
-            split2data[i] = data
+            split2data[i] = split_data
         subject2split_data[subject] = split2data
     return subject2split_data
 
