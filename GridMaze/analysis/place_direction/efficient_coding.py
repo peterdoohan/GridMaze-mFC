@@ -4,6 +4,7 @@ Library for the analysis of neural tuning to place_direction explaining low dime
 
 # %% Imports
 import json
+from cv2 import norm
 import numpy as np
 import pandas as pd
 
@@ -77,10 +78,88 @@ def test_within_across_subject_ve(maze="maze_2", demean=True, norm_length=True):
     return (results_df,)
 
 
+# %% Null vs subject behaviour 2
+
+
+def test2():
+    """
+    Similar to original version but with bootstrap resample across subjects, still with X val
+    just interested in differences between how well real behaviour explains neurons and how well synthetic
+    behaviour explains neurons.
+    """
+
+    return
+
+
+def get_split_input_data(maze_name, n_splits=5, test_size=0.2, late=True, max_steps_to_goal=30):
+    """ """
+    days_on_maze = "late" if late == True else "all"
+    data = {}
+    subject2session_names = {}
+    for subject in SUBJECT_IDS:
+        sub_sessions = gs.get_maze_sessions(
+            subject_IDs=[subject],
+            maze_names=[maze_name],
+            days_on_maze=days_on_maze,
+            with_data=[
+                "navigation_df",
+                "navigation_spike_rates_df",
+                "trajectory_decisions_df",
+                "cluster_metrics",
+                "cluster_place_direction_tuning_metrics",
+            ],
+        )
+        session_names = []
+        subject_data = {}
+        for session in sub_sessions:
+            session_data = {}
+            session_data["neural_data"] = pdr.get_session_place_direction_tuning(
+                session, fill_nans="mean", normalisation=False, max_steps_from_goal=max_steps_to_goal
+            )
+            session_data["true_behaviour"] = bdr.get_session_behavioural_sequences(
+                session, normalisation=False, max_steps_to_goal=max_steps_to_goal
+            )
+            for policy in ["random_diffusion", "forward_diffusion", "vector", "optimal"]:
+                session_data[policy] = sb.get_session_synthetic_behavioural_sequences(
+                    session, policy=policy, normalisation=False
+                )
+            session_names.append(session.name)
+            subject_data[session.name] = session_data
+        data[subject] = subject_data
+        subject2session_names[subject] = session_names
+    # combine data per subject across Xvaled splits
+    subject2split_data = {}
+    ss = ShuffleSplit(n_splits=n_splits, test_size=test_size, random_state=0)
+    for subject in SUBJECT_IDS:
+        _session_names = np.array(subject2session_names[subject])
+        # Generate the splits (session names)
+        split2data = {}
+        for i, (train_index, test_index) in enumerate(ss.split(_session_names)):
+            train, test = _session_names[train_index], _session_names[test_index]
+            data = {}
+            for data_type in [
+                "neural_data",
+                "true_behaviour",
+                "random_diffusion",
+                "forward_diffusion",
+                "vector",
+                "optimal",
+            ]:
+                train_data = [data[subject][session][data_type] for session in train]
+                test_data = [data[subject][session][data_type] for session in test]
+                data[data_type] = {
+                    "train": pd.concat([df for df in train_data if df is not None], axis=0),
+                    "test": pd.concat([df for df in test_data if df is not None], axis=0),
+                }
+            split2data[i] = data
+        subject2split_data[subject] = split2data
+    return subject2split_data
+
+
 # %% Null vs subject behaviour
 
 
-def test(maze="maze_1", demean=True, norm_length=True):
+def test(maze="maze_1", demean=False, norm_length=True):
     """
     Switch to behaviour -explains-> neurons so that neurons are constant and behaviour is changed.
     Do analysis sepeartely for each subject, with output metric auc BeN / auc NeN -> t-test across
@@ -129,13 +208,13 @@ def test(maze="maze_1", demean=True, norm_length=True):
                     for arr in [train_neural, test_neural, train_behaviour, test_behaviour]
                 ]
             # variance explained
-            split_BeNs.append(get_svd_variance_explained(train_behaviour, test_neural, pad=True))
-            split_BeBs.append(get_svd_variance_explained(train_behaviour, test_behaviour, pad=True))
-            split_NeBs.append(get_svd_variance_explained(train_neural, test_behaviour, pad=True))
+            split_BeNs.append(get_pca_variance_explained(train_behaviour, test_neural))
+            split_BeBs.append(get_pca_variance_explained(train_behaviour, test_behaviour))
+            split_NeBs.append(get_pca_variance_explained(train_neural, test_behaviour))
         BeNs.append(np.array(split_BeNs))
         BeBs.append(np.array(split_BeBs))
         NeBs.append(np.array(split_NeBs))
-        NeN = get_svd_variance_explained(train_neural, test_neural, pad=True)
+        NeN = get_pca_variance_explained(train_neural, test_neural)
         NeNs.append(NeN)
     # build results df
     auc_df = []
@@ -256,7 +335,7 @@ def plot_subject_cum_ve(NeNs, BeBs, BeNs, NeBs, policies=["Real", "Random", "For
 
 
 def run_neuron_to_behaviour_variance_explained_analysis(
-    X, ve_method="pca", demean=(True, True), norm_length=(True, True), plot=True
+    X, ve_method="pca", demean=(False, False), norm_length=(True, True), plot=True
 ):
     """
     X[0].keys = ["neurons, "behaviour]
