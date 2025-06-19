@@ -23,7 +23,7 @@ def get_synthetic_maze_behavioural_sequences_df(
     subject_IDs="all",
     maze_name="maze_1",
     sessions=None,
-    late_sessions=True,
+    late_sessions=False,
     normalisation=False,
     max_steps=30,
     verbose=False,
