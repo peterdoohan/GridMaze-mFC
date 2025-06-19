@@ -28,7 +28,9 @@ import seaborn as sns
 
 # %% Global Variables
 
-from GridMaze.paths import EXPERIMENT_INFO_PATH
+from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
+
+RESULTS_DIR = RESULTS_PATH / "place_direction" / "efficient_coding"
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
@@ -82,6 +84,38 @@ def test_within_across_subject_ve(maze="maze_2", demean=True, norm_length=True):
 # %% Null vs subject behaviour 2
 
 
+def plot_neural_variance_explained_by_behaviour(results_df, ax=None):
+    """ """
+    df = results_df.groupby("resample").mean().drop(columns=["split"])  # average over splits(folds)
+    conditions = df.columns.tolist()
+    means = df.mean()
+    lower = df.quantile(0.025)
+    upper = df.quantile(0.975)
+    err_lower = means - lower
+    err_upper = upper - means
+    colors = ["red", "blue", "grey", "grey", "grey", "grey"]
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(3, 2), clear=True)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.axvline(means["neural_data"], color="red", ls="--", alpha=0.5)
+    for i, (cond, color) in enumerate(zip(conditions, colors)):
+        ax.errorbar(
+            x=means[cond],
+            y=i,
+            xerr=[[err_lower[cond]], [err_upper[cond]]],
+            fmt="o",
+            markersize=5,
+            color=color,
+            capthick=1.5,
+            elinewidth=1.5,
+            capsize=3,
+        )
+    ax.set_yticks(range(len(conditions)), conditions)
+    ax.invert_yaxis()
+    ax.set_xlim(0.5, 0.8)
+    return
+
+
 def get_neural_variance_explained_by_behaviour(
     maze_name,
     late_sessions=False,  # need as much data as possible with CV approach
@@ -90,15 +124,20 @@ def get_neural_variance_explained_by_behaviour(
     max_steps_to_goal=30,
     demean=False,
     norm_length=True,
-    n_resamples=50,
+    n_resamples=500,
     verbose=True,
-    max_jobs=10,
+    max_jobs=20,
 ):
     """
     Similar to original version but with bootstrap resample across subjects, still with X val
     just interested in differences between how well real behaviour explains neurons and how well synthetic
     behaviour explains neurons.
     """
+    save_path = RESULTS_DIR / f"neurons_explained_by_behaviour_{maze_name}.csv"
+    if save_path.exists():
+        if verbose:
+            print(f"Loading existing results from {save_path}")
+        return pd.read_csv(save_path, index_col=0)
     # get input data
     if verbose:
         print("Loading input data...")
@@ -108,6 +147,7 @@ def get_neural_variance_explained_by_behaviour(
         test_size=test_size,
         late=late_sessions,
         max_steps_to_goal=max_steps_to_goal,
+        verbose=verbose,
     )
     data_types = [
         "neural_data",
@@ -122,7 +162,12 @@ def get_neural_variance_explained_by_behaviour(
         delayed(_process_resample)(subject2split_data, data_types, n, n_splits, demean, norm_length, verbose)
         for n in range(n_resamples)
     )
-    return pd.concat(resampled_results, axis=0)
+    results_df = pd.concat(resampled_results, axis=0)
+    # save results
+    results_df.to_csv(save_path)
+    if verbose:
+        print(f"Results saved to {save_path}")
+    return results_df
 
 
 def _process_resample(subject2split_data, data_types, n, n_splits, demean, norm_length, verbose):
@@ -249,181 +294,6 @@ def get_input_data(maze_name, n_splits=5, test_size=0.5, late=False, max_steps_t
             split2data[i] = split_data
         subject2split_data[subject] = split2data
     return subject2split_data
-
-
-# %% Null vs subject behaviour
-
-
-def test(maze="maze_1", demean=False, norm_length=True):
-    """
-    Switch to behaviour -explains-> neurons so that neurons are constant and behaviour is changed.
-    Do analysis sepeartely for each subject, with output metric auc BeN / auc NeN -> t-test across
-    subjects for true vs synthetic behavioural policy.
-    """
-    NeNs = []  # [n_splits, n_components]
-    BeBs, BeNs, NeBs = [], [], []  # [n_splits, n_policies, n_components]
-    sessions = get_analysis_sessions("all", maze, late=True)
-    split_sessions = _get_session_splits(sessions, n_splits=5, test_size=0.2)
-    NeNs = []  # [n_splits]
-    BeBs, BeNs, NeBs = [], [], []  # [n_splits, n_policies]
-    for i, (train_sessions, test_sessions) in enumerate(split_sessions):
-        print(f"Split {i+1} of {len(split_sessions)}")
-        train_neural = pdr.get_population_place_direction_tuning(
-            sessions=train_sessions, fill_nans="mean", normalisation=False
-        ).values
-        test_neural = pdr.get_population_place_direction_tuning(
-            sessions=test_sessions, fill_nans="mean", normalisation=False
-        ).values
-        # get varaince explained under different behavioural policues (real data or synthetic)
-        split_BeNs, split_BeBs, split_NeBs = [], [], []
-        for policy in [None, "random_diffusion", "forward_diffusion", "vector", "optimal"]:
-            print(f"Policy: {policy}")
-            if policy is None:  # real data
-                train_behaviour = bdr.get_maze_behavioural_sequences_df(
-                    sessions=train_sessions, normalisation=False
-                ).values
-                test_behaviour = bdr.get_maze_behavioural_sequences_df(
-                    sessions=test_sessions, normalisation=False
-                ).values
-            else:
-                train_behaviour = sb.get_synthetic_maze_behavioural_sequences_df(
-                    policy=policy, sessions=train_sessions, normalisation=False
-                ).values
-                test_behaviour = sb.get_synthetic_maze_behavioural_sequences_df(
-                    policy=policy, sessions=test_sessions, normalisation=False
-                ).values
-            if demean:
-                train_neural, test_neural, train_behaviour, test_behaviour = [
-                    arr - arr.mean(-1, keepdims=True)
-                    for arr in [train_neural, test_neural, train_behaviour, test_behaviour]
-                ]
-            if norm_length:
-                train_neural, test_neural, train_behaviour, test_behaviour = [
-                    arr / np.linalg.norm(arr, axis=1, keepdims=True)
-                    for arr in [train_neural, test_neural, train_behaviour, test_behaviour]
-                ]
-            # variance explained
-            split_BeNs.append(get_pca_variance_explained(train_behaviour, test_neural))
-            split_BeBs.append(get_pca_variance_explained(train_behaviour, test_behaviour))
-            split_NeBs.append(get_pca_variance_explained(train_neural, test_behaviour))
-        BeNs.append(np.array(split_BeNs))
-        BeBs.append(np.array(split_BeBs))
-        NeBs.append(np.array(split_NeBs))
-        NeN = get_pca_variance_explained(train_neural, test_neural)
-        NeNs.append(NeN)
-    # build results df
-    auc_df = []
-    for j in range(5):  # n_xval splits
-        AUC_nen = NeNs[j].sum()
-        auc_df.append({"policy": "Real", "fold": j, "auc": AUC_nen, "type": "NeN"})
-        for k, policy in enumerate(["Real", "Random", "Forward", "Vector", "Optimal"]):
-            AUC_ben = BeNs[j][k].sum()
-            AUC_beb = BeBs[j][k].sum()
-            AUC_neb = NeBs[j][k].sum()
-            auc_df.append({"policy": policy, "fold": j, "auc": AUC_ben, "type": "BeN"})
-            auc_df.append({"policy": policy, "fold": j, "auc": AUC_beb, "type": "BeB"})
-            auc_df.append({"policy": policy, "fold": j, "auc": AUC_neb, "type": "NeB"})
-    auc_df = pd.DataFrame(auc_df)
-    return auc_df
-
-
-def true_vs_random_plot(auc_df, ax=None):
-    """ """
-    # BeN - NeN test
-    policies = ["Real", "Random"]
-    r_hats = []
-    NeN = auc_df[auc_df.type == "NeN"].set_index(["fold"]).auc
-    for policy in policies:
-        BeN = auc_df[(auc_df.type == "BeN") & (auc_df.policy == policy)].set_index(["fold"]).auc
-        r_hat = BeN.div(NeN).groupby("fold").mean()
-        r_hats.append(r_hat)
-    r_hats = pd.concat(r_hats, axis=1)
-    r_hats.columns = policies
-    r1 = r_hats.reset_index().melt(id_vars="fold", var_name="policy", value_name="r")
-    if ax is None:
-        f, ax = plt.subplots(1, 1, figsize=(3, 3), clear=True)
-    ax.spines[["top", "right"]].set_visible(False)
-    sns.pointplot(r1, x="policy", y="r", ax=ax, legend=False, color="grey")
-    ax.set_ylim(0.7, 0.9)
-
-
-def test_ve_diff(auc_df):
-    """ """
-    # BeN - NeN test
-    policies = ["Real", "Random", "Forward", "Vector", "Optimal"]
-    r_hats = []
-    NeN = auc_df[auc_df.type == "NeN"].set_index(["fold"]).auc
-    for policy in policies:
-        BeN = auc_df[(auc_df.type == "BeN") & (auc_df.policy == policy)].set_index(["fold"]).auc
-        r_hat = BeN.div(NeN).groupby("fold").mean()
-        r_hats.append(r_hat)
-    r_hats = pd.concat(r_hats, axis=1)
-    r_hats.columns = policies
-    r1 = r_hats.reset_index().melt(id_vars="fold", var_name="policy", value_name="r")
-    f1, ax = plt.subplots()
-    sns.swarmplot(r1, x="policy", y="r", hue="fold", ax=ax, legend=False)
-    ax.set_ylim(0.5, 1)
-    # BeB - NeB test
-    r_hats = []
-    for policy in policies:
-        BeB = auc_df[(auc_df.type == "BeB") & (auc_df.policy == policy)].set_index(["fold"]).auc
-        NeB = auc_df[(auc_df.type == "NeB") & (auc_df.policy == policy)].set_index(["fold"]).auc
-        r_hat = NeB.div(BeB).groupby("fold").mean()
-        r_hats.append(r_hat)
-    r_hats = pd.concat(r_hats, axis=1)
-    r_hats.columns = policies
-    r2 = r_hats.reset_index().melt(id_vars="fold", var_name="policy", value_name="r")
-    f2, ax = plt.subplots()
-    sns.swarmplot(r2, x="policy", y="r", hue="fold", ax=ax, legend=False)
-    ax.set_ylim(0.5, 1)
-    return
-
-
-def plot_subject_cum_ve(NeNs, BeBs, BeNs, NeBs, policies=["Real", "Random", "Forward", "Vector", "Optimal"]):
-    """ """
-    policy_colors = ["blue", "green", "purple", "orange", "brown"]
-    mean_NeN, mean_BeBs, mean_BeNs, mean_NeBs = [arr.mean(axis=0) for arr in [NeNs, BeBs, BeNs, NeBs]]
-    sem_NeN, sem_BeBs, sem_BeNs, sem_NeBs = [
-        arr.std(axis=0) / np.sqrt(arr.shape[0]) for arr in [NeNs, BeBs, BeNs, NeBs]
-    ]
-    n_components = NeNs.shape[-1]
-
-    ## Fig 1: Neurons explained by x
-    f1, ax = plt.subplots(1, 1, figsize=(5, 5), clear=True)
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.plot([0, n_components], [0, 1], color="black", ls="--")
-    ax.set_xlabel("Number of components")
-    ax.set_ylabel("Cum. var exp")
-    ax.set_title("Neurons explained by")
-    # Neurons -explain-> Neurons
-    ax.plot(mean_NeN, label="Neurons", color="red")
-    ax.fill_between(range(len(mean_NeN)), mean_NeN - sem_NeN, mean_NeN + sem_NeN, color="red", alpha=0.3)
-    # Behaviour -explain-> Behaviour
-    for i, (policy, color) in enumerate(zip(policies, policy_colors)):
-        mean_BeN = mean_BeNs[i, :]
-        sem_BeN = sem_BeNs[i, :]
-        ax.plot(mean_BeN, label=f"Behaviour {policy}", color=color)
-        ax.fill_between(range(len(mean_NeN)), mean_BeN - sem_BeN, mean_BeN + sem_BeN, color=color, alpha=0.3)
-    ax.legend(fontsize="xx-small")
-
-    ## Fig 2: Behaviour explained by x
-    f2, axes = plt.subplots(1, len(policies), figsize=(4 * len(policies), 4), clear=True, sharex=True, sharey=True)
-    for i, (policy, ax) in enumerate(zip(policies, axes.flatten())):
-        ax.plot([0, n_components], [0, 1], color="black", ls="--")
-        mean_BeB = mean_BeBs[i, :]
-        sem_BeB = sem_BeBs[i, :]
-        ax.plot(mean_BeB, label="Behaviour", color="blue")
-        ax.fill_between(range(len(mean_BeB)), mean_BeB - sem_BeB, mean_BeB + sem_BeB, color="blue", alpha=0.3)
-        mean_NeB = mean_NeBs[i, :]
-        sem_NeB = sem_NeBs[i, :]
-        ax.plot(mean_NeB, label="Neurons", color="red")
-        ax.fill_between(range(len(mean_NeB)), mean_NeB - sem_NeB, mean_NeB + sem_NeB, color="red", alpha=0.3)
-        ax.set_ylabel("Cum. var exp")
-        ax.set_xlabel("Number of components")
-        ax.set_title(policy)
-        ax.legend(fontsize="xx-small")
-
-    return
 
 
 # %% Variance explained analysis (SVD)
