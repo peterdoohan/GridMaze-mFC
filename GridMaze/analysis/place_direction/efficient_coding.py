@@ -35,22 +35,82 @@ RESULTS_DIR = RESULTS_PATH / "place_direction" / "efficient_coding"
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
 
-DATA_FILTER_KWARGS = {
-    "navigation_only": True,
-    "moving_only": True,
-    "exclude_time_at_goal": False,
-    "minimum_occupancy": 0.5,
-    "max_steps_from_goal": None,
-}
 
 # %% Within-Between subject control
+
+
+def get_within_across_subject_neural_variance_explained_by_behaviour(
+    maze_name,
+    test_size=0.5,
+    n_splits=5,
+    late_sessions=False,
+    max_steps_to_goal=30,
+    demean=False,
+    norm_length=True,
+    verbose=True,
+):
+    """
+    Null results
+
+    With cross-validation takes the neurons from all but one subject, then takes the held out behaviour (from the
+    held out subjects) or the within-subjects behaviour (same subjects from the neurons), downsampled to match the
+    trials in held out subjects data and use this behaviour to explain variance in the neurons.
+    """
+    input_data = get_input_data(
+        maze_name=maze_name,
+        n_splits=n_splits,
+        test_size=test_size,
+        late=late_sessions,
+        max_steps_to_goal=max_steps_to_goal,
+        verbose=verbose,
+    )
+    results = []
+    for i in range(n_splits):
+        if verbose:
+            print(f"split: {i}")
+        for held_out_subject in SUBJECT_IDS:
+            if verbose:
+                print(f"held out subject: {held_out_subject}")
+            held_out_subject_behaviour = pd.concat(
+                [input_data[held_out_subject][i]["true_behaviour"][t] for t in ["train", "test"]], axis=0
+            )  # combine train and test bc, these trials never went into making neural heatmaps in other subs
+            n_trials = held_out_subject_behaviour.shape[0]
+            other_subjects = [s for s in SUBJECT_IDS if s != held_out_subject]
+            other_subject_behaviour = pd.concat(
+                [input_data[subject][i]["true_behaviour"]["train"] for subject in other_subjects],
+                axis=0,
+            )
+            # ensure same number of trials between held out and other subjects
+            other_subject_behaviour = other_subject_behaviour.sample(n=n_trials, replace=False, random_state=0)
+            other_subject_neurons = pd.concat(
+                [input_data[subject][i]["neural_data"]["test"] for subject in other_subjects],
+                axis=0,
+            )
+            # get variance expalin in neurons by within-subject or held-out subject behaviour
+            arrays = [other_subject_neurons.values, other_subject_behaviour.values, held_out_subject_behaviour.values]
+            if demean:
+                arrays = [_demean(arr) for arr in arrays]
+            if norm_length:
+                arrays = [_norm_length(arr) for arr in arrays]
+            other_neurons, other_behaviour, held_out_behaviour = arrays
+            # calculate variance explained
+            _results = {"split": i, "held_out_subject": held_out_subject}
+            for label, B in zip(["held_out", "same"], [held_out_behaviour, other_behaviour]):
+                cumsum_ve = get_pca_variance_explained(B, other_neurons)
+                auc = np.trapz(cumsum_ve, dx=1 / len(cumsum_ve))
+                _results[label] = auc
+            results.append(_results)
+    results_df = pd.DataFrame(results)
+    return results_df
 
 
 # %% Null vs subject behaviour 2
 
 
 def plot_neural_variance_explained_by_behaviour(results_df, ax=None):
-    """ """
+    """
+    Need to do stats
+    """
     df = results_df.groupby("resample").mean().drop(columns=["split"])  # average over splits(folds)
     conditions = df.columns.tolist()
     means = df.mean()
@@ -106,7 +166,7 @@ def get_neural_variance_explained_by_behaviour(
     # get input data
     if verbose:
         print("Loading input data...")
-    subject2split_data = get_null_behaviour_input_data(
+    subject2split_data = get_input_data(
         maze_name=maze_name,
         n_splits=n_splits,
         test_size=test_size,
@@ -183,8 +243,8 @@ def _norm_length(X):
     return X / np.linalg.norm(X, axis=1, keepdims=True)
 
 
-def get_null_behaviour_input_data(
-    maze_name, n_splits=5, test_size=0.5, late=False, max_steps_to_goal=30, verbose=False
+def get_input_data(
+    maze_name, with_synthetic_behaviour=True, n_splits=5, test_size=0.5, late=False, max_steps_to_goal=30, verbose=False
 ):
     """
     should avoid data regeneeration when making per subject Xval splits but not sure if this is overkill
@@ -221,13 +281,14 @@ def get_null_behaviour_input_data(
             session_data["true_behaviour"] = bdr.get_session_behavioural_sequences(
                 session, normalisation=False, max_steps_to_goal=max_steps_to_goal
             )
-            for policy in ["random_diffusion", "forward_diffusion", "vector", "optimal"]:
-                session_data[policy] = sb.get_session_synthetic_behavioural_sequences(
-                    session,
-                    policy=policy,
-                    normalisation=False,
-                    max_steps=max_steps_to_goal,
-                )
+            if with_synthetic_behaviour:
+                for policy in ["random_diffusion", "forward_diffusion", "vector", "optimal"]:
+                    session_data[policy] = sb.get_session_synthetic_behavioural_sequences(
+                        session,
+                        policy=policy,
+                        normalisation=False,
+                        max_steps=max_steps_to_goal,
+                    )
             session_names.append(session.name)
             subject_data[session.name] = session_data
         all_data[subject] = subject_data
@@ -237,6 +298,9 @@ def get_null_behaviour_input_data(
         print("Sorting data into CV splits...")
     subject2split_data = {}
     ss = ShuffleSplit(n_splits=n_splits, test_size=test_size, random_state=0)
+    data_types = ["neural_data", "true_behaviour"]
+    if with_synthetic_behaviour:
+        data_types += ["random_diffusion", "forward_diffusion", "vector", "optimal"]
     for subject in SUBJECT_IDS:
         _session_names = np.array(subject2session_names[subject])
         # Generate the splits (session names)
@@ -244,14 +308,7 @@ def get_null_behaviour_input_data(
         for i, (train_index, test_index) in enumerate(ss.split(_session_names)):
             train, test = _session_names[train_index], _session_names[test_index]
             split_data = {}
-            for data_type in [
-                "neural_data",
-                "true_behaviour",
-                "random_diffusion",
-                "forward_diffusion",
-                "vector",
-                "optimal",
-            ]:
+            for data_type in data_types:
                 train_data = [all_data[subject][session][data_type] for session in train]
                 test_data = [all_data[subject][session][data_type] for session in test]
                 split_data[data_type] = {
