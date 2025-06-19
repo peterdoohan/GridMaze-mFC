@@ -25,6 +25,7 @@ def get_synthetic_maze_behavioural_sequences_df(
     sessions=None,
     late_sessions=True,
     normalisation=False,
+    max_steps=30,
     verbose=False,
 ):
     """ """
@@ -44,7 +45,7 @@ def get_synthetic_maze_behavioural_sequences_df(
     for session in sessions:
         if verbose:
             print(session.name)
-        dfs.append(get_session_synthetic_behavioural_sequences(session, policy, normalisation))
+        dfs.append(get_session_synthetic_behavioural_sequences(session, policy, normalisation, max_steps))
     output_df = pd.concat(dfs, axis=0, ignore_index=True)
     return output_df.sort_index(axis=1)
 
@@ -53,10 +54,11 @@ def get_session_synthetic_behavioural_sequences(
     session,
     policy="random_diffusion",
     normalisation=False,
+    max_steps=30,
 ):
     """ """
     place_direction2idx = {_pd: i for i, _pd in enumerate(mr.get_maze_place_direction_pairs(session.simple_maze()))}
-    trajectories_df = get_synthetic_behaviour(session, policy)
+    trajectories_df = get_synthetic_behaviour(session, policy, max_steps)
     trajectories_df = trajectories_df[(trajectories_df.trial_phase == "navigation")]
     trajectories_df = trajectories_df[(trajectories_df.maze_position.notnull())]
     trajectories_df = trajectories_df[(trajectories_df.action.notnull())]
