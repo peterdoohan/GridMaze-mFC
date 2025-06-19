@@ -46,41 +46,6 @@ DATA_FILTER_KWARGS = {
 # %% Within-Between subject control
 
 
-def test_within_across_subject_ve(maze="maze_2", demean=True, norm_length=True):
-    """
-    Null results
-    """
-    results = []
-    for neurons_subject in SUBJECT_IDS:
-        for behaviour_subject in SUBJECT_IDS:
-            print(neurons_subject, behaviour_subject)
-            neuron_sessions = get_analysis_sessions(neurons_subject, maze)
-            behaviour_sessions = get_analysis_sessions(behaviour_subject, maze)
-            neurons = _get_neural_tuning(neuron_sessions)
-            # fill missing neural values with mean
-            neurons = neurons.apply(lambda row: row.fillna(row.mean()), axis=1)
-            N = neurons.values
-            other_subject_behaviour = _get_behavioural_sequences(behaviour_sessions)
-            B = other_subject_behaviour.values
-            if demean:
-                B, N = [arr - arr.mean(-1, keepdims=True) for arr in [B, N]]
-            if norm_length:
-                B, N = [arr / np.linalg.norm(arr, axis=1, keepdims=True) for arr in [B, N]]
-            cum_ve = get_svd_variance_explained(N, B)
-            auc = cum_ve.sum()  # area under the curve
-            results.append({"neurons_subject": neurons_subject, "behaviour_subject": behaviour_subject, "auc": auc})
-    # plotting
-    results_df = pd.DataFrame(results)
-    within_subject = results_df[results_df.neurons_subject == results_df.behaviour_subject].auc
-    between_subject = (
-        results_df[results_df.neurons_subject != results_df.behaviour_subject].groupby("neurons_subject").auc.mean()
-    )
-    diff = within_subject.values - between_subject.values
-    t, p = ttest_1samp(diff, 0)
-    print(f"t: {t}, p: {p}")
-    return (results_df,)
-
-
 # %% Null vs subject behaviour 2
 
 
@@ -141,7 +106,7 @@ def get_neural_variance_explained_by_behaviour(
     # get input data
     if verbose:
         print("Loading input data...")
-    subject2split_data = get_input_data(
+    subject2split_data = get_null_behaviour_input_data(
         maze_name=maze_name,
         n_splits=n_splits,
         test_size=test_size,
@@ -218,7 +183,9 @@ def _norm_length(X):
     return X / np.linalg.norm(X, axis=1, keepdims=True)
 
 
-def get_input_data(maze_name, n_splits=5, test_size=0.5, late=False, max_steps_to_goal=30, verbose=False):
+def get_null_behaviour_input_data(
+    maze_name, n_splits=5, test_size=0.5, late=False, max_steps_to_goal=30, verbose=False
+):
     """
     should avoid data regeneeration when making per subject Xval splits but not sure if this is overkill
     """
