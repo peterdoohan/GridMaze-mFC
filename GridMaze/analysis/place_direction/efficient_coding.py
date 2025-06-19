@@ -4,10 +4,14 @@ Library for the analysis of neural tuning to place_direction explaining low dime
 
 # %% Imports
 import json
+import joblib
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
+from py import process
 from sklearn.utils import resample
+import test
+from torch import ne
 
 from GridMaze.analysis.core import get_sessions as gs
 
@@ -138,6 +142,7 @@ def plot_neural_variance_explained_by_behaviour(results_df, ax=None):
     ax.set_yticks(range(len(conditions)), conditions)
     ax.invert_yaxis()
     ax.set_xlim(0.5, 0.8)
+    ax.set_xlabel("AUC of cumulative variance explained")
     return
 
 
@@ -318,6 +323,174 @@ def get_input_data(
             split2data[i] = split_data
         subject2split_data[subject] = split2data
     return subject2split_data
+
+
+# %%
+
+
+def plot_neural_behaviour_variance_explained(results_df, explaining="neurons", colors=["red", "blue"], ax=None):
+    """ """
+    # process data
+    n_components = results_df.component.max()
+    df = results_df.groupby(["resample", "component"]).mean()  # average over splits
+    if explaining == "neurons":
+        conditions = ["N_explains_N", "B_explains_N"]
+    elif explaining == "behaviour":
+        conditions = ["B_explains_B", "N_explains_B"]
+    else:
+        raise ValueError(f"explaining must be one of ['neurons', 'behaviour'], got {explaining}")
+    # plot
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(3, 3), clear=True)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.plot([0, n_components], [0, 1], color="black", ls="--", alpha=0.5)  # baseline
+    ax.set_xlabel("n components")
+    ax.set_ylabel("Cum. var exp")
+    for cond, color in zip(conditions, colors):
+        _df = df[cond].unstack()
+        c = _df.columns.values
+        mean = _df.mean()
+        lower = _df.quantile(0.025)
+        upper = _df.quantile(0.975)
+        ax.plot(c, mean, label=cond, color=color)
+        ax.fill_between(c, lower, upper, color=color, alpha=0.3)
+    ax.legend(fontsize="xx-small")
+
+
+def get_neural_behaviour_variance_explained(
+    input_data,
+    maze_name,
+    cv=True,
+    test_size=0.5,
+    late_sessions=False,
+    max_steps_to_goal=30,
+    n_resamples=100,
+    n_splits=5,
+    demean=False,
+    norm_length=True,
+    verbose=True,
+    max_jobs=20,
+    force_save=False,
+):
+    """ """
+    save_path = RESULTS_DIR / f"neural_behaviour_variance_explained_{maze_name}.csv"
+    if save_path.exists() and not force_save:
+        if verbose:
+            print(f"Loading existing results from {save_path}")
+        return pd.read_csv(save_path, index_col=0)
+    if verbose:
+        print("Loading input data...")
+    input_data = get_input_data(
+        maze_name=maze_name,
+        n_splits=n_splits,
+        test_size=test_size,
+        late=late_sessions,
+        max_steps_to_goal=max_steps_to_goal,
+        verbose=verbose,
+    )
+    process_fn = _process_resample_cv if cv else _process_resample_no_cv
+    all_results = joblib.Parallel(n_jobs=max_jobs)(
+        delayed(process_fn)(input_data, n, n_splits, test_size, demean, norm_length, verbose)
+        for n in range(n_resamples)
+    )
+    results_df = pd.concat(all_results, axis=0)
+    # save results
+    results_df.to_csv(save_path)
+    if verbose:
+        print(f"Results saved to {save_path}")
+    return results_df
+
+
+def _process_resample_no_cv(input_data, n, n_splits, test_size, demean, norm_length, verbose):
+    """ """
+    if verbose:
+        print(f"resample: {n}")
+    sampled_subjects = np.random.choice(SUBJECT_IDS, size=len(SUBJECT_IDS), replace=True)
+    resample_results = []
+    for i in range(n_splits):
+        neurons = pd.concat(
+            [input_data[subject][i]["neural_data"][t] for t in ["train", "test"] for subject in sampled_subjects],
+            axis=0,
+        )
+        # subsample to match cv split
+        neurons = neurons.sample(int(neurons.shape[0] * test_size), replace=False)
+        neurons = neurons.values
+        behaviour = pd.concat(
+            [input_data[subject][i]["true_behaviour"][t] for t in ["train", "test"] for subject in sampled_subjects],
+            axis=0,
+        )
+        # subsample to match cv split
+        behaviour = behaviour.sample(int(behaviour.shape[0] * test_size), replace=False)
+        behaviour = behaviour.values
+        if demean:
+            neurons, behaviour = [_demean(arr) for arr in [neurons, behaviour]]
+        if norm_length:
+            neurons, behaviour = [_norm_length(arr) for arr in [neurons, behaviour]]
+        # calculate variance explained
+        conditions = ["N_explains_N", "B_explains_N", "B_explains_B", "N_explains_B"]
+        df = pd.DataFrame(index=range(neurons.shape[1] + 1), columns=conditions)
+        for label, (A, B) in zip(
+            conditions,
+            [
+                (neurons, neurons),
+                (behaviour, neurons),
+                (behaviour, behaviour),
+                (neurons, behaviour),
+            ],
+        ):
+            cum_ve = get_pca_variance_explained(A, B)
+            df[label] = cum_ve
+        df["split"] = i
+        df["resample"] = n
+        df.reset_index(inplace=True)
+        df.rename(columns={"index": "component"}, inplace=True)
+        resample_results.append(df)
+    return pd.concat(resample_results, axis=0)
+
+
+def _process_resample_cv(input_data, n, n_splits, test_size, demean, norm_length, verbose):
+    """ """
+    if verbose:
+        print(f"resample: {n}")
+    sampled_subjects = np.random.choice(SUBJECT_IDS, size=len(SUBJECT_IDS), replace=True)
+    resample_results = []
+    for i in range(n_splits):
+        train_neurons, test_neurons = [
+            pd.concat([input_data[subject][i]["neural_data"][t] for subject in sampled_subjects], axis=0)
+            for t in ["train", "test"]
+        ]
+        train_neurons, test_neurons = train_neurons.values, test_neurons.values
+        train_behaviour, test_behaviour = [
+            pd.concat([input_data[subject][i]["true_behaviour"][t] for subject in sampled_subjects], axis=0)
+            for t in ["train", "test"]
+        ]
+        train_behaviour, test_behaviour = train_behaviour.values, test_behaviour.values
+        if demean:
+            train_neurons, test_neurons = [_demean(arr) for arr in [train_neurons, test_neurons]]
+            train_behaviour, test_behaviour = [_demean(arr) for arr in [train_behaviour, test_behaviour]]
+        if norm_length:
+            train_neurons, test_neurons = [_norm_length(arr) for arr in [train_neurons, test_neurons]]
+            train_behaviour, test_behaviour = [_norm_length(arr) for arr in [train_behaviour, test_behaviour]]
+        # calculate variance explained
+        conditions = ["N_explains_N", "B_explains_N", "B_explains_B", "N_explains_B"]
+        df = pd.DataFrame(index=range(test_neurons.shape[1] + 1), columns=conditions)
+        for label, (A, B) in zip(
+            conditions,
+            [
+                (train_neurons, test_neurons),
+                (train_behaviour, test_neurons),
+                (train_behaviour, test_behaviour),
+                (train_neurons, test_behaviour),
+            ],
+        ):
+            cum_ve = get_pca_variance_explained(A, B)
+            df[label] = cum_ve
+        df["split"] = i
+        df["resample"] = n
+        df.reset_index(inplace=True)
+        df.rename(columns={"index": "component"}, inplace=True)
+        resample_results.append(df)
+    return pd.concat(resample_results, axis=0)
 
 
 # %% Variance explained analysis (SVD)
