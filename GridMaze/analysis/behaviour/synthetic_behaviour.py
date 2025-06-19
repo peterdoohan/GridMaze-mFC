@@ -82,10 +82,8 @@ def get_session_synthetic_behavioural_sequences(
 
 
 # %% Core function for generating trajectory_decisions_df-like data structures for synthetic behaviour
-def get_synthetic_behaviour(session, policy="random_diffusion"):
-    """
-    TODO: add vector nav policy option
-    """
+def get_synthetic_behaviour(session, policy="random_diffusion", max_steps=30):
+    """ """
     simple_maze = session.simple_maze()
     extended_simple_maze = mr.get_extended_simple_maze(simple_maze)
     skeleton_maze = session.skeleton_maze()
@@ -99,7 +97,8 @@ def get_synthetic_behaviour(session, policy="random_diffusion"):
     trial_trajectories = []
     for trial in trials:
         trial_df = navigation_df[navigation_df.trial == trial]
-        max_steps = trial_df.steps_to_goal.future.max()
+        if max_steps is None:
+            max_steps = trial_df.steps_to_goal.future.max()
         true_nav_start = trial_df.iloc[0]
         start_loc = true_nav_start[("maze_position", "simple")]
         if len(start_loc.split("-")) == 2:  # edge
@@ -153,6 +152,7 @@ def get_synthetic_behaviour(session, policy="random_diffusion"):
                 coord2label,
                 label2coord,
                 all_path_lengths,
+                max_steps,
             )
         else:
             raise NotImplementedError
@@ -204,6 +204,8 @@ def random_walk(
         previous_location = location
         location = chosen_neighbour
         n_steps += 1
+        if n_steps >= max_steps:
+            break
     trajectory_df = pd.DataFrame(trajectory_dicts)
     trajectory_df["action"] = tdf.get_node_edges_trajectory_actions(trajectory_df, simple_maze)
     return trajectory_df.reset_index(drop=True)
@@ -218,6 +220,7 @@ def optimal(
     coord2label,
     label2coord,
     all_path_length,
+    max_steps,
 ):
     """
     Generates sequences of optimal navigation behaviour by randomly selecting the next node from the
@@ -227,7 +230,10 @@ def optimal(
     goal_coord = label2coord[goal]
     location = label2coord[start_loc]
     trajectory_dicts = [{"trial": trial, "goal": goal, "maze_position": start_loc}]
+    n_steps = 0
     while location != goal_coord:
+        if n_steps >= max_steps:
+            break
         neighbours = list(extended_simple_maze.neighbors(location))
         path_lengths = np.array([all_path_length[n][goal_coord] for n in neighbours])
         min_indices = np.argwhere(path_lengths == np.min(path_lengths)).flatten()
@@ -240,6 +246,7 @@ def optimal(
             }
         )
         location = chosen_neighbour
+        n_steps += 1
     trajectory_df = pd.DataFrame(trajectory_dicts)
     trajectory_df["action"] = tdf.get_node_edges_trajectory_actions(trajectory_df, simple_maze)
     return trajectory_df.reset_index(drop=True)

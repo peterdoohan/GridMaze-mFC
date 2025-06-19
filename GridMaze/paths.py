@@ -5,18 +5,6 @@ from pathlib import Path
 
 # %% Define paths
 
-# MOUNTED_DATA_PATH = Path("/Volumes/behrens/peter_doohan/goalNav_mFC/experiment/data")
-# RELATIVE_DATA_PATH = Path("../data")
-# if MOUNTED_DATA_PATH.exists():
-#     DATA_PATH = MOUNTED_DATA_PATH
-# else:
-#     if RELATIVE_DATA_PATH.exists():
-#         DATA_PATH = RELATIVE_DATA_PATH
-#     else:
-#         raise FileNotFoundError(
-#             "Raw data directory not found. Check Ceph drive is mounted if working locally. Check relative path is available if working on HPC."
-#         )
-
 DATA_PATH = Path("/ceph/behrens/peter_doohan/goalNav_mFC/experiment/data")
 
 RAW_DATA_PATH = DATA_PATH / "raw_data"
