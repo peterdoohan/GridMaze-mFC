@@ -83,6 +83,7 @@ def get_population_place_direction_tuning(
     fill_nans="mean",
     normalisation="length",
     min_split_corr=0.5,
+    max_steps_to_goal=30,
     verbose=False,
 ):
     """ """
@@ -112,6 +113,7 @@ def get_population_place_direction_tuning(
             fill_nans=fill_nans,
             normalisation=normalisation,
             min_split_corr=min_split_corr,
+            max_steps_from_goal=max_steps_to_goal,
         )
         if df is None:
             continue  # not pd tuned clusters

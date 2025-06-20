@@ -8,14 +8,9 @@ import joblib
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
-from py import process
-from sklearn.utils import resample
-import test
-from torch import ne
 
 from GridMaze.analysis.core import get_sessions as gs
 
-from GridMaze.analysis.behaviour import synthetic_behaviour as sb
 from GridMaze.analysis.place_direction import dimensionality_reduction as pdr
 from GridMaze.analysis.behaviour import dimensionality_reduction as bdr
 from GridMaze.analysis.behaviour import synthetic_behaviour as sb
@@ -326,6 +321,81 @@ def get_input_data(
 
 
 # %%
+def get_input_data2(
+    maze_name,
+    with_synthetic_behaviour=True,
+    late=False,
+    max_steps_to_goal=30,
+    min_split_half_corr=0.3,
+    verbose=False,
+):
+    """
+    similar to above but with CV across neurons only,
+    behaviour is already basically CV from neurons
+    """
+    days_on_maze = "late" if late == True else "all"
+    all_data = {}
+    for subject in SUBJECT_IDS:
+        if verbose:
+            print(subject)
+        subject2data = {}
+        sessions = gs.get_maze_sessions(
+            subject_IDs=[subject],
+            maze_names=[maze_name],
+            days_on_maze=days_on_maze,
+            with_data=[
+                "navigation_df",
+                "navigation_spike_rates_df",
+                "trajectory_decisions_df",
+                "cluster_metrics",
+                "cluster_place_direction_tuning_metrics",
+            ],
+        )
+        subject2data["neural_data"] = pdr.get_population_place_direction_tuning(
+            sessions=sessions,
+            fill_nans="mean",
+            normalisation=False,
+            min_split_corr=min_split_half_corr,
+            max_steps_to_goal=max_steps_to_goal,
+        )
+        subject2data["true_behaviour"] = bdr.get_maze_behavioural_sequences_df(
+            sessions=sessions,
+            normalisation=False,
+            max_steps_to_goal=max_steps_to_goal,
+        )
+        if with_synthetic_behaviour:
+            for policy in ["random_diffusion", "forward_diffusion", "vector", "optimal"]:
+                subject2data[policy] = sb.get_synthetic_maze_behavioural_sequences_df(
+                    policy=policy,
+                    sessions=sessions,
+                    normalisation=False,
+                    max_steps=max_steps_to_goal,
+                )
+        all_data[subject] = subject2data
+    return all_data
+
+
+def test2(
+    input_data,
+    cv=True,
+    n_split=5,
+    test_size=0.1,
+    n_resamples=10,
+    demean=False,
+    norm_length=True,
+    verbose=True,
+    max_jobs=20,
+):
+    """"""
+    for n in range(n_resamples):
+        sampled_subjects = np.random.choice(SUBJECT_IDS, size=len(SUBJECT_IDS), replace=True)
+        neurons = pd.concat([input_data[subject]["neural_data"] for subject in sampled_subjects])
+        behaviour = pd.concat([input_data[subject]["true_behaviour"] for subject in sampled_subjects])
+
+    return
+
+
+# %%
 
 
 def plot_neural_behaviour_variance_explained(results_df, explaining="neurons", colors=["red", "blue"], ax=None):
@@ -373,21 +443,21 @@ def get_neural_behaviour_variance_explained(
     force_save=False,
 ):
     """ """
-    save_path = RESULTS_DIR / f"neural_behaviour_variance_explained_{maze_name}.csv"
-    if save_path.exists() and not force_save:
-        if verbose:
-            print(f"Loading existing results from {save_path}")
-        return pd.read_csv(save_path, index_col=0)
-    if verbose:
-        print("Loading input data...")
-    input_data = get_input_data(
-        maze_name=maze_name,
-        n_splits=n_splits,
-        test_size=test_size,
-        late=late_sessions,
-        max_steps_to_goal=max_steps_to_goal,
-        verbose=verbose,
-    )
+    # save_path = RESULTS_DIR / f"neural_behaviour_variance_explained_{maze_name}.csv"
+    # if save_path.exists() and not force_save:
+    #     if verbose:
+    #         print(f"Loading existing results from {save_path}")
+    #     return pd.read_csv(save_path, index_col=0)
+    # if verbose:
+    #     print("Loading input data...")
+    # input_data = get_input_data(
+    #     maze_name=maze_name,
+    #     n_splits=n_splits,
+    #     test_size=test_size,
+    #     late=late_sessions,
+    #     max_steps_to_goal=max_steps_to_goal,
+    #     verbose=verbose,
+    # )
     process_fn = _process_resample_cv if cv else _process_resample_no_cv
     all_results = joblib.Parallel(n_jobs=max_jobs)(
         delayed(process_fn)(input_data, n, n_splits, test_size, demean, norm_length, verbose)
@@ -395,9 +465,9 @@ def get_neural_behaviour_variance_explained(
     )
     results_df = pd.concat(all_results, axis=0)
     # save results
-    results_df.to_csv(save_path)
-    if verbose:
-        print(f"Results saved to {save_path}")
+    # results_df.to_csv(save_path)
+    # if verbose:
+    #     print(f"Results saved to {save_path}")
     return results_df
 
 
