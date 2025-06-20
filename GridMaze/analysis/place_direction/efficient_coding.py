@@ -300,6 +300,11 @@ def get_input_data(
             subject_data[session.name] = session_data
         all_data[subject] = subject_data
         subject2session_names[subject] = session_names
+    # remove session_names for the pool that have no data
+    for subject in SUBJECT_IDS:
+        session_names = subject2session_names[subject]
+        session_names = [sn for sn in session_names if all_data[subject][sn] is not None]
+        subject2session_names[subject] = session_names
     # combine data per subject across Xvaled splits
     if verbose:
         print("Sorting data into CV splits...")
@@ -367,7 +372,7 @@ def get_neural_behaviour_variance_explained(
     n_splits=5,
     late_sessions=False,
     max_steps_to_goal=30,
-    n_resamples=100,
+    n_resamples=500,
     demean=False,
     norm_length=True,
     verbose=True,

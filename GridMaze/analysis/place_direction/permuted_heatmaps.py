@@ -175,7 +175,7 @@ def get_input_data(
     n_permutations=100,
     late=False,
     max_steps_to_goal=30,
-    min_split_corr=0.5,
+    min_split_corr=0.3,
     verbose=False,
 ):
     """ """
@@ -214,6 +214,12 @@ def get_input_data(
             )
         subject2session_names[subject] = session_names
         all_data[subject] = subject_data
+    # remove session_names for the pool that have no data
+    for subject in SUBJECT_IDS:
+        session_names = subject2session_names[subject]
+        session_names = [sn for sn in session_names if all_data[subject][sn] is not None]
+        subject2session_names[subject] = session_names
+    # organise data into CV splits
     subject2split_data = {}
     ss = ShuffleSplit(n_splits=n_splits, test_size=test_size, random_state=0)
     for subject in SUBJECT_IDS:
