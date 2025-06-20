@@ -141,28 +141,32 @@ def plot_neural_variance_explained_by_behaviour(results_df, ax=None):
     return
 
 
-def get_neural_variance_explained_by_behaviour(
+def get_neural_variance_explained_by_synthetic_behaviour(
     maze_name,
     late_sessions=False,  # need as much data as possible with CV approach
     n_splits=5,
-    test_size=0.5,
+    test_size=0.1,
     max_steps_to_goal=30,
     demean=False,
     norm_length=True,
     n_resamples=500,
     verbose=True,
     max_jobs=20,
+    save=False,
 ):
     """
     Similar to original version but with bootstrap resample across subjects, still with X val
     just interested in differences between how well real behaviour explains neurons and how well synthetic
     behaviour explains neurons.
     """
-    save_path = RESULTS_DIR / f"neurons_explained_by_behaviour_{maze_name}.csv"
-    if save_path.exists():
+    auc_save_path = RESULTS_DIR / "synthetic_behaviour" / f"{maze_name}_auc_results.parquet"
+    ve_save_path = RESULTS_DIR / "synthetic_behaviour" / f"{maze_name}_ve_results.parquet"
+    if not save and auc_save_path.exists() and ve_save_path.exists():
         if verbose:
-            print(f"Loading existing results from {save_path}")
-        return pd.read_csv(save_path, index_col=0)
+            print(f"Loading data from disk...")
+        auc_df = pd.read_parquet(auc_save_path)
+        ve_df = pd.read_parquet(ve_save_path)
+        return auc_df, ve_df
     # get input data
     if verbose:
         print("Loading input data...")
@@ -183,23 +187,27 @@ def get_neural_variance_explained_by_behaviour(
         "optimal",
     ]
     # proceses results across bootstrap resamples across subjects
-    resampled_results = Parallel(n_jobs=max_jobs)(
+    results_dfs = Parallel(n_jobs=max_jobs)(
         delayed(_process_resample)(subject2split_data, data_types, n, n_splits, demean, norm_length, verbose)
         for n in range(n_resamples)
     )
-    results_df = pd.concat(resampled_results, axis=0)
-    # save results
-    results_df.to_csv(save_path)
-    if verbose:
-        print(f"Results saved to {save_path}")
-    return results_df
+    auc_results_df = pd.concat([df[0] for df in results_dfs], axis=0)
+    ve_results_df = pd.concat([df[1] for df in results_dfs], axis=0)
+    if save:
+        if verbose:
+            print("saving results to disk...")
+        auc_save_path.parent.mkdir(parents=True, exist_ok=True)
+        ve_save_path.parent.mkdir(parents=True, exist_ok=True)
+        auc_results_df.to_parquet(auc_save_path)
+        ve_results_df.to_parquet(ve_save_path)
+    return auc_results_df, ve_results_df
 
 
 def _process_resample(subject2split_data, data_types, n, n_splits, demean, norm_length, verbose):
     if verbose:
         print(f"resample: {n}")
     sampled_subjects = np.random.choice(SUBJECT_IDS, size=len(SUBJECT_IDS), replace=True)
-    resample_results = []
+    auc_results, ve_results = [], []
     for i in range(n_splits):
         data_type2train_dfs = {data_type: [] for data_type in data_types}
         data_type2test_dfs = {data_type: [] for data_type in data_types}
@@ -211,7 +219,7 @@ def _process_resample(subject2split_data, data_types, n, n_splits, demean, norm_
         train_data2df = {data_type: pd.concat(data_type2train_dfs[data_type], axis=0) for data_type in data_types}
         test_data2df = {data_type: pd.concat(data_type2test_dfs[data_type], axis=0) for data_type in data_types}
         # calculate variance explained
-        split_results = {}
+        split_auc_results = {}
         # explain var in test neural data with...
         neural_test = test_data2df["neural_data"].values
         if demean:
@@ -219,6 +227,8 @@ def _process_resample(subject2split_data, data_types, n, n_splits, demean, norm_
         if norm_length:
             neural_test = _norm_length(neural_test)
         # each data type
+        ve_df = pd.DataFrame(index=range(neural_test.shape[1] + 1), columns=data_types)
+        ve_df["component"] = np.arange(neural_test.shape[1] + 1)
         for data_type in data_types:
             d_train = train_data2df[data_type].values
             if demean:
@@ -226,13 +236,21 @@ def _process_resample(subject2split_data, data_types, n, n_splits, demean, norm_
             if norm_length:
                 d_train = _norm_length(d_train)
             cumsum_ve = get_pca_variance_explained(d_train, neural_test)
+            if len(cumsum_ve) < neural_test.shape[1] + 1:
+                cumsum_ve = np.concatenate((cumsum_ve, np.ones(neural_test.shape[1] + 1 - len(cumsum_ve))))
+            ve_df[data_type] = cumsum_ve
             auc = np.trapz(cumsum_ve, dx=1 / len(cumsum_ve))
-            split_results[data_type] = auc
-        split_results["split"] = i
-        resample_results.append(split_results)
-    df = pd.DataFrame(resample_results)
-    df["resample"] = n
-    return df
+            split_auc_results[data_type] = auc
+        split_auc_results["split"] = i
+        split_auc_results["resample"] = n
+        auc_results.append(split_auc_results)
+        ve_df["split"] = i
+        ve_df["resample"] = n
+        ve_results.append(ve_df)
+    # combine results
+    auc_df = pd.DataFrame(auc_results)
+    ve_df = pd.concat(ve_results, axis=0)
+    return [auc_df, ve_df]
 
 
 def _demean(X):
@@ -247,10 +265,10 @@ def get_input_data(
     maze_name,
     with_synthetic_behaviour=True,
     n_splits=5,
-    test_size=0.5,
+    test_size=0.1,
     late=False,
     max_steps_to_goal=30,
-    min_split_corr=0.5,
+    min_split_corr=0.3,
     verbose=False,
 ):
     """
@@ -368,8 +386,8 @@ def get_neural_behaviour_variance_explained(
     maze_name,
     input_data=None,
     cv=True,
-    test_size=0.1,
     n_splits=5,
+    test_size=0.1,
     late_sessions=False,
     max_steps_to_goal=30,
     n_resamples=500,
@@ -377,14 +395,14 @@ def get_neural_behaviour_variance_explained(
     norm_length=True,
     verbose=True,
     max_jobs=20,
-    force_save=False,
+    save=False,
 ):
     """ """
-    save_path = RESULTS_DIR / f"neural_behaviour_variance_explained_{maze_name}.csv"
-    if save_path.exists() and not force_save:
+    save_path = RESULTS_DIR / "behaviour_explains_neurons" / f"{maze_name}_ve_results.parquet"
+    if not save and save_path.exists():
         if verbose:
             print(f"Loading existing results from {save_path}")
-        return pd.read_csv(save_path, index_col=0)
+        return pd.read_parquet(save_path)
     if verbose:
         print("Loading input data...")
     if input_data is None:
