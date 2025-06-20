@@ -361,6 +361,7 @@ def plot_neural_behaviour_variance_explained(results_df, explaining="neurons", c
 
 def get_neural_behaviour_variance_explained(
     maze_name,
+    input_data=None,
     cv=True,
     test_size=0.1,
     n_splits=5,
@@ -381,14 +382,16 @@ def get_neural_behaviour_variance_explained(
         return pd.read_csv(save_path, index_col=0)
     if verbose:
         print("Loading input data...")
-    input_data = get_input_data(
-        maze_name=maze_name,
-        n_splits=n_splits,
-        test_size=test_size,
-        late=late_sessions,
-        max_steps_to_goal=max_steps_to_goal,
-        verbose=verbose,
-    )
+    if input_data is None:
+        input_data = get_input_data(
+            maze_name=maze_name,
+            with_synthetic_behaviour=False,
+            n_splits=n_splits,
+            test_size=test_size,
+            late=late_sessions,
+            max_steps_to_goal=max_steps_to_goal,
+            verbose=verbose,
+        )
     process_fn = _process_resample_cv if cv else _process_resample_no_cv
     all_results = joblib.Parallel(n_jobs=max_jobs)(
         delayed(process_fn)(input_data, n, n_splits, test_size, demean, norm_length, verbose)
@@ -485,6 +488,8 @@ def _process_resample_cv(input_data, n, n_splits, test_size, demean, norm_length
             ],
         ):
             cum_ve = get_pca_variance_explained(A, B)
+            if len(cum_ve) < test_neurons.shape[1] + 1:
+                cum_ve = np.concatenate((cum_ve, np.ones(test_neurons.shape[1] + 1 - len(cum_ve))))
             df[label] = cum_ve
         df["split"] = i
         df["resample"] = n
@@ -492,93 +497,6 @@ def _process_resample_cv(input_data, n, n_splits, test_size, demean, norm_length
         df.rename(columns={"index": "component"}, inplace=True)
         resample_results.append(df)
     return pd.concat(resample_results, axis=0)
-
-
-# %% Variance explained analysis (SVD)
-
-
-def run_neuron_to_behaviour_variance_explained_analysis(
-    X, ve_method="pca", demean=(False, False), norm_length=(True, True), plot=True
-):
-    """
-    X[0].keys = ["neurons, "behaviour]
-    demean[0]: bool, demean neural data
-    demean[1]: bool, demean behaviour data
-    norm_length[0]: bool, normalise length of neural data
-    norm_length[1]: bool, normalise length of behaviour data
-
-    Note neural data in X already has nans filled with mean from fn: get_population_place_direction_tuning
-    """
-    if ve_method == "pca":
-        ve_fn = get_pca_variance_explained
-    elif ve_method == "svd":
-        ve_fn = get_svd_variance_explained
-    else:
-        raise NotImplementedError(f"ve_method {ve_method} not recognised")
-    n_components = X[0]["neurons"]["train"].shape[-1]
-    results = np.zeros((len(X), 4, n_components + 1))  # [n_splits, 4, n_components]
-    for i, data in enumerate(X):
-        # neural and behavioural data
-        train_neurons, test_neurons = data["neurons"]["train"].values, data["neurons"]["test"].values
-        train_behaviour, test_behaviour = data["behaviour"]["train"].values, data["behaviour"]["test"].values
-        # demean
-        data = []
-        for (test, train), _demean in zip([(test_neurons, train_neurons), (test_behaviour, train_behaviour)], demean):
-            if _demean:
-                test, train = [arr - arr.mean(-1, keepdims=True) for arr in [test, train]]
-            data.append(test)
-            data.append(train)
-        test_neurons, train_neurons, test_behaviour, train_behaviour = data
-        # normalise length
-        data = []
-        for (test, train), _norm_length in zip(
-            [(test_neurons, train_neurons), (test_behaviour, train_behaviour)], norm_length
-        ):
-            if _norm_length:
-                test, train = [arr / np.linalg.norm(arr, axis=1, keepdims=True) for arr in [test, train]]
-            data.append(test)
-            data.append(train)
-        test_neurons, train_neurons, test_behaviour, train_behaviour = data
-        # calculate variance explained
-        beb = ve_fn(train_behaviour, test_behaviour)
-        nen = ve_fn(train_neurons, test_neurons)
-        ben = ve_fn(train_behaviour, test_neurons)
-        neb = ve_fn(train_neurons, test_behaviour)
-        results[i] = np.array([beb, nen, ben, neb])
-    # plotting (make pretty later)
-    if plot:
-        f, axes = plt.subplots(1, 2, figsize=(5, 3), clear=True, sharex=True, sharey=True)
-        for ax in axes.flatten():
-            ax.spines[["top", "right"]].set_visible(False)
-            ax.plot([0, n_components], [0, 1], color="black", ls="--")
-        # behaviour explains plot
-        beb_mean = results[:, 0].mean(axis=0)
-        beb_sem = results[:, 0].std(axis=0) / np.sqrt(results.shape[0])
-        axes[0].plot(beb_mean, label="Behaviour", color="blue")
-        axes[0].fill_between(range(len(beb_mean)), beb_mean - beb_sem, beb_mean + beb_sem, color="blue", alpha=0.3)
-        neb_mean = results[:, 3].mean(axis=0)
-        neb_sem = results[:, 3].std(axis=0) / np.sqrt(results.shape[0])
-        axes[0].plot(neb_mean, label="Neurons", color="red")
-        axes[0].fill_between(range(len(neb_mean)), neb_mean - neb_sem, neb_mean + neb_sem, color="red", alpha=0.3)
-        axes[0].set_xlabel("Number of components")
-        axes[0].set_ylabel("Cum. var exp")
-        axes[0].set_title("Behaviour explained by")
-        axes[0].legend(fontsize="xx-small")
-        # neurons explains plot
-        nen_mean = results[:, 1].mean(axis=0)
-        nen_sem = results[:, 1].std(axis=0) / np.sqrt(results.shape[0])
-        axes[1].plot(nen_mean, label="Neurons", color="red")
-        axes[1].fill_between(range(len(nen_mean)), nen_mean - nen_sem, nen_mean + nen_sem, color="red", alpha=0.3)
-        ben_mean = results[:, 2].mean(axis=0)
-        ben_sem = results[:, 2].std(axis=0) / np.sqrt(results.shape[0])
-        axes[1].plot(ben_mean, label="Behaviour", color="blue")
-        axes[1].fill_between(range(len(ben_mean)), ben_mean - ben_sem, ben_mean + ben_sem, color="blue", alpha=0.3)
-        axes[1].legend(fontsize="xx-small")
-        axes[1].set_xlabel("Number of components")
-        axes[1].set_title("Neurons explained by")
-        f.tight_layout()
-        f.subplots_adjust(wspace=0.8)
-    return results
 
 
 def get_svd_variance_explained(A, B, pad=False):  # A & B: [n_samples, n_features]
@@ -603,76 +521,3 @@ def get_pca_variance_explained(A, B):  # A & B: [n_samples, n_features]
     pc_exp_var = np.square(M).sum(axis=0)
     cumsum_exp_var = np.cumsum(pc_exp_var) / pc_exp_var.sum()
     return np.concatenate(([0], cumsum_exp_var))
-
-
-# %% Main input data function
-
-
-def get_joint_neural_behaviour_place_direction_dfs(sessions, n_splits=5, test_size=0.2, synthetic_behaviour=False):
-    """
-    synthetic_behaviour in [False, "random_diffusion", "forward_diffusion", "vector", "optimal"]
-    """
-    split_sessions = _get_session_splits(sessions, n_splits, test_size)
-    X = []
-    for train_sessions, test_sessions in split_sessions:
-        split_data = {}
-        split_data["neurons"] = {  # df [n_neurons, n_place_directions]
-            "train": pdr.get_population_place_direction_tuning(
-                sessions=train_sessions, fill_nans="mean", normalisation=False
-            ),
-            "test": pdr.get_population_place_direction_tuning(
-                sessions=test_sessions, fill_nans="mean", normalisation=False
-            ),
-        }
-
-        if not synthetic_behaviour:
-            split_data["behaviour"] = {  # df [n_trials, n_place_directions]
-                "train": bdr.get_maze_behavioural_sequences_df(sessions=train_sessions),
-                "test": bdr.get_maze_behavioural_sequences_df(sessions=test_sessions),
-            }
-
-        else:
-            policy = synthetic_behaviour
-            split_data["behaviour"] = {  # df [n_trials, n_place_directions]
-                "train": sb.get_synthetic_maze_behavioural_sequences_df(
-                    policy=policy,
-                    sessions=train_sessions,
-                ),
-                "test": sb.get_synthetic_maze_behavioural_sequences_df(
-                    policy=policy,
-                    sessions=test_sessions,
-                ),
-            }
-        X.append(split_data)
-    return X
-
-
-def _get_session_splits(sessions, n_splits, test_size):
-    """ """
-    ss = ShuffleSplit(n_splits=n_splits, test_size=test_size, random_state=0)
-    _sessions = np.array(sessions)
-    # Generate the splits
-    splits = []
-    for train_index, test_index in ss.split(_sessions):
-        train, test = _sessions[train_index], _sessions[test_index]
-        splits.append((train, test))
-    return splits
-
-
-def get_analysis_sessions(subject, maze, late=True):
-    """ """
-    subject = [subject] if not subject == "all" else subject
-    days_on_maze = "late" if late == True else "all"
-    sessions = gs.get_maze_sessions(
-        subject_IDs=subject,
-        maze_names=[maze],
-        days_on_maze=days_on_maze,
-        with_data=[
-            "navigation_df",
-            "navigation_spike_rates_df",
-            "trajectory_decisions_df",
-            "cluster_metrics",
-            "cluster_place_direction_tuning_metrics",
-        ],
-    )
-    return sessions

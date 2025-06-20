@@ -172,6 +172,124 @@ def _process_resample(subject_data, n_splits, test_size, demean, norm_length, n_
     return pd.DataFrame(split_results)
 
 
+def test(
+    maze_name,
+    n_splits=5,
+    test_size=0.2,
+    n_resamples=500,
+    n_permutations=100,
+    min_split_corr=0.5,
+    late_sessions=False,
+    demean=False,
+    norm_length=True,
+    max_jobs=5,
+    verbose=False,
+):
+    """ """
+    if verbose:
+        print("loading_input_data...")
+    input_data = get_input_data(
+        maze_name=maze_name,
+        n_splits=n_splits,  # no need for splits here
+        test_size=test_size,
+        n_permutations=n_permutations,
+        late=late_sessions,
+        min_split_corr=min_split_corr,
+        verbose=verbose,
+    )
+    result_dfs = []
+    for n in range(n_resamples):
+        split_results = []
+        sampled_subjects = np.random.choice(SUBJECT_IDS, size=len(SUBJECT_IDS), replace=True)
+        for i in range(n_splits):
+            true_train = pd.concat(
+                [input_data[subject][i]["true"]["train"] for subject in sampled_subjects], axis=0
+            ).values
+            true_test = pd.concat(
+                [input_data[subject][i]["true"]["test"] for subject in sampled_subjects], axis=0
+            ).values
+            perm_train_df = pd.concat(
+                [input_data[subject][i]["permuted"]["train"] for subject in sampled_subjects], axis=0
+            ).droplevel(1)
+            perm_test_df = pd.concat(
+                [input_data[subject][i]["permuted"]["test"] for subject in sampled_subjects], axis=0
+            ).droplevel(1)
+            if demean:
+                true_train, true_test = ec._demean(true_train), ec._demean(true_test)
+            if norm_length:
+                true_train, true_test = ec._norm_length(true_train), ec._norm_length(true_test)
+            # get variance explained for true and permuted data
+            true_cum_ve = ec.get_pca_variance_explained(true_train, true_test)
+            true_auc = np.trapz(true_cum_ve, dx=1 / len(true_cum_ve))
+            perm_train_df, perm_test_df = perm_train_df.swaplevel(), perm_test_df.swaplevel()
+            perm_aucs = []
+            for j in range(n_permutations):
+                _perm_train = perm_train_df.loc[j].values
+                _perm_test = perm_test_df.loc[j].values
+                if demean:
+                    _perm_train, _perm_test = ec._demean(_perm_train), ec._demean(_perm_test)
+                if norm_length:
+                    _perm_train, _perm_test = ec._norm_length(_perm_train), ec._norm_length(_perm_test)
+                permuted_cum_ve = ec.get_pca_variance_explained(_perm_train, _perm_test)
+                perm_auc = np.trapz(permuted_cum_ve, dx=1 / len(permuted_cum_ve))
+                perm_aucs.append(perm_auc)
+            mean_perm_auc = np.mean(perm_aucs)
+            split_results.append(
+                {
+                    "split": i,
+                    "resample": n,
+                    "true_auc": true_auc,
+                    "permuted_auc": mean_perm_auc,
+                }
+            )
+        result_dfs.append(pd.DataFrame(split_results))
+    return
+
+
+def _process_reamples2(input_data, n_splits, n_permutations, demean, norm_length, n):
+    """ """
+    split_results = []
+    sampled_subjects = np.random.choice(SUBJECT_IDS, size=len(SUBJECT_IDS), replace=True)
+    for i in range(n_splits):
+        true_train = pd.concat([input_data[subject][i]["true"]["train"] for subject in sampled_subjects], axis=0).values
+        true_test = pd.concat([input_data[subject][i]["true"]["test"] for subject in sampled_subjects], axis=0).values
+        perm_train_df = pd.concat(
+            [input_data[subject][i]["permuted"]["train"] for subject in sampled_subjects], axis=0
+        ).droplevel(1)
+        perm_test_df = pd.concat(
+            [input_data[subject][i]["permuted"]["test"] for subject in sampled_subjects], axis=0
+        ).droplevel(1)
+        if demean:
+            true_train, true_test = ec._demean(true_train), ec._demean(true_test)
+        if norm_length:
+            true_train, true_test = ec._norm_length(true_train), ec._norm_length(true_test)
+        # get variance explained for true and permuted data
+        true_cum_ve = ec.get_pca_variance_explained(true_train, true_test)
+        true_auc = np.trapz(true_cum_ve, dx=1 / len(true_cum_ve))
+        perm_train_df, perm_test_df = perm_train_df.swaplevel(), perm_test_df.swaplevel()
+        perm_aucs = []
+        for j in range(n_permutations):
+            _perm_train = perm_train_df.loc[j].values
+            _perm_test = perm_test_df.loc[j].values
+            if demean:
+                _perm_train, _perm_test = ec._demean(_perm_train), ec._demean(_perm_test)
+            if norm_length:
+                _perm_train, _perm_test = ec._norm_length(_perm_train), ec._norm_length(_perm_test)
+            permuted_cum_ve = ec.get_pca_variance_explained(_perm_train, _perm_test)
+            perm_auc = np.trapz(permuted_cum_ve, dx=1 / len(permuted_cum_ve))
+            perm_aucs.append(perm_auc)
+        mean_perm_auc = np.mean(perm_aucs)
+        split_results.append(
+            {
+                "split": i,
+                "resample": n,
+                "true_auc": true_auc,
+                "permuted_auc": mean_perm_auc,
+            }
+        )
+    return pd.DataFrame(split_results)
+
+
 def pca_n_components(X, target_variance=0.95):
     """ """
     pca = PCA(random_state=0)
