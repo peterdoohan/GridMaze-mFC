@@ -9,7 +9,6 @@ import numpy as np
 from matplotlib import pyplot as plt
 import seaborn as sns
 from joblib import Parallel, delayed
-from sklearn.decomposition import PCA
 from sklearn.model_selection import ShuffleSplit
 
 from GridMaze.analysis.core import get_sessions as gs
@@ -61,118 +60,7 @@ def plot_true_vs_permuted_PC95(results_df, ax=None):
     )
 
 
-def get_true_vs_permuted_AUC(n_resamples=500, n_permutations=100, late_sessions=False, max_jobs=5, verbose=False):
-    """
-    Compare the number of principal components explaining 95% variance (and AUC of explained variance curve)
-    in the true place-direction heatmaps to that of permuted heatmaps.
-    subjects are bootstrap resampled for heatmaps going into true and permuted conditions. Need to combine heatmaps across subjects
-    due to high number of place-direction pairs on each maze.
-    """
-    # save_path = RESULTS_DIR / "true_vs_permuted_PC95.parquet"
-    # if save_path.exists():
-    #     if verbose:
-    #         print(f"Loading {save_path} from disk")
-    #     results_df = pd.read_parquet(save_path)
-    #     return results_df
-    results = []
-    for maze in MAZE_NAMES:
-        print(f"Loading data for {maze} ...")
-        population_tuning_df = pdr.get_population_place_direction_tuning(
-            subject_IDs="all",
-            maze_name=maze,
-            late_sessions=late_sessions,
-            fill_nans="mean",
-            normalisation="length",
-            min_split_corr=0.5,
-        )
-        permuted_heatmaps_df = load_permuted_place_direction_heatmaps(
-            maze,
-            subject_IDs="all",
-            normalisation="length",
-        )
-        # keep only n_permutations necessary
-        permuted_heatmaps_df = permuted_heatmaps_df[permuted_heatmaps_df.index.get_level_values(2) < n_permutations]
-        n_features = population_tuning_df.shape[1]
-        if n_permutations is None:
-            n_permutations = permuted_heatmaps_df.index.get_level_values(2).max()
-        if verbose:
-            print(f"Number of features: {n_features}")
-            print(f"Number of permutations: {n_permutations}")
-        # prestratify dfs by subject
-        subject_data = {}
-        for subject in SUBJECT_IDS:
-            subject_data[subject] = {
-                "true": population_tuning_df.xs(subject, level="subject_ID"),
-                "permuted": permuted_heatmaps_df.xs(subject, level="subject_ID"),
-            }
-        return subject_data
-        # bootstrapped resample over subjects
-        maze_results = Parallel(n_jobs=max_jobs)(
-            delayed(_process_resample)(subject_data, n_features, n_permutations, maze, i, verbose)
-            for i in range(n_resamples)
-        )
-        maze_results = [r for r in maze_results if r is not None]  # filter out None results
-        results.extend(maze_results)
-    results_df = pd.DataFrame(results)
-    # save results
-    results_df.to_parquet(save_path)
-    if verbose:
-        print(f"Results saved to {save_path}")
-    return results_df
-
-
-def _process_resample(subject_data, n_splits, test_size, demean, norm_length, n_permutations, i, verbose):
-    if verbose:
-        print(i)
-    sampled_subjects = np.random.choice(SUBJECT_IDS, size=len(SUBJECT_IDS), replace=True)
-    # combine neurons across resampled subjects and calculate PC95
-    true_df = pd.concat([subject_data[subject]["true"] for subject in sampled_subjects], axis=0)
-    perms_df = pd.concat([subject_data[subject]["permuted"] for subject in sampled_subjects], axis=0)
-    all_clusters = true_df.index.values
-    n_test = int(len(all_clusters) * test_size)
-    split_results = []
-    for split in range(n_splits):
-        shuffled_clusters = np.random.permutation(all_clusters)
-        train_clusters, test_clusters = shuffled_clusters[n_test:], shuffled_clusters[:n_test]
-        # calc AUC of cum ve curve for true neural data (CV)
-        true_train, true_test = true_df.loc[train_clusters], true_df.loc[test_clusters]
-        true_train, true_test = true_train.values, true_test.values
-        if demean:
-            true_train, true_test = ec._demean(true_train), ec._demean(true_test)
-        if norm_length:
-            true_train, true_test = ec._norm_length(true_train), ec._norm_length(true_test)
-        true_cum_ve = ec.get_pca_variance_explained(true_train, true_test)
-        true_auc = np.trapz(true_cum_ve, dx=1 / len(true_cum_ve))
-        # calc AUC of cum ve curve for permuted neural data (CV) separately for each permutation
-        perms_idx = perms_df.index
-        perms_train, perms_test = (
-            perms_df[perms_idx.get_level_values(0).isin(train_clusters)].sort_index().droplevel(0, axis=0),
-            perms_df[perms_idx.get_level_values(0).isin(test_clusters)].sort_index().droplevel(0, axis=0),
-        )
-        perm_AUCs = []
-        for j in range(n_permutations):
-            _perm_train = perms_train.loc[j].values
-            _perm_test = perms_test.loc[j].values
-            if demean:
-                _perm_train, _perm_test = ec._demean(_perm_train), ec._demean(_perm_test)
-            if norm_length:
-                _perm_train, _perm_test = ec._norm_length(_perm_train), ec._norm_length(_perm_test)
-            permuted_cum_ve = ec.get_pca_variance_explained(_perm_train, _perm_test)
-            perm_auc = np.trapz(permuted_cum_ve, dx=1 / len(permuted_cum_ve))
-            perm_AUCs.append(perm_auc)
-        mean_perm_auc = np.mean(perm_AUCs)
-        split_results.append(
-            {
-                "split": 0,
-                "resample": i,
-                "true_auc": true_auc,
-                "permuted_auc": mean_perm_auc,
-            }
-        )
-    return pd.DataFrame(split_results)
-
-
-def test(
+def get_true_vs_permuted_neural_variance_explained(
     maze_name,
     n_splits=5,
     test_size=0.2,
@@ -184,10 +72,19 @@ def test(
     norm_length=True,
     max_jobs=5,
     verbose=False,
+    save=False,
 ):
     """ """
+    auc_save_path = RESULTS_DIR / "variance_explained" / f"{maze_name}_auc_results.parquet"
+    ve_save_path = RESULTS_DIR / "variance_explained" / f"{maze_name}_ve_results.parquet"
+    if not save and auc_save_path.exists() and ve_save_path.exists():
+        if verbose:
+            print("loading results from disk...")
+        auc_df = pd.read_parquet(auc_save_path)
+        ve_df = pd.read_parquet(ve_save_path)
+        return auc_df, ve_df
     if verbose:
-        print("loading_input_data...")
+        print("Loading input data ...")
     input_data = get_input_data(
         maze_name=maze_name,
         n_splits=n_splits,  # no need for splits here
@@ -197,58 +94,28 @@ def test(
         min_split_corr=min_split_corr,
         verbose=verbose,
     )
-    result_dfs = []
-    for n in range(n_resamples):
-        split_results = []
-        sampled_subjects = np.random.choice(SUBJECT_IDS, size=len(SUBJECT_IDS), replace=True)
-        for i in range(n_splits):
-            true_train = pd.concat(
-                [input_data[subject][i]["true"]["train"] for subject in sampled_subjects], axis=0
-            ).values
-            true_test = pd.concat(
-                [input_data[subject][i]["true"]["test"] for subject in sampled_subjects], axis=0
-            ).values
-            perm_train_df = pd.concat(
-                [input_data[subject][i]["permuted"]["train"] for subject in sampled_subjects], axis=0
-            ).droplevel(1)
-            perm_test_df = pd.concat(
-                [input_data[subject][i]["permuted"]["test"] for subject in sampled_subjects], axis=0
-            ).droplevel(1)
-            if demean:
-                true_train, true_test = ec._demean(true_train), ec._demean(true_test)
-            if norm_length:
-                true_train, true_test = ec._norm_length(true_train), ec._norm_length(true_test)
-            # get variance explained for true and permuted data
-            true_cum_ve = ec.get_pca_variance_explained(true_train, true_test)
-            true_auc = np.trapz(true_cum_ve, dx=1 / len(true_cum_ve))
-            perm_train_df, perm_test_df = perm_train_df.swaplevel(), perm_test_df.swaplevel()
-            perm_aucs = []
-            for j in range(n_permutations):
-                _perm_train = perm_train_df.loc[j].values
-                _perm_test = perm_test_df.loc[j].values
-                if demean:
-                    _perm_train, _perm_test = ec._demean(_perm_train), ec._demean(_perm_test)
-                if norm_length:
-                    _perm_train, _perm_test = ec._norm_length(_perm_train), ec._norm_length(_perm_test)
-                permuted_cum_ve = ec.get_pca_variance_explained(_perm_train, _perm_test)
-                perm_auc = np.trapz(permuted_cum_ve, dx=1 / len(permuted_cum_ve))
-                perm_aucs.append(perm_auc)
-            mean_perm_auc = np.mean(perm_aucs)
-            split_results.append(
-                {
-                    "split": i,
-                    "resample": n,
-                    "true_auc": true_auc,
-                    "permuted_auc": mean_perm_auc,
-                }
-            )
-        result_dfs.append(pd.DataFrame(split_results))
-    return
+    result_dfs = Parallel(n_jobs=max_jobs)(
+        delayed(_process_reamples)(input_data, n_splits, n_permutations, demean, norm_length, i, verbose)
+        for i in range(n_resamples)
+    )
+    auc_results_df = pd.concat([df[0] for df in result_dfs], axis=0)
+    ve_results_df = pd.concat([df[1] for df in result_dfs], axis=0)
+    if save:
+        if verbose:
+            print("saving results to disk...")
+        auc_save_path.parent.mkdir(parents=True, exist_ok=True)
+        ve_save_path.parent.mkdir(parents=True, exist_ok=True)
+        auc_results_df.to_parquet(auc_save_path)
+        ve_results_df.to_parquet(ve_save_path)
+    return auc_results_df, ve_results_df
 
 
-def _process_reamples2(input_data, n_splits, n_permutations, demean, norm_length, n):
+def _process_reamples(input_data, n_splits, n_permutations, demean, norm_length, n, verbose):
     """ """
-    split_results = []
+    if verbose:
+        print(f"Resample {n} ...")
+    split_auc_results = []
+    split_ve_results = []
     sampled_subjects = np.random.choice(SUBJECT_IDS, size=len(SUBJECT_IDS), replace=True)
     for i in range(n_splits):
         true_train = pd.concat([input_data[subject][i]["true"]["train"] for subject in sampled_subjects], axis=0).values
@@ -267,7 +134,7 @@ def _process_reamples2(input_data, n_splits, n_permutations, demean, norm_length
         true_cum_ve = ec.get_pca_variance_explained(true_train, true_test)
         true_auc = np.trapz(true_cum_ve, dx=1 / len(true_cum_ve))
         perm_train_df, perm_test_df = perm_train_df.swaplevel(), perm_test_df.swaplevel()
-        perm_aucs = []
+        perm_aucs, perm_cum_ves = [], []
         for j in range(n_permutations):
             _perm_train = perm_train_df.loc[j].values
             _perm_test = perm_test_df.loc[j].values
@@ -276,10 +143,21 @@ def _process_reamples2(input_data, n_splits, n_permutations, demean, norm_length
             if norm_length:
                 _perm_train, _perm_test = ec._norm_length(_perm_train), ec._norm_length(_perm_test)
             permuted_cum_ve = ec.get_pca_variance_explained(_perm_train, _perm_test)
+            perm_cum_ves.append(permuted_cum_ve)
             perm_auc = np.trapz(permuted_cum_ve, dx=1 / len(permuted_cum_ve))
             perm_aucs.append(perm_auc)
+        # store ve curve for true and permuted data
+        mean_perm_cum_ve = np.mean(perm_cum_ves, axis=0)
+        ve_df = pd.DataFrame(index=range(true_train.shape[1] + 1))
+        ve_df["split"] = i
+        ve_df["resample"] = n
+        ve_df["component"] = np.arange(true_train.shape[1] + 1)
+        ve_df["true"] = true_cum_ve
+        ve_df["permuted"] = mean_perm_cum_ve
+        split_ve_results.append(ve_df)
+        # store auc summary
         mean_perm_auc = np.mean(perm_aucs)
-        split_results.append(
+        split_auc_results.append(
             {
                 "split": i,
                 "resample": n,
@@ -287,30 +165,7 @@ def _process_reamples2(input_data, n_splits, n_permutations, demean, norm_length
                 "permuted_auc": mean_perm_auc,
             }
         )
-    return pd.DataFrame(split_results)
-
-
-def pca_n_components(X, target_variance=0.95):
-    """ """
-    pca = PCA(random_state=0)
-    pca.fit(X)
-    explained_variance = pca.explained_variance_ratio_
-    cumsum = np.cumsum(explained_variance)
-    n_components = np.searchsorted(cumsum, target_variance) + 1
-    return n_components
-
-
-def pca_auc(X):
-    """
-    returns the AUC of the PCA explained variance curve for a given matrix,
-    not cross validated
-    """
-    pca = PCA(random_state=0)
-    pca.fit(X)
-    explained_variance = pca.explained_variance_ratio_
-    cumsum = np.cumsum(explained_variance) / np.sum(explained_variance)
-    auc = np.trapz(cumsum, dx=1 / len(explained_variance))
-    return auc
+    return [pd.DataFrame(split_auc_results), pd.concat(split_ve_results, axis=0)]
 
 
 def get_input_data(
