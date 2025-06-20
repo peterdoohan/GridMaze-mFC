@@ -280,7 +280,7 @@ def get_input_data(
                 session,
                 fill_nans="mean",
                 normalisation=False,
-                min_split_corr=0.3,
+                min_split_corr=0.5,
                 max_steps_from_goal=max_steps_to_goal,
             )
             session_data["true_behaviour"] = bdr.get_session_behavioural_sequences(

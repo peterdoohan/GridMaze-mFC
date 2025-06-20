@@ -10,10 +10,13 @@ from matplotlib import pyplot as plt
 import seaborn as sns
 from joblib import Parallel, delayed
 from sklearn.decomposition import PCA
+import test
 
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import permute
 from GridMaze.analysis.place_direction import dimensionality_reduction as pdr
+
+from GridMaze.analysis.place_direction import efficient_coding as ec
 
 # %% Global Variables
 from GridMaze.paths import RESULTS_PATH, EXPERIMENT_INFO_PATH
@@ -58,26 +61,26 @@ def plot_true_vs_permuted_PC95(results_df, ax=None):
     )
 
 
-def get_true_vs_permuted_PC95(n_resamples=500, n_permutations=100, max_jobs=5, verbose=False):
+def get_true_vs_permuted_AUC(n_resamples=500, n_permutations=100, late_sessions=False, max_jobs=5, verbose=False):
     """
     Compare the number of principal components explaining 95% variance (and AUC of explained variance curve)
     in the true place-direction heatmaps to that of permuted heatmaps.
     subjects are bootstrap resampled for heatmaps going into true and permuted conditions. Need to combine heatmaps across subjects
     due to high number of place-direction pairs on each maze.
     """
-    save_path = RESULTS_DIR / "true_vs_permuted_PC95.parquet"
-    if save_path.exists():
-        if verbose:
-            print(f"Loading {save_path} from disk")
-        results_df = pd.read_parquet(save_path)
-        return results_df
+    # save_path = RESULTS_DIR / "true_vs_permuted_PC95.parquet"
+    # if save_path.exists():
+    #     if verbose:
+    #         print(f"Loading {save_path} from disk")
+    #     results_df = pd.read_parquet(save_path)
+    #     return results_df
     results = []
     for maze in MAZE_NAMES:
         print(f"Loading data for {maze} ...")
         population_tuning_df = pdr.get_population_place_direction_tuning(
             subject_IDs="all",
-            maze_name="maze_1",
-            late_sessions=True,
+            maze_name=maze,
+            late_sessions=late_sessions,
             fill_nans="mean",
             normalisation="length",
             min_split_corr=0.5,
@@ -87,6 +90,8 @@ def get_true_vs_permuted_PC95(n_resamples=500, n_permutations=100, max_jobs=5, v
             subject_IDs="all",
             normalisation="length",
         )
+        # keep only n_permutations necessary
+        permuted_heatmaps_df = permuted_heatmaps_df[permuted_heatmaps_df.index.get_level_values(2) < n_permutations]
         n_features = population_tuning_df.shape[1]
         if n_permutations is None:
             n_permutations = permuted_heatmaps_df.index.get_level_values(2).max()
@@ -97,9 +102,10 @@ def get_true_vs_permuted_PC95(n_resamples=500, n_permutations=100, max_jobs=5, v
         subject_data = {}
         for subject in SUBJECT_IDS:
             subject_data[subject] = {
-                "true": population_tuning_df.xs(subject, level="subject_ID").reset_index(drop=True),
-                "permuted": permuted_heatmaps_df.xs(subject, level="subject_ID").reset_index(level=0, drop=True),
+                "true": population_tuning_df.xs(subject, level="subject_ID"),
+                "permuted": permuted_heatmaps_df.xs(subject, level="subject_ID"),
             }
+        return subject_data
         # bootstrapped resample over subjects
         maze_results = Parallel(n_jobs=max_jobs)(
             delayed(_process_resample)(subject_data, n_features, n_permutations, maze, i, verbose)
@@ -115,36 +121,55 @@ def get_true_vs_permuted_PC95(n_resamples=500, n_permutations=100, max_jobs=5, v
     return results_df
 
 
-def _process_resample(subject_data, n_features, n_permutations, maze, i, verbose):
+def _process_resample(subject_data, n_splits, test_size, demean, norm_length, n_permutations, i, verbose):
     if verbose:
         print(i)
     sampled_subjects = np.random.choice(SUBJECT_IDS, size=len(SUBJECT_IDS), replace=True)
     # combine neurons across resampled subjects and calculate PC95
     true_df = pd.concat([subject_data[subject]["true"] for subject in sampled_subjects], axis=0)
-    if true_df.shape[0] < n_features:
-        print(f"Skipping {maze} for {sampled_subjects} as not enough features ({true_df.shape[0]} < {n_features})")
-        return None
-    true_PC95 = pca_n_components(true_df.values, target_variance=0.95)
-    true_auc = pca_auc(true_df.values)
-    # for each set of permuted heatmaps, combine neurons across resampled subjects and calculate PC95
     perms_df = pd.concat([subject_data[subject]["permuted"] for subject in sampled_subjects], axis=0)
-    perm_PC95s, perm_aucs = [], []
-    for j in range(n_permutations):
-        _perm_df = perms_df.loc[j]
-        permuted_PC95 = pca_n_components(_perm_df.values, target_variance=0.95)
-        perm_PC95s.append(permuted_PC95)
-        permuted_auc = pca_auc(_perm_df.values)
-        perm_aucs.append(permuted_auc)
-    mean_perm_PC95 = np.mean(perm_PC95s)
-    mean_perm_auc = np.mean(perm_aucs)
-    return {
-        "maze": maze,
-        "n": i,
-        "true_PC95": true_PC95,
-        "permuted_PC95": mean_perm_PC95,
-        "true_auc": true_auc,
-        "permuted_auc": mean_perm_auc,
-    }
+    all_clusters = true_df.index.values
+    n_test = int(len(all_clusters) * test_size)
+    split_results = []
+    for split in range(n_splits):
+        shuffled_clusters = np.random.permutation(all_clusters)
+        train_clusters, test_clusters = shuffled_clusters[n_test:], shuffled_clusters[:n_test]
+        # calc AUC of cum ve curve for true neural data (CV)
+        true_train, true_test = true_df.loc[train_clusters], true_df.loc[test_clusters]
+        true_train, true_test = true_train.values, true_test.values
+        if demean:
+            true_train, true_test = ec._demean(true_train), ec._demean(true_test)
+        if norm_length:
+            true_train, true_test = ec._norm_length(true_train), ec._norm_length(true_test)
+        true_cum_ve = ec.get_pca_variance_explained(true_train, true_test)
+        true_auc = np.trapz(true_cum_ve, dx=1 / len(true_cum_ve))
+        # calc AUC of cum ve curve for permuted neural data (CV) separately for each permutation
+        perms_idx = perms_df.index
+        perms_train, perms_test = (
+            perms_df[perms_idx.get_level_values(0).isin(train_clusters)].sort_index().droplevel(0, axis=0),
+            perms_df[perms_idx.get_level_values(0).isin(test_clusters)].sort_index().droplevel(0, axis=0),
+        )
+        perm_AUCs = []
+        for j in range(n_permutations):
+            _perm_train = perms_train.loc[j].values
+            _perm_test = perms_test.loc[j].values
+            if demean:
+                _perm_train, _perm_test = ec._demean(_perm_train), ec._demean(_perm_test)
+            if norm_length:
+                _perm_train, _perm_test = ec._norm_length(_perm_train), ec._norm_length(_perm_test)
+            permuted_cum_ve = ec.get_pca_variance_explained(_perm_train, _perm_test)
+            perm_auc = np.trapz(permuted_cum_ve, dx=1 / len(permuted_cum_ve))
+            perm_AUCs.append(perm_auc)
+        mean_perm_auc = np.mean(perm_AUCs)
+        split_results.append(
+            {
+                "split": 0,
+                "resample": i,
+                "true_auc": true_auc,
+                "permuted_auc": mean_perm_auc,
+            }
+        )
+    return pd.DataFrame(split_results)
 
 
 def pca_n_components(X, target_variance=0.95):
@@ -227,7 +252,7 @@ def populate_permuted_place_direction_heatmaps(n_permutation=5_000, max_jopbs=15
 def get_permuted_population_place_direction_tuning(
     maze_name="maze_1",
     n_permutations=15,
-    late_sessions=True,
+    late_sessions=False,
     verbose=True,
     max_jobs=15,
 ):
