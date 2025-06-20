@@ -258,6 +258,10 @@ def get_input_data(
                 "train": train_df,
                 "test": test_df,
             }
+            split_data["permuted"] = {
+                "train": permuted_heatmaps.loc[train_df.index, :, :],
+                "test": permuted_heatmaps.loc[test_df.index, :, :],
+            }
             split2data[i] = split_data
         subject2split_data[subject] = split2data
     return subject2split_data
