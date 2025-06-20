@@ -63,10 +63,10 @@ def plot_true_vs_permuted_PC95(results_df, ax=None):
 def get_true_vs_permuted_neural_variance_explained(
     maze_name,
     n_splits=5,
-    test_size=0.2,
+    test_size=0.1,
     n_resamples=500,
     n_permutations=100,
-    min_split_corr=0.5,
+    min_split_corr=0.3,
     late_sessions=False,
     demean=False,
     norm_length=True,
@@ -132,6 +132,8 @@ def _process_reamples(input_data, n_splits, n_permutations, demean, norm_length,
             true_train, true_test = ec._norm_length(true_train), ec._norm_length(true_test)
         # get variance explained for true and permuted data
         true_cum_ve = ec.get_pca_variance_explained(true_train, true_test)
+        if len(true_cum_ve) < true_train.shape[1] + 1:
+            true_cum_ve = np.concatenate((true_cum_ve, np.ones(true_train.shape[1] + 1 - len(true_cum_ve))))
         true_auc = np.trapz(true_cum_ve, dx=1 / len(true_cum_ve))
         perm_train_df, perm_test_df = perm_train_df.swaplevel(), perm_test_df.swaplevel()
         perm_aucs, perm_cum_ves = [], []
@@ -143,6 +145,10 @@ def _process_reamples(input_data, n_splits, n_permutations, demean, norm_length,
             if norm_length:
                 _perm_train, _perm_test = ec._norm_length(_perm_train), ec._norm_length(_perm_test)
             permuted_cum_ve = ec.get_pca_variance_explained(_perm_train, _perm_test)
+            if len(permuted_cum_ve) < _perm_train.shape[1] + 1:
+                permuted_cum_ve = np.concatenate(
+                    (permuted_cum_ve, np.ones(_perm_train.shape[1] + 1 - len(permuted_cum_ve)))
+                )
             perm_cum_ves.append(permuted_cum_ve)
             perm_auc = np.trapz(permuted_cum_ve, dx=1 / len(permuted_cum_ve))
             perm_aucs.append(perm_auc)
