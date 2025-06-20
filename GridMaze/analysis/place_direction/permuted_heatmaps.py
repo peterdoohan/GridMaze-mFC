@@ -10,7 +10,7 @@ from matplotlib import pyplot as plt
 import seaborn as sns
 from joblib import Parallel, delayed
 from sklearn.decomposition import PCA
-import test
+from sklearn.model_selection import ShuffleSplit
 
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import permute
@@ -195,6 +195,74 @@ def pca_auc(X):
     return auc
 
 
+def get_input_data(
+    maze_name,
+    n_splits=5,
+    test_size=0.1,
+    n_permutations=100,
+    late=False,
+    max_steps_to_goal=30,
+    min_split_corr=0.5,
+    verbose=False,
+):
+    """ """
+    permuted_heatmaps = load_permuted_place_direction_heatmaps(
+        maze_name, normalisation=False, n_permutations=n_permutations
+    )
+    days_on_maze = "late" if late == True else "all"
+    all_data = {}
+    subject2session_names = {}
+    for subject in SUBJECT_IDS:
+        if verbose:
+            print(subject)
+        sessions = gs.get_maze_sessions(
+            subject_IDs=[subject],
+            maze_names=[maze_name],
+            days_on_maze=days_on_maze,
+            with_data=[
+                "navigation_df",
+                "navigation_spike_rates_df",
+                "trajectory_decisions_df",
+                "cluster_metrics",
+                "cluster_place_direction_tuning_metrics",
+            ],
+        )
+        session_names = []
+        subject_data = {}
+        for session in sessions:
+            session_name = session.name
+            session_names.append(session_name)
+            subject_data[session_name] = pdr.get_session_place_direction_tuning(
+                session,
+                fill_nans="mean",
+                normalisation=False,
+                min_split_corr=min_split_corr,
+                max_steps_from_goal=max_steps_to_goal,
+            )
+        subject2session_names[subject] = session_names
+        all_data[subject] = subject_data
+    subject2split_data = {}
+    ss = ShuffleSplit(n_splits=n_splits, test_size=test_size, random_state=0)
+    for subject in SUBJECT_IDS:
+        _session_names = np.array(subject2session_names[subject])
+        # Generate the splits (session names)
+        split2data = {}
+        for i, (train_index, test_index) in enumerate(ss.split(_session_names)):
+            train, test = _session_names[train_index], _session_names[test_index]
+            split_data = {}
+            train_data = [all_data[subject][session] for session in train]
+            train_df = pd.concat([df for df in train_data if df is not None], axis=0)
+            test_data = [all_data[subject][session] for session in test]
+            test_df = pd.concat([df for df in test_data if df is not None], axis=0)
+            split_data["true"] = {
+                "train": train_df,
+                "test": test_df,
+            }
+            split2data[i] = split_data
+        subject2split_data[subject] = split2data
+    return subject2split_data
+
+
 # %% load data from disk
 
 
@@ -202,6 +270,7 @@ def load_permuted_place_direction_heatmaps(
     maze_name,
     subject_IDs="all",
     normalisation="length",
+    n_permutations="all",
 ):
     """
     later add options to fill nans and normalise at this level
@@ -221,13 +290,17 @@ def load_permuted_place_direction_heatmaps(
             df = df.div(df.max(axis=1), axis=0)
         else:
             raise ValueError(f"Unknown normalisation method: {normalisation}")
+    if n_permutations != "all":
+        assert isinstance(n_permutations, int)
+        df = df[df.index.get_level_values(2) < n_permutations]
+
     return df
 
 
 # %% Generate permuted heatmap functions
 
 
-def populate_permuted_place_direction_heatmaps(n_permutation=5_000, max_jopbs=15, verbose=True, overwrite=False):
+def populate_permuted_place_direction_heatmaps(n_permutation=100, max_jopbs=5, verbose=True, overwrite=False):
     """
     Note that place_direction heatmaps are saved out normalised to length one, should
     remove this a repopulation TODO
