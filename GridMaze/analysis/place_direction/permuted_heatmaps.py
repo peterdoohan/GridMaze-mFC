@@ -33,7 +33,14 @@ MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
 # %% control analysis for low dimensional structure in place-direction tuning
 
 
-def plot_permuted_vs_true_summary(auc_df, ve_df, axes=None):
+def _stats(auc_df):
+    """ """
+    auc = auc_df.groupby("resample").mean().drop(columns=["split"])
+    p_val = (auc["true_auc"] < (auc["permuted_auc"])).mean()
+    print(f"true vs permuted: \n     p_value: {p_val:.3f}")
+
+
+def plot_permuted_vs_true_summary(auc_df, ve_df, print_stats=True, axes=None):
     # set up figure
     if axes is None:
         f, axes = plt.subplots(2, 1, figsize=(3, 4), height_ratios=(1, 0.2))
@@ -88,6 +95,8 @@ def plot_permuted_vs_true_summary(auc_df, ve_df, axes=None):
     axes[1].set_ylim(-0.5, len(conditions) - 0.5)
     axes[1].invert_yaxis()
 
+    if print_stats:
+        _stats(auc_df)
     return
 
 

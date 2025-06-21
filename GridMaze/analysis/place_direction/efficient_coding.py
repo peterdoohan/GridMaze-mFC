@@ -106,11 +106,32 @@ def get_within_across_subject_neural_variance_explained_by_behaviour(
 # %% Null vs subject behaviour 2
 
 
+def _stats(
+    auc_df,
+    comparisons=[
+        ("neural_data", ("true_behaviour", "optimal", "random_diffusion")),
+        ("true_behaviour", ("optimal", "random_diffusion")),
+    ],
+):
+    """ """
+    auc = auc_df.groupby("resample").mean().drop(columns=["split"])
+    for comparison in comparisons:
+        x, ys = comparison
+        for y in ys:
+            p_value = (auc[x] < auc[y]).mean()
+            print(f"{x} vs {y}: \n p-value = {p_value:.3f}")
+
+
 def plot_neural_behavioural_ve_summary(
     auc_df,
     ve_df,
     conditions=["neural_data", "true_behaviour", "optimal", "random_diffusion"],
-    colors=["red", "blue", "black", "grey"],
+    colors=["red", "blue", "dimgrey", "grey"],
+    print_stats=True,
+    comparions=[
+        ("neural_data", ("true_behaviour", "optimal", "random_diffusion")),
+        ("true_behaviour", ("optimal", "random_diffusion")),
+    ],
     axes=None,
 ):
     # set up figure
@@ -163,6 +184,9 @@ def plot_neural_behavioural_ve_summary(
     axes[1].set_xlim(0.5, 0.85)
     axes[1].set_ylim(-0.5, len(conditions) - 0.5)
     axes[1].invert_yaxis()
+
+    if print_stats:
+        _stats(auc_df, comparisons=comparions)
 
     return
 
