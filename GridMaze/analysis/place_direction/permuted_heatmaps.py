@@ -33,7 +33,7 @@ MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
 # %% control analysis for low dimensional structure in place-direction tuning
 
 
-def plot_test(auc_df, ve_df, axes=None):
+def plot_permuted_vs_true_summary(auc_df, ve_df, axes=None):
     # set up figure
     if axes is None:
         f, axes = plt.subplots(2, 1, figsize=(3, 4), height_ratios=(1, 0.2))
@@ -61,7 +61,7 @@ def plot_test(auc_df, ve_df, axes=None):
             color=color,
             alpha=0.2,
         )
-    axes[0].legend(loc="upper left", fontsize=8, frameon=False)
+    axes[0].legend(loc="lower right", fontsize=8, frameon=False)
 
     # process AUC data (bottom axis)
     auc = auc_df.groupby("resample").mean().drop(columns=["split"])
@@ -81,13 +81,12 @@ def plot_test(auc_df, ve_df, axes=None):
             label=cond,
             capthick=1.5,
             elinewidth=1.5,
-            capsize=3,
+            capsize=5,
         )
     axes[1].set_yticks(range(len(conditions)), conditions)
-    axes[1].set_xlim(0.5, 0.8)
+    axes[1].set_xlim(0.5, 0.85)
     axes[1].set_ylim(-0.5, len(conditions) - 0.5)
     axes[1].invert_yaxis()
-    f.tight_layout()
 
     return
 

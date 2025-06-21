@@ -106,38 +106,64 @@ def get_within_across_subject_neural_variance_explained_by_behaviour(
 # %% Null vs subject behaviour 2
 
 
-def plot_neural_variance_explained_by_behaviour(results_df, ax=None):
-    """
-    Need to do stats
-    """
-    df = results_df.groupby("resample").mean().drop(columns=["split"])  # average over splits(folds)
-    conditions = df.columns.tolist()
-    means = df.mean()
-    lower = df.quantile(0.025)
-    upper = df.quantile(0.975)
-    err_lower = means - lower
-    err_upper = upper - means
-    colors = ["red", "blue", "grey", "grey", "grey", "grey"]
-    if ax is None:
-        f, ax = plt.subplots(1, 1, figsize=(3, 2), clear=True)
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.axvline(means["neural_data"], color="red", ls="--", alpha=0.5)
+def plot_neural_behavioural_ve_summary(
+    auc_df,
+    ve_df,
+    conditions=["neural_data", "true_behaviour", "optimal", "random_diffusion"],
+    colors=["red", "blue", "black", "grey"],
+    axes=None,
+):
+    # set up figure
+    if axes is None:
+        f, axes = plt.subplots(2, 1, figsize=(3, 5), height_ratios=(1, 0.4), clear=True)
+    for ax in axes:
+        ax.spines[["top", "right"]].set_visible(False)
+    axes[0].plot([0, ve_df.component.max()], [0, 1], color="k", linestyle="--", alpha=0.5)
+    axes[0].set_ylabel("Prop. variance explained")
+    axes[0].set_xlabel("n components")
+    axes[1].set_xlabel("AUC")
+
+    # process cum ve curve data (top axis)
+    components = ve_df.component.unique()
+    ve = ve_df.groupby(["resample", "component"]).mean().drop(columns=["split"])
+    for cond, color in zip(conditions[::-1], colors[::-1]):
+        cond_ve = ve[cond].unstack()
+        mean = cond_ve.mean()
+        std = cond_ve.std()  # sem across subjects from bootstrap perms
+        axes[0].plot(components, mean, color=color, linewidth=1.5, alpha=0.8, label=cond)
+        axes[0].fill_between(
+            components,
+            mean - std,
+            mean + std,
+            color=color,
+            alpha=0.25,
+        )
+    axes[0].legend(loc="lower right", fontsize=8, frameon=False)
+
+    # process AUC data (bottom axis)
+    auc = auc_df.groupby("resample").mean().drop(columns=["split"])
+    mean_auc = auc.mean()
+    auc_lower = auc.quantile(0.025)
+    auc_upper = auc.quantile(0.975)
+    err_lower = mean_auc - auc_lower
+    err_upper = auc_upper - mean_auc
     for i, (cond, color) in enumerate(zip(conditions, colors)):
-        ax.errorbar(
-            x=means[cond],
+        axes[1].errorbar(
+            x=mean_auc[cond],
             y=i,
             xerr=[[err_lower[cond]], [err_upper[cond]]],
-            fmt="o",
-            markersize=5,
+            fmt="none",
             color=color,
+            label=cond,
             capthick=1.5,
             elinewidth=1.5,
-            capsize=3,
+            capsize=5,
         )
-    ax.set_yticks(range(len(conditions)), conditions)
-    ax.invert_yaxis()
-    ax.set_xlim(0.5, 0.8)
-    ax.set_xlabel("AUC of cumulative variance explained")
+    axes[1].set_yticks(range(len(conditions)), conditions)
+    axes[1].set_xlim(0.5, 0.85)
+    axes[1].set_ylim(-0.5, len(conditions) - 0.5)
+    axes[1].invert_yaxis()
+
     return
 
 
@@ -150,7 +176,7 @@ def get_neural_variance_explained_by_synthetic_behaviour(
     demean=False,
     norm_length=True,
     n_resamples=500,
-    verbose=True,
+    verbose=False,
     max_jobs=20,
     save=False,
 ):
@@ -422,9 +448,10 @@ def get_neural_behaviour_variance_explained(
     )
     results_df = pd.concat(all_results, axis=0)
     # save results
-    results_df.to_csv(save_path)
-    if verbose:
-        print(f"Results saved to {save_path}")
+    if save:
+        results_df.to_parquet(save_path)
+        if verbose:
+            print(f"Results saved to {save_path}")
     return results_df
 
 
