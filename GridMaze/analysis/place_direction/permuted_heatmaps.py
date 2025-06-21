@@ -4,12 +4,14 @@ Lib for generating permuted place-direction heatmaps for control analyses
 
 # %% Imports
 import json
+from cv2 import line, mean
 import pandas as pd
 import numpy as np
 from matplotlib import pyplot as plt
 import seaborn as sns
 from joblib import Parallel, delayed
 from sklearn.model_selection import ShuffleSplit
+from sympy import comp
 
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import permute
@@ -31,33 +33,63 @@ MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
 # %% control analysis for low dimensional structure in place-direction tuning
 
 
-def plot_true_vs_permuted_PC95(results_df, ax=None):
-    """ """
-    # set up fig
-    if ax is None:
-        f, ax = plt.subplots(1, 1, figsize=(3, 3), sharey=True)
-    ax.spines[["top", "right"]].set_visible(False)
-    # plot results
-    long_df = results_df[["maze", "true_PC95", "permuted_PC95"]].melt(
-        id_vars=["maze"], value_vars=["true_PC95", "permuted_PC95"], var_name="condition", value_name="PC95"
-    )
-    sns.pointplot(
-        data=long_df,
-        x="maze",
-        y="PC95",
-        hue="condition",
-        errorbar=("ci", 99),
-        ax=ax,
-        order=MAZE_NAMES,
-        hue_order=[
-            "permuted_PC95",
-            "true_PC95",
-        ],
-        dodge=0.4,
-        scale=1.5,
-        palette=["gray", "red"],
-        linestyle="none",
-    )
+def plot_test(auc_df, ve_df, axes=None):
+    # set up figure
+    if axes is None:
+        f, axes = plt.subplots(2, 1, figsize=(3, 4), height_ratios=(1, 0.2))
+    for ax in axes:
+        ax.spines[["top", "right"]].set_visible(False)
+    axes[0].plot([0, ve_df.component.max()], [0, 1], color="k", linestyle="--", alpha=0.5)
+    axes[0].set_ylabel("Prop. variance explained")
+    axes[0].set_xlabel("n components")
+    axes[1].set_xlabel("AUC")
+
+    # process cum ve curve data (top axis)
+    conditions = ["true", "permuted"]
+    colors = ["red", "gray"]
+    components = ve_df.component.unique()
+    ve = ve_df.groupby(["resample", "component"]).mean().drop(columns=["split"])
+    for cond, color in zip(conditions, colors):
+        cond_ve = ve[cond].unstack()
+        mean = cond_ve.mean()
+        std = cond_ve.std()
+        axes[0].plot(components, mean, color=color, linewidth=1, label=cond)
+        axes[0].fill_between(
+            components,
+            mean - std,
+            mean + std,
+            color=color,
+            alpha=0.2,
+        )
+    axes[0].legend(loc="upper left", fontsize=8, frameon=False)
+
+    # process AUC data (bottom axis)
+    auc = auc_df.groupby("resample").mean().drop(columns=["split"])
+    mean_auc = auc.mean()
+    auc_lower = auc.quantile(0.025)
+    auc_upper = auc.quantile(0.975)
+    err_lower = mean_auc - auc_lower
+    err_upper = auc_upper - mean_auc
+    for i, (cond, color) in enumerate(zip(conditions, colors)):
+        cond = cond + "_auc"
+        axes[1].errorbar(
+            x=mean_auc[cond],
+            y=i,
+            xerr=[[err_lower[cond]], [err_upper[cond]]],
+            fmt="none",
+            color=color,
+            label=cond,
+            capthick=1.5,
+            elinewidth=1.5,
+            capsize=3,
+        )
+    axes[1].set_yticks(range(len(conditions)), conditions)
+    axes[1].set_xlim(0.5, 0.8)
+    axes[1].set_ylim(-0.5, len(conditions) - 0.5)
+    axes[1].invert_yaxis()
+    f.tight_layout()
+
+    return
 
 
 def get_true_vs_permuted_neural_variance_explained(
