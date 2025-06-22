@@ -39,7 +39,8 @@ def kris_version(
     include_multi_units=True,
     max_steps_to_goal=30,
     resolution=0.1,
-    max_offset=6,
+    future_offset=6,
+    past_offset=6,
     state_type="place",
     min_spikes=300,
     sqrt_spikes=True,
@@ -114,47 +115,37 @@ def kris_version(
             [spikes_reg_weight * X_spikes, X_SA], axis=-1
         ),  # weight spikes to increase effective reg strength w/ more regressors
     ]  # for first one (this worked)
-    num_regressors = len(possible_Xs)
     # run regression for each of these models. Total result shape is (regressions, future vs past, offset, fold)
-    scores = np.zeros((num_regressors, 2, max_offset + 1, n_folds))  # array to store result
-    types = ["future", "past"]
-    x_labels = ["spikes", "place_direction", "spikes_place_direction"]
-    results = []
-    for itype in range(2):  # decode future or past
-        if verbose:
-            print(itype)
-        for iX, X in enumerate(possible_Xs):
-            for ishift in range(max_offset + 1):
-                if verbose:
-                    print(ishift)
-                y = Ys_final[
-                    itype, ishift, :
-                ]  # target is the location ishift into the future or past (depending on itype)
-                for fold in range(n_folds):  # for each fold
-                    if verbose:
-                        print(f"folds {fold}")
-                    # training and test indices
-                    test, train = trial_split_inds[fold], np.concatenate(
-                        [trial_split_inds[f] for f in range(n_folds) if f != fold]
-                    )
+    results = Parallel(n_jobs=-1, verbose=verbose)(
+        delayed(_process_fold)(Ys_final, trial_split_inds, n_folds, fold, itype, X, y, ishift, type, label)
+        for itype, (type, offsets) in enumerate(
+            zip(["future", "past"], [np.arange(0, future_offset + 1), np.arange(1, past_offset + 1)])
+        )
+        for X, label in zip(possible_Xs, ["spikes", "place_direction", "spikes_place_direction"])
+        for ishift in offsets
+        for fold in range(n_folds)
+    )
 
-                    # could do nested crossvalidation to set the regularization strength, but just doing something simple to start
-                    clf = LogisticRegression(C=1e-0, max_iter=10_000)
-                    clf.fit(X[train, :], y[train])  # fit the model
-                    score = clf.score(X[test, :], y[test])
-                    results.append(
-                        {
-                            "type": types[itype],
-                            "offset": ishift,
-                            "fold": fold,
-                            "regressors": x_labels[iX],
-                            "score": score,
-                        }
-                    )
+    return pd.DataFrame(results)
 
-                    # test the model
-                    scores[iX, itype, ishift, fold] = clf.score(X[test, :], y[test])
-    return scores
+
+def _process_fold(Ys_final, trial_split_inds, n_folds, fold, itype, X, y, ishift, type, label):
+    """"""
+    y = Ys_final[itype, ishift, :]
+    # training and test indices
+    test, train = trial_split_inds[fold], np.concatenate([trial_split_inds[f] for f in range(n_folds) if f != fold])
+
+    # could do nested crossvalidation to set the regularization strength, but just doing something simple to start
+    clf = LogisticRegression(C=1e-0, max_iter=10_000)
+    clf.fit(X[train, :], y[train])  # fit the model
+    score = clf.score(X[test, :], y[test])
+    return {
+        "type": type,
+        "offset": ishift,
+        "fold": fold,
+        "regressors": label,
+        "score": score,
+    }
 
 
 # %%
