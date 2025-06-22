@@ -34,7 +34,7 @@ RESULTS_DIR = RESULTS_PATH / "place_direction" / "future_decoding"
 # %% Functions
 
 
-def test(
+def kris_version(
     session,
     include_multi_units=True,
     max_steps_to_goal=30,
@@ -48,45 +48,11 @@ def test(
     spikes_reg_weight=0.1,
     verbose=True,
 ):
-    # load data
+    # input data (see get_input_df for details)
+    navigation_spikes_df = get_input_df(
+        session, include_multi_units, max_steps_to_goal, resolution, max_offset, state_type, min_spikes
+    )
     simple_maze = session.simple_maze()
-    navigation_df = session.navigation_df
-    spike_counts_df = session.navigation_spike_counts_df.reset_index(drop=True)
-    # filter clusters
-    keep_clusters = gc.filter_clusters(
-        session.cluster_metrics,
-        session.session_info,
-        return_unique_IDs=True,
-        single_units=True,
-        multi_units=include_multi_units,
-    )
-    spike_counts_df = spike_counts_df[spike_counts_df.columns[spike_counts_df.spike_count.columns.isin(keep_clusters)]]
-    # downsample data
-    ds_nav_df, ds_spikes_df = ds.downsample_nav_spikes_data(
-        navigation_df, spike_counts_df, resolution=resolution, distance_metrics=[("steps_to_goal", "future")]
-    )
-    navigation_spikes_df = pd.concat([ds_nav_df, ds_spikes_df], axis=1)
-    # add place_direction column
-    navigation_spikes_df[("place_direction", "")] = (
-        navigation_spikes_df.maze_position.simple + "_" + navigation_spikes_df.cardinal_movement_direction
-    )
-    # add future, past state information
-    future_past_df = get_past_and_future_states(navigation_spikes_df, state_type=state_type, max_offset=max_offset)
-    navigation_spikes_df = pd.concat([navigation_spikes_df, future_past_df], axis=1)
-    # filter data
-    navigation_spikes_df = filt.filter_navigation_rates_df(
-        navigation_spikes_df,
-        navigation_only=True,
-        moving_only=False,
-        exclude_time_at_goal=True,
-        max_steps_to_goal=max_steps_to_goal,
-    )
-    # filter out clustes with min activity during navigation
-    if min_spikes is not None:
-        _spikes = navigation_spikes_df.spike_count
-        reject_clusters = _spikes.columns[_spikes.sum(axis=0) < min_spikes].values
-        navigation_spikes_df = navigation_spikes_df.drop(columns=reject_clusters, level=1, axis=1)
-
     # prep data for decoding
     spike_counts = navigation_spikes_df.spike_count.values
     if sqrt_spikes:
@@ -95,7 +61,8 @@ def test(
     PD_1hot = convert.place_direction2onehot(navigation_spikes_df.place_direction.values, simple_maze=simple_maze)
     # target values are the location we are at now, and that we will be at at different points in the past/future
     Ys = np.array([navigation_spikes_df.future.values, navigation_spikes_df.past.values])
-    # convert to one-hot for regression
+    #
+    #  convert to one-hot for regression
     if state_type == "place":
         Ys_1hot = np.array([[convert.place2onehot(Y[:, i], simple_maze) for i in range(Y.shape[-1])] for Y in Ys])
     elif state_type == "place_direction":
@@ -111,6 +78,7 @@ def test(
             "\npast:",
             Ys_1hot[1].sum((-1, -2)),
         )
+
     # CRITICALLY: filter data for decision points where past and future up to max_offset are available
     decision_points = get_decision_points(simple_maze)
     at_decision_point = np.array([sa in decision_points for sa in navigation_spikes_df.place_direction.values])
@@ -137,8 +105,8 @@ def test(
     ]
     if normalise_X:
         X_spikes, X_SA = [(X - X.mean(0)[None, :]) / (1e-10 + X.std(0)[None, :]) for X in [X_spikes, X_SA]]  # normalize
-    # try to decode from either just spikes, just state-actions, or both
 
+    # try to decode from either just spikes, just state-actions, or both
     possible_Xs = [
         X_spikes,
         X_SA,
@@ -174,6 +142,88 @@ def test(
                     # test the model
                     scores[iX, itype, ishift, fold] = clf.score(X[test, :], y[test])
     return scores
+
+
+# %%
+
+
+def test(
+    session,
+    include_multi_units=True,
+    max_steps_to_goal=30,
+    resolution=0.1,
+    max_offset=6,
+    state_type="place",
+    min_spikes=300,
+    sqrt_spikes=True,
+    n_folds=5,
+    normalise_X=True,
+    spikes_reg_weight=0.1,
+    verbose=True,
+):
+    """ """
+    # input data (see get_input_df for details)
+    navigation_spikes_df = get_input_df(
+        session, include_multi_units, max_steps_to_goal, resolution, max_offset, state_type, min_spikes
+    )
+    simple_maze = session.simple_maze()
+    return
+
+
+# %%
+def get_input_df(
+    session,
+    include_multi_units=True,
+    max_steps_to_goal=30,
+    resolution=0.1,
+    max_offset=6,
+    state_type="place",
+    min_spikes=300,
+):
+    # load data
+    navigation_df = session.navigation_df
+    spike_counts_df = session.navigation_spike_counts_df.reset_index(drop=True)
+
+    # filter clusters
+    keep_clusters = gc.filter_clusters(
+        session.cluster_metrics,
+        session.session_info,
+        return_unique_IDs=True,
+        single_units=True,
+        multi_units=include_multi_units,
+    )
+    spike_counts_df = spike_counts_df[spike_counts_df.columns[spike_counts_df.spike_count.columns.isin(keep_clusters)]]
+
+    # downsample data
+    ds_nav_df, ds_spikes_df = ds.downsample_nav_spikes_data(
+        navigation_df, spike_counts_df, resolution=resolution, distance_metrics=[("steps_to_goal", "future")]
+    )
+    navigation_spikes_df = pd.concat([ds_nav_df, ds_spikes_df], axis=1)
+
+    # add place_direction column
+    navigation_spikes_df[("place_direction", "")] = (
+        navigation_spikes_df.maze_position.simple + "_" + navigation_spikes_df.cardinal_movement_direction
+    )
+
+    # add future, past state information
+    future_past_df = get_past_and_future_states(navigation_spikes_df, state_type=state_type, max_offset=max_offset)
+    navigation_spikes_df = pd.concat([navigation_spikes_df, future_past_df], axis=1)
+
+    # filter data
+    navigation_spikes_df = filt.filter_navigation_rates_df(
+        navigation_spikes_df,
+        navigation_only=True,
+        moving_only=False,
+        exclude_time_at_goal=True,
+        max_steps_to_goal=max_steps_to_goal,
+    )
+    # filter out clustes with min activity during navigation
+    if min_spikes is not None:
+        _spikes = navigation_spikes_df.spike_count
+        reject_clusters = _spikes.columns[_spikes.sum(axis=0) < min_spikes].values
+        navigation_spikes_df = navigation_spikes_df.drop(columns=reject_clusters, level=1, axis=1)
+
+    return navigation_spikes_df
 
 
 def get_past_and_future_states(navigation_spikes_df, state_type="place", max_offset=6):
