@@ -5,9 +5,7 @@ Can we decode the future position/place-direction of the animal from neural avti
 """
 
 # %% Imports
-import os
 import json
-import time
 import copy
 import numpy as np
 import pandas as pd
@@ -17,6 +15,7 @@ from sklearn.linear_model import LogisticRegression
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import get_clusters as gc
 from GridMaze.analysis.core import filter as filt
+from GridMaze.analysis.core import folds
 from GridMaze.analysis.core import downsample as ds
 from GridMaze.analysis.core import convert
 
@@ -152,7 +151,8 @@ def test(
     include_multi_units=True,
     max_steps_to_goal=30,
     resolution=0.1,
-    max_offset=6,
+    past_offset=6,
+    future_offset=6,
     state_type="place",
     min_spikes=300,
     sqrt_spikes=True,
@@ -163,10 +163,75 @@ def test(
 ):
     """ """
     # input data (see get_input_df for details)
-    navigation_spikes_df = get_input_df(
-        session, include_multi_units, max_steps_to_goal, resolution, max_offset, state_type, min_spikes
+    input_df = get_input_df(
+        session, include_multi_units, max_steps_to_goal, resolution, past_offset, future_offset, state_type, min_spikes
     )
+    # filter data for times where animal is at decision point
     simple_maze = session.simple_maze()
+    decision_points = get_decision_points(simple_maze)
+    input_df = input_df[input_df.place_direction.isin(decision_points)]
+    # get cv folds df
+    folds_df = folds.get_folds_df(session, goal_stratified=True, n_folds=n_folds, return_unique_IDs=False)
+    _folds = folds_df.columns.get_level_values(0).unique().values  # folds names
+    # run decoding
+    for _type, offsets in zip(["future", "past"], [np.arange(0, future_offset + 1), np.arange(1, past_offset + 1)]):
+        for offset in offsets:
+            # keep data only where future/past states are defined
+            _df = input_df[input_df[_type][offset].notna()]
+            for fold in _folds:
+                # get training and test data
+                fold_df = folds_df[fold]
+                train_trials, test_trials = (
+                    fold_df.train.unstack().dropna().values,
+                    fold_df.test.unstack().dropna().values,
+                )
+                train_df, test_df = (
+                    _df[_df.trial.isin(train_trials)],
+                    _df[_df.trial.isin(test_trials)],
+                )
+                # get sets of regressors
+                Xtrain_spikes, Xtest_spikes = [df.spike_count.values for df in [train_df, test_df]]
+                if sqrt_spikes:
+                    Xtrain_spikes, Xtest_spikes = np.sqrt(Xtrain_spikes), np.sqrt(Xtest_spikes)
+                Xtrain_pd, Xtest_pd = [
+                    convert.place_direction2onehot(df.place_direction.values, simple_maze=simple_maze)
+                    for df in [train_df, test_df]
+                ]
+                Xtrain_spikes_pd, Xtest_spikes_pd = [
+                    np.concatenate([spikes_reg_weight * X_spikes, X_pd], axis=-1)
+                    for X_spikes, X_pd in zip([Xtrain_spikes, Xtest_spikes], [Xtrain_pd, Xtest_pd])
+                ]
+                for label, (X_test, X_train) in zip(
+                    ["spikes", "place_direction", "spikes_place_direction"],
+                    [
+                        (Xtest_spikes, Xtrain_spikes),
+                        (Xtest_pd, Xtrain_pd),
+                        (Xtest_spikes_pd, Xtrain_spikes_pd),
+                    ],
+                ):
+                    if normalise_X:
+                        X_train, X_test = [
+                            (X - X.mean(0)[None, :]) / (1e-10 + X.std(0)[None, :]) for X in [X_train, X_test]
+                        ]
+                    ylabel_train, ylabel_test = [df[_type][offset].values for df in [train_df, test_df]]
+                    if state_type == "place":
+                        y_train, y_test = [
+                            convert.place2onehot(y, simple_maze=simple_maze).argmax(-1)
+                            for y in [ylabel_train, ylabel_test]
+                        ]
+                    elif state_type == "place_direction":
+                        y_train, y_test = [
+                            convert.place_direction2onehot(y, simple_maze=simple_maze).argmax(-1)
+                            for y in [ylabel_train, ylabel_test]
+                        ]
+                    else:
+                        raise ValueError(f"Unknown state type: {state_type}. Must be 'place' or 'place_direction'.")
+                    # fit model
+                    clf = LogisticRegression(C=1e-0, max_iter=10_000)
+                    clf.fit(X_train, y_train)
+                    score = clf.score(X_test, y_test)
+                    return score
+
     return
 
 
@@ -176,7 +241,8 @@ def get_input_df(
     include_multi_units=True,
     max_steps_to_goal=30,
     resolution=0.1,
-    max_offset=6,
+    past_offset=6,
+    future_offset=6,
     state_type="place",
     min_spikes=300,
 ):
@@ -206,7 +272,9 @@ def get_input_df(
     )
 
     # add future, past state information
-    future_past_df = get_past_and_future_states(navigation_spikes_df, state_type=state_type, max_offset=max_offset)
+    future_past_df = get_past_and_future_states(
+        navigation_spikes_df, state_type=state_type, past_offset=past_offset, future_offset=future_offset
+    )
     navigation_spikes_df = pd.concat([navigation_spikes_df, future_past_df], axis=1)
 
     # filter data
@@ -226,9 +294,15 @@ def get_input_df(
     return navigation_spikes_df
 
 
-def get_past_and_future_states(navigation_spikes_df, state_type="place", max_offset=6):
+def get_past_and_future_states(
+    navigation_spikes_df,
+    state_type="place",
+    past_offset=6,
+    future_offset=6,
+):
     """ """
-    offsets = np.arange(1, max_offset + 1)
+    future_offsets = np.arange(1, future_offset + 1)
+    past_offsets = np.arange(1, past_offset + 1)
 
     if state_type == "place":
         all_states = navigation_spikes_df.maze_position.simple.values
@@ -265,14 +339,16 @@ def get_past_and_future_states(navigation_spikes_df, state_type="place", max_off
         [
             np.vstack(
                 [copy.deepcopy(all_states)]
-                + [np.array([None for _ in range(len(all_states))]) for _ in range(len(offsets))]
+                + [np.array([None for _ in range(len(all_states))]) for _ in range((past_offset + future_offset))]
             )
             for _ in range(2)
         ]
     )  # future and past
 
     # populate this array
-    for itype, type_ in enumerate(["future", "past"]):  # first consider future, then past states
+    for itype, (type_, offsets) in enumerate(
+        zip(["future", "past"], [future_offsets, past_offsets])
+    ):  # first consider future, then past states
         sign = +1 if type_ == "future" else -1  # the sign of our offset
         # boundaries between states going either forwards (to compute future states) or backwards (to compute past)
         dir_boundaries = (
@@ -296,8 +372,9 @@ def get_past_and_future_states(navigation_spikes_df, state_type="place", max_off
                     assert cur_state != next_state  # make sure that we have actually moved
                     next_[inds] = next_state  # store the next state
     output_df = pd.DataFrame(index=navigation_spikes_df.index)  # create a new dataframe to store the results
-    for offset in [0] + list(offsets):  # make this data part of the big dataframe
+    for offset in [0] + list(future_offsets):  # make this data part of the big dataframe
         output_df[("future", offset)] = offset_array[0, offset, :]
+    for offset in [0] + list(past_offsets):  # make this data part of the big dataframe
         output_df[("past", offset)] = offset_array[1, offset, :]
     return output_df
 
