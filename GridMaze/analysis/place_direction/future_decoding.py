@@ -34,14 +34,34 @@ RESULTS_DIR = RESULTS_PATH / "place_direction" / "future_decoding"
 # %% Functions
 
 
-def kris_version(
+def quick_plot(results_df):
+    x = results_df.groupby(["type", "offset", "regressors"]).score.mean().unstack()
+    z = x["spikes_place_direction"] - x["place_direction"]
+    z.loc["future"].plot()
+    z.loc["past"].plot()
+
+
+# %%
+
+
+def get_future_place_decoding_summary(
+    subjects="all",
+    maze_names=["maze_1", "maze_2"],
+    days_on_maze="late",
+):
+    """ """
+    return
+
+
+# %%
+def get_session_future_place_decoding(
     session,
     include_multi_units=True,
     max_steps_to_goal=30,
     resolution=0.1,
-    future_offset=6,
-    past_offset=6,
-    state_type="place",
+    future_offset=10,
+    past_offset=0,
+    state_type="place_direction",
     min_spikes=300,
     sqrt_spikes=True,
     n_folds=5,
@@ -62,35 +82,39 @@ def kris_version(
     # add current place-direction and goal nuissance regressor array
     PD_1hot = convert.place_direction2onehot(navigation_spikes_df.place_direction.values, simple_maze=simple_maze)
     # target values are the location we are at now, and that we will be at at different points in the past/future
-    Ys = np.array([navigation_spikes_df.future.values, navigation_spikes_df.past.values])
+    Yf, Yp = navigation_spikes_df.future.values, navigation_spikes_df.past.values
     #
     #  convert to one-hot for regression
     if state_type == "place":
-        Ys_1hot = np.array([[convert.place2onehot(Y[:, i], simple_maze) for i in range(Y.shape[-1])] for Y in Ys])
+        Yf_1hot, Yp_1hot = [
+            np.array([convert.place2onehot(Y[:, i], simple_maze) for i in range(Y.shape[-1])]) for Y in [Yf, Yp]
+        ]
     elif state_type == "place_direction":
-        Ys_1hot = np.array(
-            [[convert.place_direction2onehot(Y[:, i], simple_maze) for i in range(Y.shape[-1])] for Y in Ys]
-        )
+        Yf_1hot, Yp_1hot = [
+            np.array([convert.place_direction2onehot(Y[:, i], simple_maze) for i in range(Y.shape[-1])])
+            for Y in [Yf, Yp]
+        ]
     else:
         raise ValueError(f"Unknown state type: {state_type}. Must be 'place' or 'place_direction'.")
     if verbose:
         print(
             "amount of data for the future/past at different delays:\nfuture:",
-            Ys_1hot[0].sum((-1, -2)),
+            Yf_1hot.sum((-1, -2)),
             "\npast:",
-            Ys_1hot[1].sum((-1, -2)),
+            Yp_1hot.sum((-1, -2)),
         )
-
     # CRITICALLY: filter data for decision points where past and future up to max_offset are available
     decision_points = get_decision_points(simple_maze)
     at_decision_point = np.array([sa in decision_points for sa in navigation_spikes_df.place_direction.values])
-    future_and_past_avail = Ys_1hot.sum(-1).mean((0, 1)) == 1
+    future_and_past_avail = (Yf_1hot.sum(-1).mean(0) == 1) & (Yp_1hot.sum(-1).mean(0) == 1)
     keep_inds = np.where(future_and_past_avail & at_decision_point)[0]
     if verbose:
         print("keeping", len(keep_inds), "data points")
 
     X_spikes = spike_counts[keep_inds, :]  # spike counts for relevant data
-    Ys_final = Ys_1hot[..., keep_inds, :].argmax(-1)  # future/past location for relevant data
+    Yf_final = Yf_1hot[..., keep_inds, :].argmax(-1)  # future location for relevant data
+    Yp_final = Yp_1hot[..., keep_inds, :].argmax(-1)  # past location for relevant data
+    Ys_final = [Yf_final, Yp_final]
     X_SA = PD_1hot[keep_inds, :]  # state-action regressors for relevant data (can use X_SA or X_SAG)
     trials = navigation_spikes_df.trial.values[keep_inds]  # trial numbers
 
@@ -120,7 +144,7 @@ def kris_version(
     results = Parallel(n_jobs=max_jobs)(
         delayed(_process_fold)(Ys_final, trial_split_inds, n_folds, fold, itype, X, ishift, type, label, verbose)
         for itype, (type, offsets) in enumerate(
-            zip(["future", "past"], [np.arange(0, future_offset + 1), np.arange(1, past_offset + 1)])
+            zip(["future", "past"], [np.arange(0, future_offset + 1), np.arange(0, past_offset + 1)])
         )
         for X, label in zip(possible_Xs, ["spikes", "place_direction", "spikes_place_direction"])
         for ishift in offsets
@@ -134,7 +158,7 @@ def _process_fold(Ys_final, trial_split_inds, n_folds, fold, itype, X, ishift, t
     """"""
     if verbose:
         print(f"Processing fold {fold}, type {type}, offset {ishift} with {label} regressors")
-    y = Ys_final[itype, ishift, :]
+    y = Ys_final[itype][ishift, :]
     # training and test indices
     test, train = trial_split_inds[fold], np.concatenate([trial_split_inds[f] for f in range(n_folds) if f != fold])
     # could do nested crossvalidation to set the regularization strength, but just doing something simple to start
@@ -150,7 +174,6 @@ def _process_fold(Ys_final, trial_split_inds, n_folds, fold, itype, X, ishift, t
     }
 
 
-# %%
 def get_input_df(
     session,
     include_multi_units=True,
