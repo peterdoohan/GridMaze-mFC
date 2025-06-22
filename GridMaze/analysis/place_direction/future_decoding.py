@@ -47,11 +47,12 @@ def kris_version(
     n_folds=5,
     normalise_X=True,
     spikes_reg_weight=0.1,
+    max_jobs=20,
     verbose=True,
 ):
     # input data (see get_input_df for details)
     navigation_spikes_df = get_input_df(
-        session, include_multi_units, max_steps_to_goal, resolution, max_offset, max_offset, state_type, min_spikes
+        session, include_multi_units, max_steps_to_goal, resolution, past_offset, future_offset, state_type, min_spikes
     )
     simple_maze = session.simple_maze()
     # prep data for decoding
@@ -116,8 +117,8 @@ def kris_version(
         ),  # weight spikes to increase effective reg strength w/ more regressors
     ]  # for first one (this worked)
     # run regression for each of these models. Total result shape is (regressions, future vs past, offset, fold)
-    results = Parallel(n_jobs=-1, verbose=verbose)(
-        delayed(_process_fold)(Ys_final, trial_split_inds, n_folds, fold, itype, X, y, ishift, type, label)
+    results = Parallel(n_jobs=max_jobs)(
+        delayed(_process_fold)(Ys_final, trial_split_inds, n_folds, fold, itype, X, ishift, type, label, verbose)
         for itype, (type, offsets) in enumerate(
             zip(["future", "past"], [np.arange(0, future_offset + 1), np.arange(1, past_offset + 1)])
         )
@@ -129,12 +130,13 @@ def kris_version(
     return pd.DataFrame(results)
 
 
-def _process_fold(Ys_final, trial_split_inds, n_folds, fold, itype, X, y, ishift, type, label):
+def _process_fold(Ys_final, trial_split_inds, n_folds, fold, itype, X, ishift, type, label, verbose):
     """"""
+    if verbose:
+        print(f"Processing fold {fold}, type {type}, offset {ishift} with {label} regressors")
     y = Ys_final[itype, ishift, :]
     # training and test indices
     test, train = trial_split_inds[fold], np.concatenate([trial_split_inds[f] for f in range(n_folds) if f != fold])
-
     # could do nested crossvalidation to set the regularization strength, but just doing something simple to start
     clf = LogisticRegression(C=1e-0, max_iter=10_000)
     clf.fit(X[train, :], y[train])  # fit the model
