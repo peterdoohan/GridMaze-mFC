@@ -114,12 +114,64 @@ def _stats(
     ],
 ):
     """ """
+    xs = [c[0] for c in comparisons]
+    ys = np.unique([y for c in comparisons for y in c[1]])
+    stats_df = pd.DataFrame(index=xs, columns=ys, data=np.nan)
     auc = auc_df.groupby("resample").mean().drop(columns=["split"])
     for comparison in comparisons:
         x, ys = comparison
         for y in ys:
-            p_value = (auc[x] < auc[y]).mean()
-            print(f"{x} vs {y}: \n p-value = {p_value:.3f}")
+            stats_df.loc[x, y] = (auc[x] < auc[y]).mean()
+    return stats_df
+
+
+def _plot_auc_comparison(
+    auc_df,
+    conditions=[
+        "neural_data",
+        "true_behaviour",
+        "vector",
+        "forward_diffusion",
+        "optimal",
+        "random_diffusion",
+    ],
+    colors=["red", "blue", "grey", "grey", "grey", "grey"],
+    print_stats=True,
+    comparions=[
+        ("true_behaviour", ("optimal", "random_diffusion", "forward_diffusion", "vector")),
+    ],
+    ax=None,
+):
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(3, 1.5), clear=True)
+    ax.spines[["top", "right"]].set_visible(False)
+    # process AUC data (bottom axis)
+    auc = auc_df.groupby("resample").mean().drop(columns=["split"])
+    mean_auc = auc.mean()
+    auc_lower = auc.quantile(0.025)
+    auc_upper = auc.quantile(0.975)
+    err_lower = mean_auc - auc_lower
+    err_upper = auc_upper - mean_auc
+    for i, (cond, color) in enumerate(zip(conditions, colors)):
+        ax.errorbar(
+            x=mean_auc[cond],
+            y=i,
+            xerr=[[err_lower[cond]], [err_upper[cond]]],
+            fmt="none",
+            color=color,
+            label=cond,
+            capthick=1.5,
+            elinewidth=1.5,
+            capsize=5,
+        )
+    ax.set_yticks(range(len(conditions)), conditions)
+    ax.set_xlim(0.5, 0.85)
+    ax.set_ylim(-0.5, len(conditions) - 0.5)
+    ax.invert_yaxis()
+    if print_stats:
+        print("comparison p-values:")
+        stats_df = _stats(auc_df, comparisons=comparions)
+        print(stats_df)
 
 
 def plot_neural_behavioural_ve_summary(
@@ -162,33 +214,19 @@ def plot_neural_behavioural_ve_summary(
     axes[0].legend(loc="lower right", fontsize=8, frameon=False)
 
     # process AUC data (bottom axis)
-    auc = auc_df.groupby("resample").mean().drop(columns=["split"])
-    mean_auc = auc.mean()
-    auc_lower = auc.quantile(0.025)
-    auc_upper = auc.quantile(0.975)
-    err_lower = mean_auc - auc_lower
-    err_upper = auc_upper - mean_auc
-    for i, (cond, color) in enumerate(zip(conditions, colors)):
-        axes[1].errorbar(
-            x=mean_auc[cond],
-            y=i,
-            xerr=[[err_lower[cond]], [err_upper[cond]]],
-            fmt="none",
-            color=color,
-            label=cond,
-            capthick=1.5,
-            elinewidth=1.5,
-            capsize=5,
-        )
-    axes[1].set_yticks(range(len(conditions)), conditions)
-    axes[1].set_xlim(0.5, 0.85)
-    axes[1].set_ylim(-0.5, len(conditions) - 0.5)
-    axes[1].invert_yaxis()
+    _plot_auc_comparison(
+        auc_df,
+        conditions=conditions,
+        colors=colors,
+        print_stats=False,
+        comparions=None,
+        ax=axes[1],
+    )
 
     if print_stats:
-        _stats(auc_df, comparisons=comparions)
-
-    return
+        print("comparison p-values:")
+        stat_df = _stats(auc_df, comparisons=comparions)
+        print(stat_df)
 
 
 def get_neural_variance_explained_by_synthetic_behaviour(
