@@ -41,16 +41,69 @@ def quick_plot(results_df):
     z.loc["past"].plot()
 
 
+def plot_place_deocoding_summary(future_df, past_df, ax=None):
+    """ """
+    # df = summary_df.groupby(["regressors", "type", "offset", "subject_ID"]).score.mean().unstack().T
+    # diff = (df["spikes_place_direction"] - df["place_direction"])["future"]
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=(3, 3))
+    ax.spines[["top", "right"]].set_visible(False)
+    return
+
+
 # %%
 
 
-def get_future_place_decoding_summary(
+def get_place_decoding_summary(
+    type="future",
+    max_offset=8,
     subjects="all",
     maze_names=["maze_1", "maze_2"],
     days_on_maze="late",
+    save=False,
+    verbose=False,
 ):
     """ """
-    return
+    save_path = RESULTS_DIR / f"{type}_place_decoding_summary.csv"
+    if not save and save_path.exists():
+        if verbose:
+            print(f"Loading existing results from {save_path}")
+        return pd.read_csv(save_path, index_col=0)
+    if verbose:
+        print("Loading sessions ...")
+    sessions = gs.get_maze_sessions(
+        subject_IDs=subjects,
+        maze_names=maze_names,
+        days_on_maze=days_on_maze,
+        with_data=[
+            "navigation_df",
+            "navigation_spike_counts_df",
+            "cluster_metrics",
+        ],
+        must_have_data=True,
+    )
+    dfs = []
+    for session in sessions:
+        if verbose:
+            print(session.name)
+        if type == "future":
+            results_df = get_session_future_place_decoding(
+                session, future_offset=max_offset, past_offset=0, state_type="place_direction"
+            )  # defualt settings
+        elif type == "past":
+            results_df = get_session_future_place_decoding(
+                session, future_offset=0, past_offset=max_offset, state_type="place_direction"
+            )
+        results_df["subject_ID"] = session.subject_ID
+        results_df["maze_name"] = session.maze_name
+        results_df["day_on_maze"] = session.day_on_maze
+        dfs.append(results_df)
+    summary_df = pd.concat(dfs, axis=0)
+    if save:
+        summary_df.to_csv(save_path)
+        if verbose:
+            print(f"Saving results to {save_path}")
+    return summary_df
 
 
 # %%
@@ -59,7 +112,7 @@ def get_session_future_place_decoding(
     include_multi_units=True,
     max_steps_to_goal=30,
     resolution=0.1,
-    future_offset=10,
+    future_offset=8,
     past_offset=0,
     state_type="place_direction",
     min_spikes=300,
