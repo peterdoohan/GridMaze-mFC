@@ -60,7 +60,7 @@ def load_all_cross_maze_matches():
 
 def populate_all_cross_maze_matches(save=True, verbose=True):
     """ """
-    save_path = RESULTS_DIR / "all_cross_maze_matches2.json"
+    save_path = RESULTS_DIR / "all_cross_maze_matches.json"
     if not save and save_path.exists():
         print(f"matches already populated, to repopulate set save=True")
         return
