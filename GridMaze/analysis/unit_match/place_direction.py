@@ -29,8 +29,25 @@ MAZE_PAIR2VALID_DAYS = {
 # %% Functions
 
 
-def get_place_direction_metrics(subject_ID="m2", maze_pair=("maze_1", "maze_2")):
+def get_place_direction_metrics(subject_ID="m2", maze_pair=("maze_1", "maze_2"), verbose=False):
     """ """
+    _maze_pair = f"{maze_pair[0]}.{maze_pair[1]}"
+    dfs = []
+    for maze in maze_pair:
+        if verbose:
+            print(f"Loading sessions for {subject_ID} on {maze} maze")
+        sessions = gs.get_maze_sessions(
+            subject_IDs=[subject_ID],
+            maze_names=[maze],
+            days_on_maze=MAZE_PAIR2VALID_DAYS[_maze_pair][maze],
+            with_data=[
+                "navigation_df",
+                "navigation_spike_rates_df",
+                "cluster_metrics",
+                "cluster_place_direction_tuning_metrics",
+            ],
+            must_have_data=True,
+        )
     return
 
 
