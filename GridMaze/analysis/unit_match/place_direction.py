@@ -82,6 +82,7 @@ def get_heatmaps(subject_ID="m2", maze_pair=("maze_1", "maze_2"), verbose=False)
             print(f"generating place-direction heatmaps")
         maze_heatmaps = pdr.get_population_place_direction_tuning(
             sessions=sessions,
+            include_multi_unit=True,  # sometimes units are single unit in one recording and multi-unit in another
             fill_nans=False,
             normalisation=False,
             min_split_corr=None,

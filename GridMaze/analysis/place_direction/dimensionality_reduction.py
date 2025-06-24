@@ -80,10 +80,12 @@ def get_population_place_direction_tuning(
     late_sessions=True,
     sessions=None,
     return_list=False,
+    include_multi_unit=False,
     fill_nans="mean",
     normalisation="length",
     min_split_corr=0.5,
     max_steps_to_goal=30,
+    place_direction_tuned=True,
     verbose=False,
 ):
     """ """
@@ -110,10 +112,12 @@ def get_population_place_direction_tuning(
             print(session.name)
         df = get_session_place_direction_tuning(
             session,
+            include_multi_unit=include_multi_unit,
             fill_nans=fill_nans,
             normalisation=normalisation,
             min_split_corr=min_split_corr,
             max_steps_from_goal=max_steps_to_goal,
+            place_direction_tuned=place_direction_tuned,
         )
         if df is None:
             continue  # not pd tuned clusters
@@ -131,6 +135,7 @@ def get_population_place_direction_tuning(
 def get_session_place_direction_tuning(
     session,
     navigation_rates_df=None,
+    include_multi_unit=False,
     fill_nans="mean",
     normalisation="length",
     place_direction_tuned=True,
@@ -151,21 +156,24 @@ def get_session_place_direction_tuning(
     simple_maze = session.simple_maze()
     pd_tuning_metrics = session.cluster_place_direction_tuning_metrics
     if navigation_rates_df is None:
-        navigation_rates_df = session.get_navigation_activity_df(type="rates", cluster_kwargs={"single_units": True})
+        navigation_rates_df = session.get_navigation_activity_df(
+            type="rates", cluster_kwargs={"single_units": True, "multi_units": include_multi_unit}
+        )
     # filter for place_direction tuned clusters (roughly partitioned via split correlations)
     # see analysis/processing/get_place_direction_tuning_metrics.py
-    cluster_filters = [pd_tuning_metrics.single_unit]
+    cluster_filters = []
     if place_direction_tuned:
         cluster_filters.append(pd_tuning_metrics.place_direction_tuned)
     if min_split_corr is not None:
         cluster_filters.append(pd_tuning_metrics.split_half_corr.value.ge(min_split_corr))
-    keep_clusters = pd_tuning_metrics[np.logical_and.reduce(cluster_filters)].index
-    if len(keep_clusters) == 0:
-        if verbose:
-            print(f"No place-direction cluster found with split_half_corr >= {min_split_corr}")
-        return None
-    reject_clusters = [c for c in navigation_rates_df.firing_rate.columns.values if c not in keep_clusters]
-    navigation_rates_df = navigation_rates_df.drop([("firing_rate", c) for c in reject_clusters], axis=1)
+    if len(cluster_filters) > 0:
+        keep_clusters = pd_tuning_metrics[np.logical_and.reduce(cluster_filters)].index
+        if len(keep_clusters) == 0:
+            if verbose:
+                print(f"No place-direction cluster found with split_half_corr >= {min_split_corr}")
+            return None
+        reject_clusters = [c for c in navigation_rates_df.firing_rate.columns.values if c not in keep_clusters]
+        navigation_rates_df = navigation_rates_df.drop([("firing_rate", c) for c in reject_clusters], axis=1)
     # get average place direction tuning
     place_direction_df = spatial._get_place_direction_df(
         simple_maze,
