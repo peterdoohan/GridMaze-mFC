@@ -41,13 +41,63 @@ def quick_plot(results_df):
     z.loc["past"].plot()
 
 
-def plot_place_deocoding_summary(future_df, past_df, ax=None):
+def plot_place_deocoding_summary(future_df, past_df=None, normalise=False, colors=["violet", "lightskyblue"], ax=None):
     """ """
-    # df = summary_df.groupby(["regressors", "type", "offset", "subject_ID"]).score.mean().unstack().T
-    # diff = (df["spikes_place_direction"] - df["place_direction"])["future"]
+    # set up figure
     if ax is None:
-        fig, ax = plt.subplots(1, 1, figsize=(3, 3))
+        fig, ax = plt.subplots(1, 1, figsize=(5, 2))
     ax.spines[["top", "right"]].set_visible(False)
+    ax.axhline(0, color="k", linestyle="--", linewidth=0.5)
+    ax.set_xlabel("Steps in the past/future")
+    ax.set_ylabel("Decoding accuracy \n (chance norm.)")
+
+    for _type, df, color in zip(["future", "past"], [future_df, past_df], colors):
+        if df is None:
+            continue
+        df = df[df.type == _type]
+        # average over folds
+        scores_df = (
+            df.groupby(["subject_ID", "regressors", "offset"]).score.mean().unstack(level=(1, 2))
+        )  # [subjects, regressors x offsets]
+        pd_scores, spike_scores, pd_spikes_scores = (
+            scores_df["place_direction"],
+            scores_df["spikes"],
+            scores_df["spikes_place_direction"],
+        )
+
+        diff = pd_spikes_scores - pd_scores
+        # normalise
+        if normalise:
+            metric = diff / (1 - pd_scores)
+        else:
+            metric = diff
+        # plot
+        mean = metric.mean()
+        mean_ = mean[mean.index > 0]
+        mean_0 = mean[mean.index == 0]
+        sem = metric.sem()
+        sem_ = sem[sem.index > 0]
+        sem_0 = sem[sem.index == 0]
+        x_0 = mean_0.index.values
+        x_ = mean_.index.values
+        if _type == "past":
+            x_ = -x_
+        ax.errorbar(
+            x_0,
+            mean_0.values,
+            yerr=sem_0.values,
+            marker="o",
+            color="grey",
+        )
+        ax.errorbar(
+            x_,
+            mean_.values,
+            yerr=sem_.values,
+            label=_type,
+            marker="o",
+            color=color,
+            linestyle="-",
+        )
     return
 
 
