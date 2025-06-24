@@ -10,6 +10,8 @@ from collections import Counter
 
 from GridMaze.analysis.core import unit_matching as um
 from GridMaze.analysis.core import get_clusters as gc
+from GridMaze.analysis.core import get_sessions as gs
+from GridMaze.analysis.core import convert
 
 # %% Global Variables
 
@@ -55,18 +57,36 @@ def get_permuted_cluster_matches(subject_ID="m2", maze_pair=("maze_1", "maze_2")
     return permuted_matches
 
 
-def _session_pair2n_matches(subject_ID, maze_pair=("maze_1", "maze_2")):
+def _session_pair2n_matches(all_matches):
     """ """
-    true_matches = get_cross_maze_matches(subject_ID, maze_pair[0], maze_pair[1])
-    match_session_names = [[c.split("_")[0] for c in m] for m in true_matches]
+    match_session_names = [[c.split("_")[0] for c in m] for m in all_matches]
     session_pair_counts = Counter(tuple(pair) for pair in match_session_names)
     return dict(session_pair_counts)
 
 
-def _session_name2single_units(subject_ID="m2", maze_pair=("maze_1", "maze_2")):
+def _session_name2available_units(
+    subject_ID="m2",
+    maze_pair=("maze_1", "maze_2"),
+    single_units=True,
+    tuning_metric=None,
+    min_split_half_corr=None,
+):
     """
-    Note unit-match only considers single units when doing matching
+    for given subject and maze pair which defines a set of valid sessions,
+    filter through the avialble units in each of those valid sessions under the
+    specified criteria in the unit, same as get_cross_maze_matches
     """
+    # define data needed
+    with_data = ["cluster_metrics"]
+    if tuning_metric == "distance_to_goal":
+        with_data.append("cluster_distance_tuning_metrics")
+    elif tuning_metric == "place_direction":
+        with_data.append("cluster_place_direction_tuning_metrics")
+    elif tuning_metric == "egocentric_action":
+        with_data.append("cluster_egocentric_action_tuning_metrics")
+    else:
+        ValueError(f"Unknown tuning metric: {tuning_metric}")
+
     _maze_pair = f"{maze_pair[0]}.{maze_pair[1]}"
     session_name2single_units = {}
     for maze in maze_pair:
@@ -74,16 +94,29 @@ def _session_name2single_units(subject_ID="m2", maze_pair=("maze_1", "maze_2")):
             subject_IDs=[subject_ID],
             maze_names=[maze],
             days_on_maze=MAZE_PAIR2VALID_DAYS[_maze_pair][maze],
-            with_data=["cluster_metrics"],
+            with_data=with_data,
             must_have_data=True,
         )
         for session in sessions:
-            df = session.cluster_metrics
-            session_info = session.session_info
-            single_units = df[df.single_unit].cluster_ID
-            session_name2single_units[session.name] = list(
-                convert.cluster_IDs2scluster_unique_IDs(session_info, single_units)
-            )
+            if tuning_metric is None:
+                df = session.cluster_metrics
+                session_info = session.session_info
+                if single_units:
+                    avail_units = df[df.single_unit].cluster_ID
+                else:
+                    avail_units = df[df.single_unit | df.multi_unit].cluster_ID
+                avail_units = convert.cluster_IDs2scluster_unique_IDs(session_info, avail_units)
+            else:
+                if tuning_metric == "distance_to_goal":
+                    df = session.cluster_distance_tuning_metrics
+                elif tuning_metric == "place_direction":
+                    df = session.cluster_place_direction_tuning_metrics
+                elif tuning_metric == "egocentric_action":
+                    df = session.cluster_egocentric_action_tuning_metrics
+                # single unit by default when filtering for tuning
+                avail_units = df[df.split_half_corr.value.gt(min_split_half_corr)].cluster_unique_ID
+
+            session_name2single_units[session.name] = list(avail_units)
     return session_name2single_units
 
 
@@ -92,9 +125,8 @@ def _session_name2single_units(subject_ID="m2", maze_pair=("maze_1", "maze_2")):
 
 def get_cross_maze_matches(
     subject,
-    maze_A,
-    maze_B,
-    single_unit=True,
+    maze_pair,
+    single_units=True,
     tuning_metric=None,
     split_half_corr=None,
     return_as="cluster_unique_ID",
@@ -103,10 +135,15 @@ def get_cross_maze_matches(
     """ """
     # load cached matched units
     subject2cross_maze_matches = load_all_cross_maze_matches()
+    # load metrics for filtering
+    if tuning_metric is not None:
+        metrics_df = _get_metrics_df(subject, maze_pair, tuning_metric)
+
+    maze_A, maze_B = maze_pair
     maze_pair = f"{maze_A}.{maze_B}"
     all_matches = subject2cross_maze_matches[subject][maze_pair]
     # apply filters
-    if single_unit:
+    if single_units:
         # check both matched clusters are single units
         NotImplementedError
     if tuning_metric is not None:
@@ -133,6 +170,15 @@ def get_cross_maze_matches(
         return matched_clusters
     else:
         raise ValueError(f"Unknown return_as value: {return_as}. Use 'cluster_unique_ID' or 'cluster_objects'.")
+
+
+def get_valid_clusters(subject, maze_pair, single_units=True, tuning_metric=None, split_half_corr=None):
+    return
+
+
+def _get_metrics_df(subject, maze_pair, tuning_metric):
+    """ """
+    return
 
 
 # %% populate and load functions
