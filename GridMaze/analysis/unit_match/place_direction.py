@@ -55,14 +55,13 @@ def test(maze_pair=("maze_1", "maze_2"), min_split_half_corr=0.3, verbose=True):
                 sessions=sessions,
                 include_multi_unit=False,
                 fill_nans="mean",
-                normalisation=False,
+                normalisation="length",
                 min_split_corr=min_split_half_corr,
                 max_steps_to_goal=30,
                 verbose=False,
             )
         )
     heatmaps_A, heatmaps_B = heatmaps
-    return heatmaps_A, heatmaps_B
     # load all clusters matched across maze pair
     all_matches = []
     for subject_ID in SUBJECT_IDS:
@@ -72,11 +71,12 @@ def test(maze_pair=("maze_1", "maze_2"), min_split_half_corr=0.3, verbose=True):
             single_units=True,
             tuning_metric="place_direction",
             min_split_half_corr=min_split_half_corr,
-            return_as="cluster_unique_ID",
+            return_as="cluster_objects",
             verbose=verbose,
         )
         all_matches.extend(matches)
-    return all_matches
+    #
+    return heatmaps_A, heatmaps_B
 
 
 # %% true vs permuted place-direction tuning correlation across mazes
