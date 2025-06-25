@@ -4,52 +4,88 @@ Library for anlysing place-direction single cell tuning patterns across mazes.
 
 # %% Imports
 import json
-import random
 import numpy as np
 import pandas as pd
-from collections import Counter
-from copy import copy
 
 from GridMaze.maze import representations as mr
 from GridMaze.analysis.core import get_sessions as gs
-from GridMaze.analysis.core import convert
 from GridMaze.analysis.place_direction import dimensionality_reduction as pdr
 from GridMaze.analysis.unit_match import get_across_maze_matches as mm
 
 # %% Global Variables
 from GridMaze.paths import RESULTS_PATH, EXPERIMENT_INFO_PATH
 
+from GridMaze.analysis.unit_match.get_across_maze_matches import MAZE_PAIR2VALID_DAYS
+
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as f:
     SUBJECT_IDS = json.load(f)
 
 RESULTS_DIR = RESULTS_PATH / "unit_match" / "place_direction"
 
-MAZE_PAIR2VALID_DAYS = {
-    "maze_1.maze_2": {"maze_1": [10, 11, 12, 13], "maze_2": [1, 2, 3, 4, 5, 6, 7]},
-    "maze_2.rooms_maze": {"maze_2": [9, 10, 11], "rooms_maze": [1, 2, 3, 4, 5, 6, 7]},
-}
 
-# %% Load data functions
+# %% true vs permuted place-direction tuning correlation across mazes
 
 
-def get_place_direction_metrics(subject_ID="m2", maze_pair=("maze_1", "maze_2"), verbose=False):
+def test(
+    subject_ID="m2",
+    maze_pair=("maze_1", "maze_2"),
+    single_units=True,
+    min_split_half_corr=None,
+    n_permutations=1_000,
+    verbose=True,
+):
     """ """
-    _maze_pair = f"{maze_pair[0]}.{maze_pair[1]}"
-    dfs = []
-    for maze in maze_pair:
+    # get matches units
+    if verbose:
+        print("Loading true and permuted cross-maze cluster matches ...")
+    tuning_metric = None if min_split_half_corr is None else "place_direction"
+    true_matches = mm.get_cross_maze_matches(
+        subject_ID, maze_pair, single_units, tuning_metric, min_split_half_corr, return_as="cluster_unique_ID"
+    )
+    permuted_matches = mm.get_permuted_cross_maze_matches(
+        subject_ID, maze_pair, n_permutations, single_units, tuning_metric, min_split_half_corr
+    )
+    # get all heatmaps
+    if verbose:
+        print("Loading place-direction heatmaps ...")
+    all_heatmaps = get_heatmaps(subject_ID, maze_pair)
+    # get true cross-maze correlation
+    if verbose:
+        print("Calculating true cross-maze correlations ...")
+    true_matches = np.array(true_matches)
+    hm_A = all_heatmaps.loc[true_matches[:, 0]]
+    hm_B = all_heatmaps.loc[true_matches[:, 1]]
+    true_corrs = get_heatmap_corrs(hm_A, hm_B, method="spearman")
+    # get permuted cross-maze correlations
+    if verbose:
+        print("Calculating permuted cross-maze correlations ...")
+    permuted_corrs = np.zeros((n_permutations, len(true_corrs)))
+    for i, perm_matches in enumerate(permuted_matches):
         if verbose:
-            print(f"Loading sessions for {subject_ID} on {maze} maze")
-        sessions = gs.get_maze_sessions(
-            subject_IDs=[subject_ID],
-            maze_names=[maze],
-            days_on_maze=MAZE_PAIR2VALID_DAYS[_maze_pair][maze],
-            with_data=["cluster_place_direction_tuning_metrics"],
-            must_have_data=True,
-        )
-        for session in sessions:
-            df = session.cluster_place_direction_tuning_metrics
-            dfs.append(df[df.single_unit])
-    return pd.concat(dfs, axis=0)
+            print(i)
+        perm_matches = np.array(permuted_matches[i])
+        hm_A = all_heatmaps.loc[perm_matches[:, 0]]
+        hm_B = all_heatmaps.loc[perm_matches[:, 1]]
+        permuted_corrs[i] = get_heatmap_corrs(hm_A, hm_B, method="spearman")
+    return true_corrs, permuted_corrs
+
+
+# %% get heatmaps
+
+
+def get_heatmap_corrs(hm_A, hm_B, method="spearman"):
+    """
+    correlates each row of hm_A with the corresponding row of hm_B
+    row = heatmap (raw firing rates with NaNs in unvisited place-directions)
+    """
+    # not the most efficient way but can easily handle nans
+    n_matches = hm_A.shape[0]
+    corrs = np.zeros(n_matches)
+    for i in range(n_matches):
+        corrs[i] = hm_A.iloc[i].corr(
+            hm_B.iloc[i], method=method
+        )  # pandas corr deals with nans (unvitised pds in either maze)
+    return corrs
 
 
 def get_heatmaps(subject_ID="m2", maze_pair=("maze_1", "maze_2"), verbose=False):
@@ -97,61 +133,6 @@ def get_heatmaps(subject_ID="m2", maze_pair=("maze_1", "maze_2"), verbose=False)
     all_heatmaps = pd.concat(dfs, axis=0)
     all_heatmaps = all_heatmaps.droplevel(1, axis=0).sort_index(axis=1)
     return all_heatmaps
-
-
-# %% Msic
-
-
-def get_permuted_cluster_matches(subject_ID="m2", maze_pair=("maze_1", "maze_2"), n_permutations=1000):
-    """ """
-    # get number of matches for each session pair in true data (match for each permutation)
-    session_pair2count = _session_pair2n_matches(subject_ID, maze_pair)
-    # get all availble in a session for matching
-    session_name2single_units = _session_name2single_units(subject_ID, maze_pair)
-    # get permuted matches
-    permuted_matches = []
-    for _ in range(n_permutations):
-        pseudo_matches = []
-        for session_pair, n_matches in session_pair2count.items():
-            A_units, B_units = [copy(session_name2single_units[s]) for s in session_pair]
-            random.shuffle(A_units),
-            random.shuffle(B_units)
-            random_matches = list(zip(A_units[:n_matches], B_units[:n_matches]))
-            pseudo_matches.extend(random_matches)
-        permuted_matches.append(pseudo_matches)
-    return permuted_matches
-
-
-def _session_pair2n_matches(subject_ID, maze_pair=("maze_1", "maze_2")):
-    """ """
-    true_matches = mm.get_cross_maze_matches(subject_ID, maze_pair[0], maze_pair[1])
-    match_session_names = [[c.split("_")[0] for c in m] for m in true_matches]
-    session_pair_counts = Counter(tuple(pair) for pair in match_session_names)
-    return dict(session_pair_counts)
-
-
-def _session_name2single_units(subject_ID="m2", maze_pair=("maze_1", "maze_2")):
-    """
-    Note unit-match only considers single units when doing matching
-    """
-    _maze_pair = f"{maze_pair[0]}.{maze_pair[1]}"
-    session_name2single_units = {}
-    for maze in maze_pair:
-        sessions = gs.get_maze_sessions(
-            subject_IDs=[subject_ID],
-            maze_names=[maze],
-            days_on_maze=MAZE_PAIR2VALID_DAYS[_maze_pair][maze],
-            with_data=["cluster_metrics"],
-            must_have_data=True,
-        )
-        for session in sessions:
-            df = session.cluster_metrics
-            session_info = session.session_info
-            single_units = df[df.single_unit].cluster_ID
-            session_name2single_units[session.name] = list(
-                convert.cluster_IDs2scluster_unique_IDs(session_info, single_units)
-            )
-    return session_name2single_units
 
 
 def get_common_maze_place_directions(maze_A, maze_B):

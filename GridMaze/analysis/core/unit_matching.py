@@ -46,7 +46,8 @@ from IPython.display import Image, display
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import convert
 from GridMaze.analysis.core import get_clusters as gc
-from GridMaze.preprocessing import get_data_directory as gdd
+
+# from GridMaze.preprocessing import get_data_directory as gdd
 from GridMaze.analysis.core import load_data
 
 # import UnitMatchPy
