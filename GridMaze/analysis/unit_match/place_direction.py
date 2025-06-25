@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib import pyplot as plt
+from scipy.stats import ttest_rel
 
 from GridMaze.maze import representations as mr
 from GridMaze.maze import plotting as mp
@@ -28,6 +29,24 @@ RESULTS_DIR = RESULTS_PATH / "unit_match" / "place_direction"
 
 
 # %% cross-maze NMF/PCA components
+
+
+def plot_cross_maze_pca_components(mhm_df, maze_pair, n_components=10, cmap="coolwarm", axes=None):
+    """ """
+    # setup fig
+    if axes is None:
+        f, axes = plt.subplots(2, n_components, figsize=(6 * n_components, 12))
+    # process data
+    nmf_df = pdr.get_pca_df(mhm_df, n_components=n_components)
+    simple_maze_A, simple_maze_B = [mr.get_simple_maze(m) for m in maze_pair]
+    for i in range(n_components):
+        c = nmf_df[i]
+        for j, simple_maze in enumerate([simple_maze_A, simple_maze_B]):
+            _c = c.loc[maze_pair[j]]
+            mp.plot_directed_heatmap(simple_maze, _c, axes[j, i], colormap=cmap, allow_negative=True)
+    axes[0, 0].set_title(f"{maze_pair[0]} maze")
+    axes[1, 0].set_title(f"{maze_pair[1]} maze")
+    return
 
 
 def plot_cross_maze_nmf_components(mhm_df, maze_pair, n_components=10, cmap="Reds", axes=None):
@@ -111,7 +130,7 @@ def get_matched_heatmaps_df(
 # %% true vs permuted place-direction tuning correlation across mazes
 
 
-def plot_cross_maze_corrs_summary(results, ax=None):
+def plot_cross_maze_corrs_summary(results, print_stats=True, ax=None):
     """ """
     # setup fig
     if ax is None:
@@ -154,12 +173,25 @@ def plot_cross_maze_corrs_summary(results, ax=None):
     ax.set_xticklabels(["True", "Permuted"])
     ax.set_ylabel("place-direction tuning corr.")
     ax.set_xlabel("cross-maze\nmatched neurons")
-    return
+    if print_stats:
+        _get_stats(results)
 
 
-def _get_stats_df():
+def _get_stats(results):
     """ """
-    return
+    # get subject p-values
+    df = pd.DataFrame(index=SUBJECT_IDS, columns=["p_value"])
+    for subject_ID, data in results.items():
+        true = np.mean(data["true_corrs"])
+        permuted_means = np.nanmean(data["permuted_corrs"], axis=1)
+        df.loc[subject_ID, "p_value"] = (true < permuted_means).mean()
+    print("Subject p-values:")
+    print(df)
+    # get random effects p-value
+    true = [np.mean(data["true_corrs"]) for data in results.values()]
+    permuted = [np.mean(np.nanmean(data["permuted_corrs"], axis=1)) for data in results.values()]
+    t_stat, p_value = ttest_rel(true, permuted)
+    print(f"Random effects t-statistic: {t_stat:.3f}, p-value: {p_value:.3f}")
 
 
 def get_cross_maze_corr_summary(
