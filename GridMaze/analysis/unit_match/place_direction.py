@@ -24,7 +24,30 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as f:
 RESULTS_DIR = RESULTS_PATH / "unit_match" / "place_direction"
 
 
+# %% cross-maze NMF/PCA components
+
+
+def test(maze_pair=("maze_1", "maze_2"), min_split_half_corr=0.3, verbose=True):
+    """ """
+    for subject_ID in SUBJECT_IDS:
+        true_matches = mm.get_cross_maze_matches(
+            subject_ID,
+            maze_pair,
+            single_units=True,
+            tuning_metric="place_direction",
+            min_split_half_corr=min_split_half_corr,
+            return_as="cluster_unique_ID",
+            verbose=verbose,
+        )
+    return
+
+
 # %% true vs permuted place-direction tuning correlation across mazes
+
+
+def plot_cross_maze_corrs_summary():
+    """ """
+    return
 
 
 def get_cross_maze_corr_summary(
