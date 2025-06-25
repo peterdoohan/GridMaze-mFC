@@ -24,11 +24,6 @@ RESULTS_DIR = RESULTS_PATH / "unit_match" / "across_maze_matches"
 
 # valid days where cells can be matched between probe advancements
 # see experiment_info/probe_depths.htsv
-TISSUE_SAMPLE2MAZE_DAYS = {
-    "B": {"maze_1": [10, 11, 12, 13], "maze_2": [1, 2, 3, 4, 5, 6, 7]},
-    "C": {"maze_2": [9, 10, 11], "rooms_maze": [1, 2, 3, 4, 5, 6, 7]},
-}
-
 MAZE_PAIR2VALID_DAYS = {
     "maze_1.maze_2": {"maze_1": [10, 11, 12, 13], "maze_2": [1, 2, 3, 4, 5, 6, 7]},
     "maze_2.rooms_maze": {"maze_2": [9, 10, 11], "rooms_maze": [1, 2, 3, 4, 5, 6, 7]},
@@ -37,18 +32,30 @@ MAZE_PAIR2VALID_DAYS = {
 # %% get permuted/speduo matches
 
 
-def get_permuted_cluster_matches(subject_ID="m2", maze_pair=("maze_1", "maze_2"), n_permutations=1000):
-    """ """
-    # get number of matches for each session pair in true data (match for each permutation)
-    session_pair2count = _session_pair2n_matches(subject_ID, maze_pair)
-    # get all availble in a session for matching
-    session_name2single_units = _session_name2single_units(subject_ID, maze_pair)
+def get_permuted_cross_maze_matches(
+    subject_ID, maze_pair, n_permutations=1000, single_units=True, tuning_metric=None, min_split_half_corr=None
+):
+    """
+    Generates random matches between paired sessions for true unit matching aross mazes for a given subject.
+    Matches the statistics of the true number of matches in each session pair and applies the same filtering
+    for single units, tuning to some metric (see get_cross_maze_matches for details) as when finding true matches.
+    """
+    # get true matches
+    true_matches = get_cross_maze_matches(
+        subject_ID, maze_pair, single_units, tuning_metric, min_split_half_corr, return_as="cluster_unique_ID"
+    )
+    # count number of matches per session pair to match sampling stats in permutations
+    session_pair2count = _session_pair2n_matches(true_matches)
+    # get all availble with same filtering criteria for true matches
+    session_name2avail_units = _get_available_units(
+        subject_ID, maze_pair, single_units, tuning_metric, min_split_half_corr, return_as="dict"
+    )
     # get permuted matches
     permuted_matches = []
     for _ in range(n_permutations):
         pseudo_matches = []
         for session_pair, n_matches in session_pair2count.items():
-            A_units, B_units = [copy(session_name2single_units[s]) for s in session_pair]
+            A_units, B_units = [copy.copy(session_name2avail_units[s]) for s in session_pair]
             random.shuffle(A_units),
             random.shuffle(B_units)
             random_matches = list(zip(A_units[:n_matches], B_units[:n_matches]))
@@ -64,12 +71,66 @@ def _session_pair2n_matches(all_matches):
     return dict(session_pair_counts)
 
 
-def _session_name2available_units(
-    subject_ID="m2",
-    maze_pair=("maze_1", "maze_2"),
+# %% get matched clusters
+
+
+def get_cross_maze_matches(
+    subject_ID,
+    maze_pair,
     single_units=True,
     tuning_metric=None,
     min_split_half_corr=None,
+    return_as="cluster_unique_ID",
+    verbose=False,
+):
+    """
+    Loads cached unit match results for a given subject and maze pair,
+    filters those matches based on input critreria, eg only single units with place-direction split-halfs
+    correlation above some threshold
+
+    valid tuning metrics: place_direction, distance_to_goal, egocentric_action
+
+    returns list of either paired cluster unique IDs or cluster objects
+    """
+    # load cached matched units
+    subject2cross_maze_matches = load_all_cross_maze_matches()
+    maze_A, maze_B = maze_pair
+    _maze_pair = f"{maze_A}.{maze_B}"
+    all_matches = subject2cross_maze_matches[subject_ID][_maze_pair]
+    # get valid units for the given single_units, tuning_metric, split_half_corr inputs
+    valid_units = _get_available_units(
+        subject_ID, maze_pair, single_units, tuning_metric, min_split_half_corr, return_as="list"
+    )
+    # check that each pair of matches are valid
+    matches = []
+    for unit_1, unit_2 in all_matches:
+        # check if both units are valid
+        if unit_1 in valid_units and unit_2 in valid_units:
+            matches.append((unit_1, unit_2))
+
+    if len(matches) == 0:
+        if verbose:
+            print(f"No matches found for {subject_ID}, {maze_A}.{maze_B} with the given criteria.")
+        return None
+    # return
+    if verbose:
+        print(f"Found {len(matches)} matches for {subject_ID}, {maze_A}.{maze_B}, with the given criteria.")
+    if return_as == "cluster_unique_ID":
+        return matches
+    elif return_as == "cluster_objects":
+        matched_clusters = [[gc.get_cluster(cluster_unique_ID) for cluster_unique_ID in match] for match in matches]
+        return matched_clusters
+    else:
+        raise ValueError(f"Unknown return_as value: {return_as}. Use 'cluster_unique_ID' or 'cluster_objects'.")
+
+
+def _get_available_units(
+    subject_ID,
+    maze_pair,
+    single_units=True,
+    tuning_metric=None,
+    min_split_half_corr=None,
+    return_as="dict",
 ):
     """
     for given subject and maze pair which defines a set of valid sessions,
@@ -107,78 +168,30 @@ def _session_name2available_units(
                     avail_units = df[df.single_unit | df.multi_unit].cluster_ID
                 avail_units = convert.cluster_IDs2scluster_unique_IDs(session_info, avail_units)
             else:
+                # only have metrics calculated for single units
+                assert single_units
                 if tuning_metric == "distance_to_goal":
                     df = session.cluster_distance_tuning_metrics
+                    avail_units = df[df.split_half_corr.value.gt(min_split_half_corr)].cluster_unique_ID
+
                 elif tuning_metric == "place_direction":
                     df = session.cluster_place_direction_tuning_metrics
+                    avail_units = df[df.split_half_corr.value.gt(min_split_half_corr)].index
                 elif tuning_metric == "egocentric_action":
                     df = session.cluster_egocentric_action_tuning_metrics
+                    avail_units = df[df.split_half_corr.value.gt(min_split_half_corr)].cluster_unique_ID
                 # single unit by default when filtering for tuning
-                avail_units = df[df.split_half_corr.value.gt(min_split_half_corr)].cluster_unique_ID
-
             session_name2single_units[session.name] = list(avail_units)
-    return session_name2single_units
-
-
-# %% get matched clusters
-
-
-def get_cross_maze_matches(
-    subject,
-    maze_pair,
-    single_units=True,
-    tuning_metric=None,
-    split_half_corr=None,
-    return_as="cluster_unique_ID",
-    verbose=False,
-):
-    """ """
-    # load cached matched units
-    subject2cross_maze_matches = load_all_cross_maze_matches()
-    # load metrics for filtering
-    if tuning_metric is not None:
-        metrics_df = _get_metrics_df(subject, maze_pair, tuning_metric)
-
-    maze_A, maze_B = maze_pair
-    maze_pair = f"{maze_A}.{maze_B}"
-    all_matches = subject2cross_maze_matches[subject][maze_pair]
-    # apply filters
-    if single_units:
-        # check both matched clusters are single units
-        NotImplementedError
-    if tuning_metric is not None:
-        # check both clustes are tunned to a particular metric
-        assert split_half_corr is not None
-        if tuning_metric == "distance_to_goal":
-            NotImplementedError
-        elif tuning_metric == "place_direction":
-            NotImplementedError
-        elif tuning_metric == "egocentric_action":
-            NotImplementedError
-        else:
-            raise ValueError(f"Unknown tuning metric: {tuning_metric}")
+    if return_as == "dict":
+        return session_name2single_units
+    elif return_as == "list":
+        # return a list of all available units across all sessions
+        all_units = []
+        for session_name, units in session_name2single_units.items():
+            all_units.extend(units)
+        return all_units
     else:
-        matches = all_matches
-
-    # return
-    if verbose:
-        print(f"Found {len(matches)} matches for {subject}, {maze_A}.{maze_B}")
-    if return_as == "cluster_unique_ID":
-        return matches
-    elif return_as == "cluster_objects":
-        matched_clusters = [[gc.get_cluster(cluster_unique_ID) for cluster_unique_ID in match] for match in matches]
-        return matched_clusters
-    else:
-        raise ValueError(f"Unknown return_as value: {return_as}. Use 'cluster_unique_ID' or 'cluster_objects'.")
-
-
-def get_valid_clusters(subject, maze_pair, single_units=True, tuning_metric=None, split_half_corr=None):
-    return
-
-
-def _get_metrics_df(subject, maze_pair, tuning_metric):
-    """ """
-    return
+        raise ValueError(f"Unknown return_as value: {return_as}. Use 'dict' or 'list'.")
 
 
 # %% populate and load functions
@@ -205,7 +218,7 @@ def populate_all_cross_maze_matches(save=True, verbose=True):
     subject2cross_maze_matches = {}
     for subject in SUBJECT_IDS:
         maze_pair2matches = {}
-        for tissue_sample, maze_days in TISSUE_SAMPLE2MAZE_DAYS.items():
+        for maze_pair, maze_days in MAZE_PAIR2VALID_DAYS.items():
             maze_A, maze_B = maze_days.keys()
             A_days, B_days = maze_days.values()
             all_matches = []
@@ -221,7 +234,7 @@ def populate_all_cross_maze_matches(save=True, verbose=True):
                 raise ValueError(f"No matches for {subject}, {maze_A}-{maze_B}")
             if verbose:
                 print(f"Found {len(all_matches)} matches for {subject}, {maze_A}.{maze_B}")
-            maze_pair2matches[f"{maze_A}.{maze_B}"] = all_matches
+            maze_pair2matches[maze_pair] = all_matches
         subject2cross_maze_matches[subject] = maze_pair2matches
     if save:
         RESULTS_DIR.mkdir(parents=True, exist_ok=True)
