@@ -7,9 +7,11 @@ import json
 import h5py
 import numpy as np
 import pandas as pd
+import seaborn as sns
 from matplotlib import pyplot as plt
 
 from GridMaze.maze import representations as mr
+from GridMaze.maze import plotting as mp
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.unit_match import get_across_maze_matches as mm
 from GridMaze.analysis.place_direction import dimensionality_reduction as pdr
@@ -28,19 +30,25 @@ RESULTS_DIR = RESULTS_PATH / "unit_match" / "place_direction"
 # %% cross-maze NMF/PCA components
 
 
-def plot_cross_maze_nmf_components(mhm_df, maze_pair=("maze_1", "maze_2"), n_components=8, cmap="Reds", axes=None):
+def plot_cross_maze_nmf_components(mhm_df, maze_pair, n_components=10, cmap="Reds", axes=None):
     """ """
     # setup fig
     if axes is None:
-        f, axes = plt.subplots(1, n_components, figsize=(6 * n_components, 6))
+        f, axes = plt.subplots(2, n_components, figsize=(6 * n_components, 12))
     # process data
     nmf_df = pdr.get_nmf_df(mhm_df, n_components=n_components)
     simple_maze_A, simple_maze_B = [mr.get_simple_maze(m) for m in maze_pair]
-    return
+    for i in range(n_components):
+        c = nmf_df[i]
+        for j, simple_maze in enumerate([simple_maze_A, simple_maze_B]):
+            _c = c.loc[maze_pair[j]]
+            mp.plot_directed_heatmap(simple_maze, _c, axes[j, i], colormap=cmap)
+    axes[0, 0].set_title(f"{maze_pair[0]} maze")
+    axes[1, 0].set_title(f"{maze_pair[1]} maze")
 
 
-def get_joint_heatmaps_df(
-    maze_pair=("maze_1", "maze_2"), min_split_half_corr=0.3, fill_nans="mean", normalisation="length", verbose=True
+def get_matched_heatmaps_df(
+    maze_pair=("maze_1", "maze_2"), min_split_half_corr=0.3, fill_nans="mean", normalisation="length", verbose=False
 ):
     """ """
     # load heatmaps
@@ -103,7 +111,53 @@ def get_joint_heatmaps_df(
 # %% true vs permuted place-direction tuning correlation across mazes
 
 
-def plot_cross_maze_corrs_summary():
+def plot_cross_maze_corrs_summary(results, ax=None):
+    """ """
+    # setup fig
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(2, 3))
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.axhline(0, color="k", linestyle="--", alpha=0.5)
+    colors = sns.color_palette("hls", len(SUBJECT_IDS))
+    offset = 0.05
+    for i, (subject_ID, data) in enumerate(results.items()):
+        true = data["true_corrs"]  # 1
+        true_mean = np.mean(true)
+        true_sem = np.std(true) / np.sqrt(len(true))
+        permuted_means = np.nanmean(data["permuted_corrs"], axis=1)  # n_permutations
+        permuted_grand_mean = np.nanmean(permuted_means)
+        permuted_lower_CI = np.percentile(permuted_means, 2.5)
+        permuted_upper_CI = np.percentile(permuted_means, 97.5)
+        ax.errorbar(
+            0 + i * offset,
+            true_mean,
+            yerr=true_sem,
+            fmt="o",
+            color=colors[i],
+            label=subject_ID,
+            capsize=0,
+            elinewidth=2,
+        )
+        ax.errorbar(
+            1 + i * offset,
+            permuted_grand_mean,
+            yerr=[[permuted_grand_mean - permuted_lower_CI], [permuted_upper_CI - permuted_grand_mean]],
+            fmt="o",
+            color=colors[i],
+            capsize=0,
+            elinewidth=2,
+        )
+    x_mid = len(SUBJECT_IDS) * offset / 2
+    ax.legend()
+    ax.set_xlim(-1 * x_mid, 1 + 3 * x_mid)
+    ax.set_xticks([0 + x_mid, 1 + x_mid])
+    ax.set_xticklabels(["True", "Permuted"])
+    ax.set_ylabel("place-direction tuning corr.")
+    ax.set_xlabel("cross-maze\nmatched neurons")
+    return
+
+
+def _get_stats_df():
     """ """
     return
 
@@ -113,8 +167,8 @@ def get_cross_maze_corr_summary(
     single_units=True,
     min_split_half_corr=None,
     n_permutations=1_000,
-    save=True,
-    verbose=True,
+    save=False,
+    verbose=False,
 ):
     """ """
     _maze_pair = f"{maze_pair[0]}.{maze_pair[1]}"
