@@ -4,15 +4,15 @@ Library for anlysing place-direction single cell tuning patterns across mazes.
 
 # %% Imports
 import json
+import h5py
 import numpy as np
 import pandas as pd
-import h5py
-from seaborn import heatmap
+from matplotlib import pyplot as plt
 
 from GridMaze.maze import representations as mr
 from GridMaze.analysis.core import get_sessions as gs
-from GridMaze.analysis.place_direction import dimensionality_reduction as pdr
 from GridMaze.analysis.unit_match import get_across_maze_matches as mm
+from GridMaze.analysis.place_direction import dimensionality_reduction as pdr
 
 # %% Global Variables
 from GridMaze.paths import RESULTS_PATH, EXPERIMENT_INFO_PATH
@@ -28,7 +28,20 @@ RESULTS_DIR = RESULTS_PATH / "unit_match" / "place_direction"
 # %% cross-maze NMF/PCA components
 
 
-def test(maze_pair=("maze_1", "maze_2"), min_split_half_corr=0.3, verbose=True):
+def plot_cross_maze_nmf_components(mhm_df, maze_pair=("maze_1", "maze_2"), n_components=8, cmap="Reds", axes=None):
+    """ """
+    # setup fig
+    if axes is None:
+        f, axes = plt.subplots(1, n_components, figsize=(6 * n_components, 6))
+    # process data
+    nmf_df = pdr.get_nmf_df(mhm_df, n_components=n_components)
+    simple_maze_A, simple_maze_B = [mr.get_simple_maze(m) for m in maze_pair]
+    return
+
+
+def get_joint_heatmaps_df(
+    maze_pair=("maze_1", "maze_2"), min_split_half_corr=0.3, fill_nans="mean", normalisation="length", verbose=True
+):
     """ """
     # load heatmaps
     heatmaps = []
@@ -54,8 +67,8 @@ def test(maze_pair=("maze_1", "maze_2"), min_split_half_corr=0.3, verbose=True):
             pdr.get_population_place_direction_tuning(
                 sessions=sessions,
                 include_multi_unit=False,
-                fill_nans="mean",
-                normalisation="length",
+                fill_nans=fill_nans,  # for later DR
+                normalisation=normalisation,  # for later DR
                 min_split_corr=min_split_half_corr,
                 place_direction_tuned=False,
                 max_steps_to_goal=30,
@@ -77,11 +90,14 @@ def test(maze_pair=("maze_1", "maze_2"), min_split_half_corr=0.3, verbose=True):
         )
         all_matches.extend(matches)
     all_matches = np.array(all_matches)
-    # get matched heatmaps (mhm)
-    mhm_A = heatmaps_A.loc[all_matches[:, 0]].droplevel(1, axis=0)
-    mhm_B = heatmaps_B.loc[all_matches[:, 1]].droplevel(1, axis=0)
-    # do dimesionality reduction on joint heatmap tuning
-    return all_matches
+    # index matched clusters in maze_A, maze_B heatmaps
+    mhm_A = heatmaps_A.loc[all_matches[:, 0]].droplevel(1, axis=0).reset_index(drop=True)
+    mhm_A.columns = pd.MultiIndex.from_tuples([(maze_pair[0], *c) for c in mhm_A.columns])
+    mhm_B = heatmaps_B.loc[all_matches[:, 1]].droplevel(1, axis=0).reset_index(drop=True)
+    mhm_B.columns = pd.MultiIndex.from_tuples([(maze_pair[1], *c) for c in mhm_B.columns])
+    # combine
+    mhm_df = pd.concat([mhm_A, mhm_B], axis=1)
+    return mhm_df
 
 
 # %% true vs permuted place-direction tuning correlation across mazes
