@@ -57,6 +57,7 @@ def test(maze_pair=("maze_1", "maze_2"), min_split_half_corr=0.3, verbose=True):
                 fill_nans="mean",
                 normalisation="length",
                 min_split_corr=min_split_half_corr,
+                place_direction_tuned=False,
                 max_steps_to_goal=30,
                 verbose=False,
             )
@@ -71,12 +72,16 @@ def test(maze_pair=("maze_1", "maze_2"), min_split_half_corr=0.3, verbose=True):
             single_units=True,
             tuning_metric="place_direction",
             min_split_half_corr=min_split_half_corr,
-            return_as="cluster_objects",
+            return_as="cluster_unique_ID",
             verbose=verbose,
         )
         all_matches.extend(matches)
-    #
-    return heatmaps_A, heatmaps_B
+    all_matches = np.array(all_matches)
+    # get matched heatmaps (mhm)
+    mhm_A = heatmaps_A.loc[all_matches[:, 0]].droplevel(1, axis=0)
+    mhm_B = heatmaps_B.loc[all_matches[:, 1]].droplevel(1, axis=0)
+    # do dimesionality reduction on joint heatmap tuning
+    return all_matches
 
 
 # %% true vs permuted place-direction tuning correlation across mazes
