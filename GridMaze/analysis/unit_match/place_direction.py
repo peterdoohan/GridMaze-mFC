@@ -6,6 +6,7 @@ Library for anlysing place-direction single cell tuning patterns across mazes.
 import json
 import numpy as np
 import pandas as pd
+import h5py
 
 from GridMaze.maze import representations as mr
 from GridMaze.analysis.core import get_sessions as gs
@@ -26,7 +27,53 @@ RESULTS_DIR = RESULTS_PATH / "unit_match" / "place_direction"
 # %% true vs permuted place-direction tuning correlation across mazes
 
 
-def test(
+def get_cross_maze_corr_summary(
+    maze_pair=("maze_1", "maze_2"),
+    single_units=True,
+    min_split_half_corr=None,
+    n_permutations=1_000,
+    save=True,
+    verbose=True,
+):
+    """ """
+    _maze_pair = f"{maze_pair[0]}.{maze_pair[1]}"
+    save_path = RESULTS_DIR / f"{_maze_pair}.corr_summary.h5"
+    if not save and save_path.exists():
+        if verbose:
+            print(f"Loading cross-maze correlation summary from {save_path}")
+        out = {}
+        with h5py.File(save_path, "r") as f:
+            for subj_id, grp in f.items():
+                out[subj_id] = {"true_corrs": grp["true_corrs"][()], "permuted_corrs": grp["permuted_corrs"][()]}
+        return out
+    results = {}
+    for subject_ID in SUBJECT_IDS:
+        if verbose:
+            print(f"processing subject: {subject_ID}")
+        true_corrs, permuted_corrs = get_cross_maze_place_direction_corrs(
+            subject_ID=subject_ID,
+            maze_pair=maze_pair,
+            single_units=single_units,
+            min_split_half_corr=min_split_half_corr,
+            n_permutations=n_permutations,
+            verbose=verbose,
+        )
+        results[subject_ID] = {
+            "true_corrs": true_corrs,
+            "permuted_corrs": permuted_corrs,
+        }
+    if save:
+        if verbose:
+            print(f"Saving cross-maze correlation summary to {save_path}")
+        with h5py.File(save_path, "w") as f:
+            for subject_ID, subject_results in results.items():
+                grp = f.create_group(subject_ID)
+                grp.create_dataset("true_corrs", data=subject_results["true_corrs"])
+                grp.create_dataset("permuted_corrs", data=subject_results["permuted_corrs"])
+    return results
+
+
+def get_cross_maze_place_direction_corrs(
     subject_ID="m2",
     maze_pair=("maze_1", "maze_2"),
     single_units=True,
@@ -40,7 +87,13 @@ def test(
         print("Loading true and permuted cross-maze cluster matches ...")
     tuning_metric = None if min_split_half_corr is None else "place_direction"
     true_matches = mm.get_cross_maze_matches(
-        subject_ID, maze_pair, single_units, tuning_metric, min_split_half_corr, return_as="cluster_unique_ID"
+        subject_ID,
+        maze_pair,
+        single_units,
+        tuning_metric,
+        min_split_half_corr,
+        return_as="cluster_unique_ID",
+        verbose=verbose,
     )
     permuted_matches = mm.get_permuted_cross_maze_matches(
         subject_ID, maze_pair, n_permutations, single_units, tuning_metric, min_split_half_corr
