@@ -7,6 +7,7 @@ import json
 import numpy as np
 import pandas as pd
 import h5py
+from seaborn import heatmap
 
 from GridMaze.maze import representations as mr
 from GridMaze.analysis.core import get_sessions as gs
@@ -29,8 +30,43 @@ RESULTS_DIR = RESULTS_PATH / "unit_match" / "place_direction"
 
 def test(maze_pair=("maze_1", "maze_2"), min_split_half_corr=0.3, verbose=True):
     """ """
+    # load heatmaps
+    heatmaps = []
+    _maze_pair = f"{maze_pair[0]}.{maze_pair[1]}"
+    for maze in maze_pair:
+        if verbose:
+            print(f"Loading sessions for {maze} maze")
+        sessions = gs.get_maze_sessions(
+            subject_IDs="all",
+            maze_names=[maze],
+            days_on_maze=MAZE_PAIR2VALID_DAYS[_maze_pair][maze],
+            with_data=[
+                "navigation_df",
+                "navigation_spike_rates_df",
+                "cluster_metrics",
+                "cluster_place_direction_tuning_metrics",
+            ],
+            must_have_data=True,
+        )
+        if verbose:
+            print(f"generating place-direction heatmaps")
+        heatmaps.append(
+            pdr.get_population_place_direction_tuning(
+                sessions=sessions,
+                include_multi_unit=False,
+                fill_nans="mean",
+                normalisation=False,
+                min_split_corr=min_split_half_corr,
+                max_steps_to_goal=30,
+                verbose=False,
+            )
+        )
+    heatmaps_A, heatmaps_B = heatmaps
+    return heatmaps_A, heatmaps_B
+    # load all clusters matched across maze pair
+    all_matches = []
     for subject_ID in SUBJECT_IDS:
-        true_matches = mm.get_cross_maze_matches(
+        matches = mm.get_cross_maze_matches(
             subject_ID,
             maze_pair,
             single_units=True,
@@ -39,7 +75,8 @@ def test(maze_pair=("maze_1", "maze_2"), min_split_half_corr=0.3, verbose=True):
             return_as="cluster_unique_ID",
             verbose=verbose,
         )
-    return
+        all_matches.extend(matches)
+    return all_matches
 
 
 # %% true vs permuted place-direction tuning correlation across mazes
