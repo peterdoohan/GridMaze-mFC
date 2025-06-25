@@ -1018,7 +1018,7 @@ def get_SVM_prob_matrix(subject_ID, unitmatch_df=None):
 # %% 5. Functions for QC of UnitMatch matches.
 
 
-def get_pairwise_report(cluster_a, cluster_b, save=True):
+def get_pairwise_report(cluster_a, cluster_b, save=True, save_path=None):
     """Generates a plot to quality control a pair of matched clusters.
     INPUT: two cluster objects and an optional save toggle
     OUTPUT: a plot overlaying average waveforms, waveform trajectories, and distribution of spikes.
@@ -1082,7 +1082,7 @@ def get_pairwise_report(cluster_a, cluster_b, save=True):
         text_b = cluster_b.cluster_unique_ID
 
         # Set up the figure and axes.
-        fig = plt.figure(figsize=(10, 4))
+        fig = plt.figure(figsize=(6, 4))
         subfigs = fig.subfigures(1, 2, wspace=0.07, width_ratios=[1, 3])  # large column to left,
         axsLeft = subfigs[0].subplots(1, 1)
         axs = subfigs[1].subplots(2, 2)
@@ -1148,9 +1148,11 @@ def get_pairwise_report(cluster_a, cluster_b, save=True):
             corr_normalised = corr_values / max(corr_values)
             axs[1, 1].plot(bins[:-1], corr_normalised, linestyle="-", alpha=0.5)
         fig.tight_layout()
-        if save:
+        if save and save_path is None:
             fig.savefig(save_path_a / filename, bbox_inches="tight")
             fig.savefig(save_path_b / filename, bbox_inches="tight")
+        elif save and save_path is not None:
+            fig.savefig(save_path, bbox_inches="tight")
     return
 
 
@@ -1191,23 +1193,18 @@ def cluster_obj2preprocessed_data_path(cluster_obj):
     else:
         # we need to map cluster ID's to unitmatch reports. This is as follows:
         data_paths_df = gdd.get_sessions_data_directory()  # gridmaze utility function
+        data_paths_df["date"] = data_paths_df["date"].apply(lambda x: x.isoformat())
         datetimes = []
         unit_id = []
 
-        subject_ID, date, session_type = cluster_obj.name.split(".")
+        subject_ID, _date, session_type = cluster_obj.name.split(".")
 
         filtered_df = data_paths_df.query(
-            f'subject_ID=="{subject_ID}" and date=="{date}" and session_type=="{session_type}"'
+            f'subject_ID=="{subject_ID}" and date=="{date.fromisoformat(_date)}" and session_type=="{session_type}"'
         )
-        for each_part in Path(filtered_df["ephys_path"].values[0]).parts:
-            # going over a loop of all file path parts, since multi-probe data may have slight variation in the order in the filepath that datetime appears in
-            try:
-                dt = datetime.strptime(each_part, "%Y-%m-%d_%H-%M-%S").isoformat()
-            except:
-                continue
-            datetimes.append(dt)
+        spikesorting_path = filtered_df.spikesorting_path.values[0]
 
-    return preprocessed_data_path / "spikesorting" / subject_ID / dt
+        return Path(spikesorting_path)
 
 
 # %% Unit match subfunctions
