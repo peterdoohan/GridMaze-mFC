@@ -8,7 +8,7 @@ import h5py
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from matplotlib import pyplot as plt
+from matplotlib import axes, pyplot as plt
 from scipy.stats import ttest_rel
 
 from GridMaze.maze import representations as mr
@@ -364,3 +364,21 @@ def get_common_maze_place_directions(maze_A, maze_B):
     B_pd = mr.get_maze_place_direction_pairs(maze_B)
     common_pds = set(A_pd).intersection(set(B_pd))
     return list(common_pds)
+
+
+# %% Misc
+def plot_all_subject_matched_clusters(subject="m3", maze_pair=("maze_1", "maze_2")):
+    """ """
+    matched_clusters = mm.get_cross_maze_matches(
+        subject,
+        maze_pair,
+        single_units=True,
+        return_as="cluster_objects",
+    )
+    for i, pair in enumerate(matched_clusters):
+        f, axes = plt.subplots(1, 2, figsize=(12, 6))
+        for Clust, ax in zip(pair, axes):
+            Clust.plot_tuning(feature="place_direction", ax=ax)
+            ax.set_title(f"{Clust.cluster_unique_ID}")
+        f.suptitle(f"Match {i}")
+        plt.show()
