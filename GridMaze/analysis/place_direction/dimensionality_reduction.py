@@ -20,6 +20,27 @@ from GridMaze.analysis.core import get_sessions as gs
 # %% Functions
 
 
+def plot_pca_components(population_tuning_df, simple_maze, n_components=8, cmap="coolwarm_r", axes=None):
+    pca_df = get_pca_df(population_tuning_df, n_components)
+    if axes is None:
+        f, axes = plt.subplots(1, n_components, figsize=(6 * n_components, 6))
+    for i in range(n_components):
+        c = pca_df[i]
+        ax = axes[i]
+        mp.plot_directed_heatmap(
+            simple_maze,
+            c,
+            ax,
+            colormap=cmap,
+            allow_negative=True,
+            silhouette_node_size=500,
+            silhouette_edge_size=10,
+            star_base_length=0.045,
+            max_point_length=0.03,
+        )
+    return
+
+
 def plot_nmf_components(population_tuning_df, simple_maze, n_components=8, cmap="Reds", axes=None):
     """ """
     nmf_df = get_nmf_df(population_tuning_df, n_components)
@@ -38,8 +59,6 @@ def plot_nmf_components(population_tuning_df, simple_maze, n_components=8, cmap=
             star_base_length=0.045,
             max_point_length=0.03,
         )
-
-    return
 
 
 def get_nmf_df(
