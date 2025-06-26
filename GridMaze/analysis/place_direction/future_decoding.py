@@ -21,6 +21,7 @@ from GridMaze.analysis.core import downsample as ds
 from GridMaze.analysis.core import convert
 
 from GridMaze.maze import representations as mr
+from GridMaze.maze import plotting as mp
 
 # %% Global Variables
 
@@ -420,7 +421,7 @@ def get_past_and_future_states(
     return output_df
 
 
-def get_decision_points(simple_maze):
+def get_decision_points(simple_maze, mode="future", return_as="strings", plot=False):
     """
     Computes and returns the set of decision point identifiers in a given maze.
 
@@ -437,15 +438,25 @@ def get_decision_points(simple_maze):
     deltas = {(1, 0): "E", (-1, 0): "W", (0, 1): "N", (0, -1): "S"}  # mapping from action vector to direction
     decision_points = set()
     for node1 in simple_maze.nodes:
-        for node2 in simple_maze.neighbors(node1):  #
-            if len(list(simple_maze.neighbors(node2))) >= 3:
-
+        for node2 in simple_maze.neighbors(node1):
+            check_node = node2 if mode == "future" else node1
+            other_node = node1 if mode == "future" else node2
+            if len(list(simple_maze.neighbors(check_node))) >= 3:
                 dir_ = deltas[tuple(np.array(node2) - np.array(node1))]
                 decision_points.add(
-                    coord2label[node1] + "_" + dir_
+                    (coord2label[other_node], dir_)
                 )  # going in this direction from node1 yields a decision point
                 try:
-                    decision_points.add(coord2label[(node1, node2)] + "_" + dir_)
+                    edge = coord2label[(node1, node2)]
                 except:
-                    decision_points.add(coord2label[(node2, node1)] + "_" + dir_)
-    return decision_points
+                    edge = coord2label[(node2, node1)]
+                decision_points.add((edge, dir_))
+    if plot:
+        dps = pd.Series(index=pd.MultiIndex.from_tuples(list(decision_points)), data=1)
+        mp.plot_directed_heatmap(simple_maze, dps, colormap="Greys", colorbar=False)
+    if return_as == "tuples":
+        return decision_points
+    elif return_as == "strings":
+        return {f"{label}_{dir_}" for label, dir_ in decision_points}
+    else:
+        raise ValueError(f"Unknown return_as type: {return_as}. Must be 'tuples' or 'strings'.")
