@@ -106,7 +106,7 @@ def plot_place_deocoding_summary(future_df, past_df=None, normalise=False, color
 
 
 def get_place_decoding_summary(
-    type="future",
+    mode="future",
     max_offset=8,
     subjects="all",
     maze_names=["maze_1", "maze_2"],
@@ -115,7 +115,7 @@ def get_place_decoding_summary(
     verbose=False,
 ):
     """ """
-    save_path = RESULTS_DIR / f"{type}_place_decoding_summary.csv"
+    save_path = RESULTS_DIR / f"{mode}_place_decoding_summary.csv"
     if not save and save_path.exists():
         if verbose:
             print(f"Loading existing results from {save_path}")
@@ -137,14 +137,9 @@ def get_place_decoding_summary(
     for session in sessions:
         if verbose:
             print(session.name)
-        if type == "future":
-            results_df = get_session_future_place_decoding(
-                session, future_offset=max_offset, past_offset=0, state_type="place_direction"
-            )  # defualt settings
-        elif type == "past":
-            results_df = get_session_future_place_decoding(
-                session, future_offset=0, past_offset=max_offset, state_type="place_direction"
-            )
+        results_df = get_session_future_place_decoding(
+            session, mode=mode, offset=max_offset, state_type="place_direction"
+        )  # defualt settings
         results_df["subject_ID"] = session.subject_ID
         results_df["maze_name"] = session.maze_name
         results_df["day_on_maze"] = session.day_on_maze
