@@ -12,6 +12,8 @@ import pandas as pd
 from joblib import Parallel, delayed
 import matplotlib.pyplot as plt
 from sklearn.linear_model import LogisticRegression
+from scipy.stats import ttest_1samp
+from statsmodels.stats.multitest import multipletests
 
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import get_clusters as gc
@@ -35,14 +37,26 @@ RESULTS_DIR = RESULTS_PATH / "place_direction" / "future_decoding"
 # %% Functions
 
 
-def quick_plot(results_df):
-    x = results_df.groupby(["type", "offset", "regressors"]).score.mean().unstack()
-    z = x["spikes_place_direction"] - x["place_direction"]
-    z.loc["future"].plot()
-    z.loc["past"].plot()
+def _get_stats_df(future_df, past_df):
+    """ """
+    stats_df = pd.DataFrame(index=np.arange(1, future_df.offset.max() + 1), columns=["future", "past"])
+    for mode, df in zip(["future", "past"], [future_df, past_df]):
+        if df is None:
+            continue
+        scores_df = df.groupby(["subject_ID", "regressors", "offset"]).score.mean().unstack(level=(1, 2))
+        diff = scores_df["spikes_place_direction"] - scores_df["place_direction"]
+        diff = diff.drop(columns=[0])
+        # ttest each offset
+        p_values = ttest_1samp(diff.values, 0, axis=0, alternative="greater").pvalue
+        # correct for multiple comparisons
+        reject, pvals_corrected, _, _ = multipletests(p_values, method="fdr_bh", alpha=0.05)
+        stats_df.loc[:, mode] = pvals_corrected
+    return stats_df
 
 
-def plot_place_deocoding_summary(future_df, past_df=None, normalise=False, colors=["violet", "lightskyblue"], ax=None):
+def plot_place_deocoding_summary(
+    future_df, past_df=None, normalise=False, colors=["violet", "lightskyblue"], print_stats=True, ax=None
+):
     """ """
     # set up figure
     if ax is None:
@@ -52,10 +66,9 @@ def plot_place_deocoding_summary(future_df, past_df=None, normalise=False, color
     ax.set_xlabel("Steps in the past/future")
     ax.set_ylabel("Decoding accuracy \n (chance norm.)")
 
-    for _type, df, color in zip(["future", "past"], [future_df, past_df], colors):
+    for mode, df, color in zip(["future", "past"], [future_df, past_df], colors):
         if df is None:
             continue
-        df = df[df.type == _type]
         # average over folds
         scores_df = (
             df.groupby(["subject_ID", "regressors", "offset"]).score.mean().unstack(level=(1, 2))
@@ -81,7 +94,7 @@ def plot_place_deocoding_summary(future_df, past_df=None, normalise=False, color
         sem_0 = sem[sem.index == 0]
         x_0 = mean_0.index.values
         x_ = mean_.index.values
-        if _type == "past":
+        if mode == "past":
             x_ = -x_
         ax.errorbar(
             x_0,
@@ -94,12 +107,18 @@ def plot_place_deocoding_summary(future_df, past_df=None, normalise=False, color
             x_,
             mean_.values,
             yerr=sem_.values,
-            label=_type,
+            label=mode,
             marker="o",
             color=color,
             linestyle="-",
         )
-    return
+    max_offset = future_df.offset.max()
+    ax.set_xticks(np.arange(-max_offset, max_offset + 1, 2))
+    ax.set_xticklabels(np.arange(-max_offset, max_offset + 1, 2))
+    if print_stats:
+        stats_df = _get_stats_df(future_df, past_df)
+        print("offset pvalues:")
+        print(stats_df)
 
 
 # %%
