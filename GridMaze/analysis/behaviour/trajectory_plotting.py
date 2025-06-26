@@ -2,7 +2,8 @@
 
 # %% imports
 import numpy as np
-from ...maze import plotting as mp
+import pandas as pd
+from GridMaze.maze import plotting as mp
 import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter1d
 import matplotlib.colors as mcolors
@@ -12,6 +13,24 @@ from matplotlib.colors import Normalize
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 # %% Global variables
+
+
+# %%
+
+
+def plot_place_direction_trajectory(session, trial=20, ax=None):
+    """ """
+    # process data
+    simple_maze = session.simple_maze()
+    traj_df = session.trajectory_decisions_df
+    trial_df = traj_df[(traj_df.trial == trial) & (traj_df.trial_phase == "navigation")]
+    place_directions = list(set(zip(trial_df.maze_position, trial_df.action)))
+    pd_values = pd.Series(index=pd.MultiIndex.from_tuples(place_directions), data=1, dtype=float)
+    # plotting
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=(5, 5))
+    mp.plot_directed_heatmap(simple_maze, pd_values, ax=ax, colormap="Greys", colorbar=False)
+
 
 # %%
 
