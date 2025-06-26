@@ -283,8 +283,8 @@ def get_input_df(
     include_multi_units=True,
     max_steps_to_goal=30,
     resolution=0.1,
-    past_offset=6,
-    future_offset=6,
+    mode="future",
+    offset=6,
     state_type="place",
     min_spikes=300,
 ):
@@ -315,9 +315,11 @@ def get_input_df(
 
     # add future, past state information
     future_past_df = get_past_and_future_states(
-        navigation_spikes_df, state_type=state_type, past_offset=past_offset, future_offset=future_offset
+        navigation_spikes_df, state_type=state_type, past_offset=offset, future_offset=offset
     )
-    navigation_spikes_df = pd.concat([navigation_spikes_df, future_past_df], axis=1)
+    navigation_spikes_df = pd.concat(
+        [navigation_spikes_df, future_past_df.xs(mode, axis=1, level=0, drop_level=False)], axis=1
+    )
 
     # filter data
     navigation_spikes_df = filt.filter_navigation_rates_df(
@@ -418,6 +420,8 @@ def get_past_and_future_states(
         output_df[("future", offset)] = offset_array[0, offset, :]
     for offset in [0] + list(past_offsets):  # make this data part of the big dataframe
         output_df[("past", offset)] = offset_array[1, offset, :]
+    # convert to multiindex
+    output_df.columns = pd.MultiIndex.from_tuples(output_df.columns)
     return output_df
 
 
