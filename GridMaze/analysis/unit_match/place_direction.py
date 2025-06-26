@@ -62,8 +62,8 @@ def plot_cross_maze_nmf_components(mhm_df, maze_pair, n_components=10, cmap="Red
         for j, simple_maze in enumerate([simple_maze_A, simple_maze_B]):
             _c = c.loc[maze_pair[j]]
             mp.plot_directed_heatmap(simple_maze, _c, axes[j, i], colormap=cmap)
-    axes[0, 0].set_title(f"{maze_pair[0]} maze")
-    axes[1, 0].set_title(f"{maze_pair[1]} maze")
+    axes[0, 0].set_title(f"{maze_pair[0]}")
+    axes[1, 0].set_title(f"{maze_pair[1]}")
 
 
 def get_matched_heatmaps_df(

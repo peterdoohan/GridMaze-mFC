@@ -1027,20 +1027,26 @@ def get_pairwise_report(cluster_a, cluster_b, save=True, save_path=None):
            this is computed with reference to cluster_a as the first split-half."""
 
     # We want to save each plot as we make it so we can retrieve faster later:
+    if save_path is None:
+        save_path_a = (
+            RESULTS_PATH
+            / "unit_match_reports"
+            / f"{cluster_a.subject_ID}"
+            / f"{cluster_a.processed_data_path.parts[-1]}"
+        )
+        save_path_a.mkdir(exist_ok=True, parents=True)
+        save_path_b = (
+            RESULTS_PATH
+            / "unit_match_reports"
+            / f"{cluster_b.subject_ID}"
+            / f"{cluster_b.processed_data_path.parts[-1]}"
+        )
+        save_path_b.mkdir(exist_ok=True, parents=True)
+        filename = f"{cluster_a.cluster_unique_ID}X{cluster_b.cluster_unique_ID}.jpg"
 
-    save_path_a = (
-        RESULTS_PATH / "unit_match_reports" / f"{cluster_a.subject_ID}" / f"{cluster_a.processed_data_path.parts[-1]}"
-    )
-    save_path_a.mkdir(exist_ok=True, parents=True)
-    save_path_b = (
-        RESULTS_PATH / "unit_match_reports" / f"{cluster_b.subject_ID}" / f"{cluster_b.processed_data_path.parts[-1]}"
-    )
-    save_path_b.mkdir(exist_ok=True, parents=True)
-    filename = f"{cluster_a.cluster_unique_ID}X{cluster_b.cluster_unique_ID}.jpg"
-
-    # Quickly check if already saved:
-    if (save_path_a / filename).exists() or (save_path_b / filename).exists():
-        display(Image(filename=(save_path_a / filename)))
+        # Quickly check if already saved:
+        if (save_path_a / filename).exists() or (save_path_b / filename).exists():
+            display(Image(filename=(save_path_a / filename)))
     else:  # otherwise generate!
         # Run unitmatch pairwise
         processed_paths = [x.processed_data_path for x in [cluster_a, cluster_b]]
