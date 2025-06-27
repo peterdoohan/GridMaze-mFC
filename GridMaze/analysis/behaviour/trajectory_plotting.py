@@ -18,7 +18,7 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 # %%
 
 
-def plot_place_direction_trajectory(session, trial=20, ax=None):
+def plot_place_direction_trajectory(session, trial=46, ax=None):
     """ """
     # process data
     simple_maze = session.simple_maze()
