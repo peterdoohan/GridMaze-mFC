@@ -38,7 +38,9 @@ MAZE_PAIRS = [("maze_1", "maze_2"), ("maze_2", "rooms_maze")]
 def plot_matched_distance_tuning_heatmaps(
     tc_A, tc_B, order_by=0, smooth_SD=2, normalisation_method="zscore", cmap="coolwarm", ax=None
 ):
-    """ """
+    """
+    Update to split into positive and negative gamma fits
+    """
     # convert to numpy
     A = tc_A.values
     B = tc_B.values
@@ -111,7 +113,6 @@ def get_matched_distance_tuning_dfs(
             get_tuning_curves(subject_ID="all", maze_pair=maze_pair, include_metrics=True, verbose=verbose)
         )
     all_tuning_curves = pd.concat(all_tuning_curves, axis=0)
-    return all_matches, all_tuning_curves
     # index tuning curves
     tc_A = all_tuning_curves.loc[all_matches[:, 0]]
     tc_B = all_tuning_curves.loc[all_matches[:, 1]]
@@ -256,7 +257,7 @@ def get_tuning_curves(subject_ID="m2", maze_pair=("maze_1", "maze_2"), include_m
             must_have_data=True,
         )
         if verbose:
-            print(f"Generating distance-to-gol tuning curves...")
+            print(f"Generating distance-to-goal tuning curves...")
         for session in sessions:
             if verbose:
                 print(session.name)
@@ -271,20 +272,13 @@ def get_tuning_curves(subject_ID="m2", maze_pair=("maze_1", "maze_2"), include_m
                 metrics_df = session.cluster_distance_tuning_metrics
                 if metrics_df.index.name == "cluster_unique_ID":
                     metrics_df = metrics_df.reset_index()
-                metrics_df = metrics_df[metrics_df.single_unit & metrics_df.distance_tuned]
-                distance_tuning_df = distance_tuning_df[
-                    distance_tuning_df.cluster_unique_ID.isin(metrics_df.cluster_unique_ID)
-                ]
+                metrics_df = metrics_df[metrics_df.single_unit]
                 metrics_df.set_index("cluster_unique_ID", inplace=True)
-                df = pd.merge(  # conbine tuning curves and (precomputed) tuning curve fit metrics
-                    df,
-                    metrics_df,
-                    on="cluster_unique_ID",
-                    how="inner",
-                )
-            df.append(dfs)
+                df = pd.concat([df, metrics_df], axis=1)
+            dfs.append(df)
 
     all_tuning_curves = pd.concat(dfs, axis=0)
+
     return all_tuning_curves
 
 
