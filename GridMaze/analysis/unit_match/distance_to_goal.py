@@ -36,45 +36,61 @@ MAZE_PAIRS = [("maze_1", "maze_2"), ("maze_2", "rooms_maze")]
 
 
 def plot_matched_distance_tuning_heatmaps(
-    tc_A, tc_B, order_by=0, smooth_SD=2, normalisation_method="zscore", cmap="coolwarm", ax=None
+    tc_A, tc_B, smooth_SD=2, normalisation_method="zscore", cmap="coolwarm", v_range=(-2, 2), axes=None
 ):
-    """
-    Update to split into positive and negative gamma fits
-    """
-    # convert to numpy
-    A = tc_A.values
-    B = tc_B.values
+    """ """
+    pos_mask = tc_A["gamma_4p"]["size"].ge(0).values
+    neg_mask = tc_A["gamma_4p"]["size"].lt(0).values
+    A_pos_df, B_pos_df = tc_A[pos_mask].copy(), tc_B[pos_mask].copy()
+    A_neg_df, B_neg_df = tc_A[neg_mask].copy(), tc_B[neg_mask].copy()
+    x = A_pos_df.distance_to_goal.columns.values.astype(float)
+    # order pos
+    pos_idx_max = A_pos_df.apply(lambda row: dpt.get_idx_order(row, x, fit="gamma_4p", op="max"), axis=1).values
+    A_pos_df.loc[:, ("idx_max", "")] = pos_idx_max
+    B_pos_df.loc[:, ("idx_max", "")] = pos_idx_max
+    A_pos_df = A_pos_df.sort_values(by=[("idx_max", "")], ascending=True)
+    B_pos_df = B_pos_df.sort_values(by=[("idx_max", "")], ascending=True)
+    # order neg
+    neg_idx_min = A_neg_df.apply(lambda row: dpt.get_idx_order(row, x, fit="gamma_4p", op="min"), axis=1).values
+    A_neg_df.loc[:, ("idx_min", "")] = neg_idx_min
+    B_neg_df.loc[:, ("idx_min", "")] = neg_idx_min
+    A_neg_df = A_neg_df.sort_values(by=[("idx_min", "")], ascending=True)
+    B_neg_df = B_neg_df.sort_values(by=[("idx_min", "")], ascending=True)
+    A_pos, B_pos = A_pos_df.distance_to_goal.values, B_pos_df.distance_to_goal.values
+    A_neg, B_neg = A_neg_df.distance_to_goal.values, B_neg_df.distance_to_goal.values
+    # smooth and normalise
     if smooth_SD:
-        A = gaussian_filter1d(A, smooth_SD, axis=1)
-        B = gaussian_filter1d(B, smooth_SD, axis=1)
-    # normalise
+        A_pos, B_pos, A_neg, B_neg = [gaussian_filter1d(x, smooth_SD, axis=1) for x in [A_pos, B_pos, A_neg, B_neg]]
     if normalisation_method == "max":
-        A = A / np.max(A, axis=1)[:, None]
-        B = B / np.max(B, axis=1)[:, None]
+        A_pos, B_pos = [x / np.max(x, axis=1)[:, None] for x in [A_pos, B_pos]]
+        A_neg, B_neg = [x / np.max(x, axis=1)[:, None] for x in [A_neg, B_neg]]
     elif normalisation_method == "zscore":
-        A = zscore(A, axis=1)
-        B = zscore(B, axis=1)
-    else:
-        raise ValueError(f"Unknown normalisation method: {normalisation_method}")
-    # set ordering
-    if order_by == 0:
-        order = np.argsort(np.max(A, axis=1))[::-1]
-    elif order_by == 1:
-        order = np.argsort(np.max(B, axis=1))[::-1]
-    else:
-        raise ValueError("Order by must be 0 or 1, corresponding to maze_A or maze_B in maze_pair input")
-    A = A[order]
-    B = B[order]
-    # plot
-    if ax is None:
-        f, axes = plt.subplots(1, 2, figsize=(6, 4))
-    for ax, data in zip(axes, [A, B]):
+        A_pos, B_pos = [zscore(x, axis=1) for x in [A_pos, B_pos]]
+        A_neg, B_neg = [zscore(x, axis=1) for x in [A_neg, B_neg]]
+    if axes is None:
+        f, axes = plt.subplots(
+            2,
+            2,
+            figsize=(6, 6),
+            height_ratios=[1.5, 1],
+            sharex=True,
+        )
+    for ax, data in zip(axes.flatten(), [A_pos, B_pos, A_neg, B_neg]):
         sns.heatmap(
             data,
             cmap=cmap,
+            vmax=v_range[1],
+            vmin=v_range[0],
             ax=ax,
             cbar_kws={"label": "Firing Rate (z-score)", "shrink": 0.5},
         )
+        y_tick = len(data) // 100 * 100
+        ax.set_yticks([y_tick])
+        ax.set_yticklabels([f"{y_tick}"], rotation=90)
+        ax.set_ylabel("Neurons", labelpad=-10)
+        ax.set_xlabel("Shortest-path \n Distance to Goal (m)")
+        ax.set_xticks(np.arange(0, len(x), 5))
+        ax.set_xticklabels(np.arange(0, max(x), 0.25), rotation=0)
 
 
 def get_matched_distance_tuning_dfs(
