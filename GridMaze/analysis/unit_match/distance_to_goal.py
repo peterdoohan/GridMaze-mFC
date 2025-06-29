@@ -25,8 +25,10 @@ RESULTS_DIR = RESULTS_PATH / "unit_match" / "distance_to_goal"
 
 
 # %% Misc
-def plot_all_subject_matched_clusters(subject="m3", maze_pair=("maze_1", "maze_2")):
-    """ """
+def plot_all_subject_matched_clusters(subject="m2", maze_pair=("maze_1", "maze_2")):
+    """
+    Search through matches to find some nice pairs!
+    """
     colors = ["royalblue", "darkviolet"]
     matched_clusters = mm.get_cross_maze_matches(
         subject,
