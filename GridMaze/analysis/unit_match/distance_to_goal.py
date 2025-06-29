@@ -29,6 +29,9 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as f:
 
 RESULTS_DIR = RESULTS_PATH / "unit_match" / "distance_to_goal"
 
+MAZE_PAIRS = [("maze_1", "maze_2"), ("maze_2", "rooms_maze")]
+
+
 # %% Corss maze heatmaps!
 
 
@@ -73,34 +76,42 @@ def plot_matched_distance_tuning_heatmaps(
 
 
 def get_matched_distance_tuning_dfs(
-    maze_pair=("maze_1", "maze_2"),
     min_split_half_corr=0.3,
+    shuffle_matched_pairs=True,
     verbose=True,
 ):
-    """
-    plot distance to goal population distance to goal tuning curves, side-by-side
-    where the clusters are ordered by the max tuning on maze_A, and units in maze_B
-    are ordered with the same ordering :)
-    """
+    """ """
     # get all matched clusters
     all_matches = []
-    for subject_ID in SUBJECT_IDS:
-        matches = mm.get_cross_maze_matches(
-            subject_ID,
-            maze_pair,
-            single_units=True,
-            tuning_metric="distance_to_goal",
-            min_split_half_corr=min_split_half_corr,
-            return_as="cluster_unique_ID",
-            verbose=verbose,
-        )
-        if len(matches) == 0:
-            continue
-        else:
-            all_matches.extend(matches)
+    for maze_pair in MAZE_PAIRS:
+        for subject_ID in SUBJECT_IDS:
+            matches = mm.get_cross_maze_matches(
+                subject_ID,
+                maze_pair,
+                single_units=True,
+                tuning_metric="distance_to_goal",
+                min_split_half_corr=min_split_half_corr,
+                return_as="cluster_unique_ID",
+                verbose=verbose,
+            )
+            if len(matches) == 0:
+                continue
+            else:
+                all_matches.extend(matches)
     all_matches = np.array(all_matches)
+    if shuffle_matched_pairs:
+        shuffled = all_matches.copy()
+        for i in range(shuffled.shape[0]):
+            np.random.shuffle(shuffled[i])
+        all_matches = shuffled
     # get all distance tuning curves
-    all_tuning_curves = get_tuning_curves(subject_ID="all", maze_pair=maze_pair, verbose=verbose)
+    all_tuning_curves = []
+    for maze_pair in MAZE_PAIRS:
+        all_tuning_curves.append(
+            get_tuning_curves(subject_ID="all", maze_pair=maze_pair, include_metrics=True, verbose=verbose)
+        )
+    all_tuning_curves = pd.concat(all_tuning_curves, axis=0)
+    return all_matches, all_tuning_curves
     # index tuning curves
     tc_A = all_tuning_curves.loc[all_matches[:, 0]]
     tc_B = all_tuning_curves.loc[all_matches[:, 1]]
@@ -222,10 +233,17 @@ def distance_tuning_corrs(tc_A, tc_B, method="spearman"):
     return corrs
 
 
-def get_tuning_curves(subject_ID="m2", maze_pair=("maze_1", "maze_2"), verbose=True):
+def get_tuning_curves(subject_ID="m2", maze_pair=("maze_1", "maze_2"), include_metrics=False, verbose=True):
     """ """
     subject_ID = [subject_ID] if subject_ID != "all" else "all"
     _maze_pair = f"{maze_pair[0]}.{maze_pair[1]}"
+    with_data = [
+        "navigation_df",
+        "navigation_spike_rates_df",
+        "cluster_metrics",
+    ]
+    if include_metrics:
+        with_data.extend(["cluster_distance_tuning_metrics"])
     dfs = []
     for maze in maze_pair:
         if verbose:
@@ -234,11 +252,7 @@ def get_tuning_curves(subject_ID="m2", maze_pair=("maze_1", "maze_2"), verbose=T
             subject_IDs=subject_ID,
             maze_names=[maze],
             days_on_maze=MAZE_PAIR2VALID_DAYS[_maze_pair][maze],
-            with_data=[
-                "navigation_df",
-                "navigation_spike_rates_df",
-                "cluster_metrics",
-            ],
+            with_data=with_data,
             must_have_data=True,
         )
         if verbose:
@@ -246,15 +260,30 @@ def get_tuning_curves(subject_ID="m2", maze_pair=("maze_1", "maze_2"), verbose=T
         for session in sessions:
             if verbose:
                 print(session.name)
-            dfs.append(
-                dpt._get_session_distance_tuning(
-                    session,
-                    metrics=("distance_to_goal", "geodesic"),
-                    bin_spacing=0.05,
-                    max_steps_to_goal=30,
-                    moving_only=False,
-                )
+            df = dpt._get_session_distance_tuning(
+                session,
+                metrics=("distance_to_goal", "geodesic"),
+                bin_spacing=0.05,
+                max_steps_to_goal=30,
+                moving_only=False,
             )
+            if include_metrics:
+                metrics_df = session.cluster_distance_tuning_metrics
+                if metrics_df.index.name == "cluster_unique_ID":
+                    metrics_df = metrics_df.reset_index()
+                metrics_df = metrics_df[metrics_df.single_unit & metrics_df.distance_tuned]
+                distance_tuning_df = distance_tuning_df[
+                    distance_tuning_df.cluster_unique_ID.isin(metrics_df.cluster_unique_ID)
+                ]
+                metrics_df.set_index("cluster_unique_ID", inplace=True)
+                df = pd.merge(  # conbine tuning curves and (precomputed) tuning curve fit metrics
+                    df,
+                    metrics_df,
+                    on="cluster_unique_ID",
+                    how="inner",
+                )
+            df.append(dfs)
+
     all_tuning_curves = pd.concat(dfs, axis=0)
     return all_tuning_curves
 
