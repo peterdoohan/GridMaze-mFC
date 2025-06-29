@@ -7,6 +7,7 @@ Can we decode the future position/place-direction of the animal from neural avti
 # %% Imports
 import json
 import copy
+import re
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
