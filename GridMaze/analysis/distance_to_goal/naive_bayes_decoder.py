@@ -4,16 +4,19 @@ theta (8-12Hz) or high_delta (2-5Hz) to see if they improve performance.
 """
 
 # %% Imports
+from turtle import color
 import numpy as np
 import pandas as pd
 from scipy.stats import gamma, poisson
 from scipy.optimize import minimize
 from joblib import Parallel, delayed
 from matplotlib import pyplot as plt
+import seaborn as sns
 
 from GridMaze.analysis.core import convert
 from GridMaze.analysis.core import downsample as ds
 from GridMaze.analysis.core import folds
+from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.distance_to_goal import extract_lfp_phase as elp
 from GridMaze.analysis.distance_to_goal import population_tuning as pt
 from GridMaze.analysis.distance_to_goal import distributions as dd
@@ -88,13 +91,49 @@ def quick_plot(results_df, metric=("distance_to_goal", "geodesic"), bin_spacing=
     return
 
 
-def test(
+# %%
+
+
+def plot_true_vs_decoded_distance(results_df, ax=None):
+    """ """
+    df = results_df.distance_to_goal
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(3, 3))
+    # sns.kdeplot(data=df, x="geodesic", y="decoded", fill=True, thresh=0, levels=50, cmap="Blues", ax=ax, cbar=True)
+    sns.histplot(data=df, x="geodesic", y="decoded", bins=30, cmap="Blues", ax=ax, cbar=True, pmax=0.5)
+    ax.set_xlim(0, 1.6)
+    ax.set_ylim(0, 1.6)
+    ax.plot([0, 1.6], [0, 1.6], color="k", lw=1, ls="--")
+    ax.set_xlabel("true distance (m)")
+    ax.set_ylabel("decoded distance (m)")
+
+    return
+
+
+def test(subject="m2"):
+    """ """
+    sessions = gs.get_maze_sessions(
+        subject_IDs=[subject],
+        maze_names="all",
+        days_on_maze="late",
+        with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
+    )
+    decoding_results = []
+    for session in sessions:
+        print(session.name)
+        decoding_results.append(decode_session_distance_to_goal(session, resolution=0.5, with_LFP=False, plot=False))
+    all_decoding_results = pd.concat(decoding_results, axis=0)
+    return all_decoding_results
+
+
+def decode_session_distance_to_goal(
     session,
-    resolution=0.05,
+    resolution=0.5,
     metric=("distance_to_goal", "geodesic"),
-    n_folds=12,
+    n_folds=10,
     bin_spacing=0.1,
     min_r2=0.5,
+    with_LFP=True,
     n_lfp_phase_bins=12,
     test_trial_phases=["navigation"],
     verbose=True,
@@ -102,7 +141,7 @@ def test(
 ):
     """ """
     max_distance = dd.get_distance_percentile(metric, 0.85)
-    input_data = get_input_data(session, metric, resolution, n_lfp_phase_bins=n_lfp_phase_bins)
+    input_data = get_input_data(session, metric, resolution, with_LFP=with_LFP, n_lfp_phase_bins=n_lfp_phase_bins)
     distance_tuning_df = get_distance_tuning_df(input_data, metric, resolution, bin_spacing)
     empirical_tuning_curves = distance_tuning_df.groupby("distance_bin").mean().spike_count
     distances = empirical_tuning_curves.index.values
@@ -238,10 +277,12 @@ def bounded_gamma_4p(x, size, shape, scale, shift, x_bounds=None):
 def get_fold_params_df(distance_tuning_df, folds_df, plot=False):
     """ """
     _folds = folds_df.columns.get_level_values(0).unique()
+    _all_trials = distance_tuning_df.index.get_level_values(0).unique().values
 
     def _get_fold_params(distance_tuning_df, folds_df, fold):
         fold_df = folds_df[fold]
         train_trials = fold_df["train"].unstack().dropna().values
+        train_trials = np.intersect1d(train_trials, _all_trials)  # ensure trials are in distance_tuning_df
         tuning_curves = distance_tuning_df.loc[train_trials].groupby("distance_bin").mean().spike_count
         return get_tuning_params(tuning_curves, fold)
 
@@ -333,6 +374,7 @@ def get_input_data(
     metric=("distance_to_goal", "geodesic"),
     resolution=0.4,
     include_multiunits=False,
+    with_LFP=True,
     n_lfp_phase_bins=12,
 ):
     """ """
@@ -357,16 +399,17 @@ def get_input_data(
     # filter for valid trial times
     input_df = input_df[~input_df.trial_phase.isna()]
     # add LFP phases
-    input_df.reset_index(drop=True, inplace=True)
-    times = input_df.time.values
-    for osc in ["theta", "4Hz"]:
-        phase_bins = elp.get_nearest_osc_phase(
-            session,
-            times,
-            signal_type="LFP",
-            band=osc,
-            return_binned=True,
-            n_bins=n_lfp_phase_bins,
-        )
-        input_df[("lfp_phase_bin", osc)] = phase_bins.apply(lambda x: x.mid).astype(float)
+    if with_LFP:
+        input_df.reset_index(drop=True, inplace=True)
+        times = input_df.time.values
+        for osc in ["theta", "4Hz"]:
+            phase_bins = elp.get_nearest_osc_phase(
+                session,
+                times,
+                signal_type="LFP",
+                band=osc,
+                return_binned=True,
+                n_bins=n_lfp_phase_bins,
+            )
+            input_df[("lfp_phase_bin", osc)] = phase_bins.apply(lambda x: x.mid).astype(float)
     return input_df

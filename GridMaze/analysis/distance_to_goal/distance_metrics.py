@@ -116,7 +116,7 @@ def plot_cross_subject_CPD_comparison(
         x="metric",
         y="CPD",
         hue="subject_ID",
-        palette="mako",
+        palette=sns.color_palette("hls", len(SUBJECT_IDS)),
         errorbar=None,
         dodge=False,
         markers="o",
