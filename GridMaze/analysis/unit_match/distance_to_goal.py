@@ -36,9 +36,14 @@ MAZE_PAIRS = [("maze_1", "maze_2"), ("maze_2", "rooms_maze")]
 
 
 def plot_matched_distance_tuning_heatmaps(
-    tc_A, tc_B, smooth_SD=2, normalisation_method="zscore", cmap="coolwarm", v_range=(-2, 2), axes=None
+    tc_A, tc_B, min_corr=0.1, smooth_SD=2, normalisation_method="zscore", cmap="coolwarm", v_range=(-2, 2), axes=None
 ):
     """ """
+    if min_corr:
+        # good idea to remove anticorrelated pairs which are most likely just bad matches
+        tc_corrs = distance_tuning_corrs(tc_A.distance_to_goal, tc_B.distance_to_goal)
+        corr_mask = tc_corrs > min_corr
+        tc_A, tc_B = tc_A[corr_mask].copy(), tc_B[corr_mask].copy()
     pos_mask = tc_A["gamma_4p"]["size"].ge(0).values
     neg_mask = tc_A["gamma_4p"]["size"].lt(0).values
     A_pos_df, B_pos_df = tc_A[pos_mask].copy(), tc_B[pos_mask].copy()

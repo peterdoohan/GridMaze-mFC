@@ -6,7 +6,15 @@ along trajectories in very different parts of the maze.
 
 # %% Imports
 
+
+from GridMaze.analysis.behaviour import trajectory_plotting as tp
+
 # %% Global Variables
 
 
 # %% Functions
+
+
+def test():
+    """ """
+    return
