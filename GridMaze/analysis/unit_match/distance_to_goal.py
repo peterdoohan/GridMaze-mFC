@@ -96,7 +96,7 @@ def plot_matched_distance_tuning_heatmaps(
 def get_matched_distance_tuning_dfs(
     min_split_half_corr=0.3,
     shuffle_matched_pairs=True,
-    verbose=True,
+    verbose=False,
 ):
     """ """
     # get all matched clusters
@@ -139,7 +139,10 @@ def get_matched_distance_tuning_dfs(
 
 
 def plot_cross_maze_corrs_summary(results, print_stats=True, ax=None):
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(2, 3))
     um_pd.plot_cross_maze_corrs_summary(results, print_stats, ax)
+    ax.set_ylabel("distance-to-goal \n tuning corr.")
 
 
 def get_cross_maze_corr_summary(
