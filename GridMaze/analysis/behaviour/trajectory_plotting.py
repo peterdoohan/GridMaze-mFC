@@ -60,6 +60,7 @@ def plot_trial_trajectories(
     traj_colors=["purple", "royalblue", "limegreen"],
     start_color="grey",
     goal_color="deepskyblue",
+    linewidth=4,
     ax=None,
 ):
     if ax is None:
@@ -103,7 +104,7 @@ def plot_trial_trajectories(
     )
     for i, traj in enumerate(trajectories):
         x_traj, y_traj = traj
-        ax.plot(x_traj, y_traj, color=traj_colors[i], linewidth=4, alpha=0.7, zorder=3)
+        ax.plot(x_traj, y_traj, color=traj_colors[i], linewidth=linewidth, alpha=0.7, zorder=3)
 
 
 # %%
