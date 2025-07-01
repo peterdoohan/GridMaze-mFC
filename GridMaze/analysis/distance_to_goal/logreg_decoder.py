@@ -110,15 +110,25 @@ def load_decoding_results():
     return results_df
 
 
-def populate_decoding_results(max_jobs=20, verbose=True):
+def populate_decoding_results(max_jobs=20, subfolder=None, max_distance=None, verbose=True):
     """ """
 
-    def _process_session(session, verbose):
+    def _process_session(session, subfolder, verbose):
         if verbose:
             print(f"Processing session {session.name}")
-        save_path = RESULTS_DIR / "basic" / session.name
-        results_df = decode_session_distance_to_goal(session, verbose=verbose)
-        results_df.to_csv(save_path, index=False)
+        # set up save path
+        if subfolder is None:
+            save_path = RESULTS_DIR / "basic" / f"{session.name}.parquet"
+        else:
+            save_path = RESULTS_DIR / "basic" / subfolder / f"{session.name}.parquet"
+        # reun decode with defualt settings
+        results_df = decode_session_distance_to_goal(session, max_distance=max_distance, verbose=verbose)
+        # add session info
+        results_df[("subject_ID", "")] = session.subject_ID
+        results_df[("maze_name", "")] = session.maze_name
+        results_df[("day_on_maze", "")] = session.day_on_maze
+        # save
+        results_df.to_parquet(save_path)
         if verbose:
             print(f"Saved results for to {save_path}")
 
@@ -157,9 +167,8 @@ def decode_session_distance_to_goal(
     max_distance=None,
     bin_method="uniform",
     n_log_bins=30,
-    balance_distances=True,
+    balance_distances=False,
     n_folds=5,
-    output="max",
     sqrt_spikes=True,
     standardise_spikes=True,
     alpha="opt",
@@ -180,15 +189,30 @@ def decode_session_distance_to_goal(
         n_log_bins,
         balance_distances,
     )
-    distance_bin_mids = np.array(sorted([b.mid for b in input_data.distance_bin.unique()]))
+    distance_bin_mids = sorted(input_data.distance_bin_mid.unique())
+    # set up output df
+    results_df = pd.concat(
+        [
+            input_data[
+                [
+                    ("trial", ""),
+                    ("time", ""),
+                    ("moving", ""),
+                    ("steps_to_goal", "future"),
+                    ("distance_bin_mid", ""),
+                    metric,
+                ]
+            ],
+            pd.DataFrame(
+                columns=pd.MultiIndex.from_product([["decoded_distance_prob"], distance_bin_mids]),
+                index=input_data.index,
+            ),
+        ],
+        axis=1,
+    )
+    # decode distance CV
     folds_df = folds.get_folds_df(session, goal_stratified=False, return_unique_IDs=True, n_folds=n_folds)
     _folds = folds_df.columns.get_level_values(0).unique()
-    results_df = input_data[[("trial", ""), ("time", ""), ("moving", ""), ("steps_to_goal", "future")]].droplevel(
-        1, axis=1
-    )
-    for res_col in ["true_distance", "decoded_distance", "distance_bin_mids"]:
-        results_df[res_col] = np.nan
-    # decode distance CV
     for fold in _folds:
         if verbose:
             print(fold)
@@ -215,23 +239,12 @@ def decode_session_distance_to_goal(
             X_train = scaler.fit_transform(X_train)
             X_test = scaler.transform(X_test)
         y_train, y_test = train_df.distance_bin_id.values, test_df.distance_bin_id.values
-        true_dist = test_df[metric].values  # n_samples
         # fit model
         model = LogisticRegression(penalty="l2", C=opt_alpha, max_iter=10_000, random_state=0, class_weight="balanced")
         model.fit(X_train, y_train)
         # predict
-        if output == "weighted":
-            y_prob = model.predict_proba(X_test)  # n_samples, n_distance_bins
-            decoded_dist = np.dot(y_prob, distance_bin_mids)  # n_samples
-        elif output == "max":
-            y_pred = model.predict(X_test)
-            decoded_dist = distance_bin_mids[y_pred]  # n_samples
-        else:
-            raise ValueError(f"Unknown output type: {output}. Must be 'weighted' or 'max'.")
-        resuls_idx = test_df.index
-        results_df.loc[resuls_idx, "true_distance"] = true_dist
-        results_df.loc[resuls_idx, "decoded_distance"] = decoded_dist
-        results_df.loc[resuls_idx, "distance_bin_mids"] = test_df.distance_bin.apply(lambda x: x.mid)
+        y_prob = model.predict_proba(X_test)
+        results_df.loc[test_df.index, "decoded_distance_prob"] = y_prob
     return results_df
 
 
@@ -401,8 +414,8 @@ def get_input_data(
         NotImplementedError()
     # bin distances
     input_df.loc[:, "distance_bin"] = pd.cut(input_df[metric], bins=bins, include_lowest=True).to_numpy()
-    bin2bin_id = {b: i for i, b in enumerate(bins)}
-    input_df.loc[:, "distance_bin_id"] = input_df.distance_bin.map(bin2bin_id)
+    input_df.loc[:, "distance_bin_mid"] = input_df.distance_bin.apply(lambda x: x.mid)
+    input_df.loc[:, "distance_bin_id"] = input_df.distance_bin.map({b: i for i, b in enumerate(bins)})
     if not balance_distances:
         return input_df
     else:  # balance data across distance bins
