@@ -3,35 +3,170 @@ Distance to goal decoding using logistic regression this time.
 """
 
 # %% Imports
+import json
 import numpy as np
 import pandas as pd
+from joblib import delayed, Parallel
+from matplotlib import pyplot as plt
+import seaborn as sns
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
-from scipy.stats import zscore
 
 from GridMaze.analysis.core import convert
 from GridMaze.analysis.core import downsample as ds
 from GridMaze.analysis.core import folds
+from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.distance_to_goal import distributions as dd
 
 
 # %% Global Variables
 
-# %% Functions
+from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
+
+RESULTS_DIR = RESULTS_PATH / "distance_to_goal" / "logreg_decoding"
+
+with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
+    SUBJECT_IDS = json.load(input_file)
 
 
-def test(session, n_folds=5, sqrt_spikes=False, standardise_spikes=False):
+# %% plot basic decoder
+
+
+def plot_distance_to_goal_decoding(results_df, moving_only=False, n_bins=35, f=None, ax=None):
     """ """
-    input_data = get_input_data(session)
+    if ax is None or f is None:
+        f, ax = plt.subplots(1, 1, figsize=(4, 3))
+    ax.spines[["top", "right"]].set_visible(False)
+    # process data
+    if moving_only:
+        df = results_df[results_df.moving]
+    else:
+        df = results_df.copy()
+    # bin true vs decoded distances
+    x = df.true_distance.values
+    y = df.decoded_distance.values
+    # get 2D histogram
+    H, xedges, yedges = np.histogram2d(x, y, bins=n_bins)
+    H_norm = H / H.sum(axis=1, keepdims=True)  # normalise by true distance
+    # plot with pcolormesh
+    X, Y = np.meshgrid(xedges, yedges)
+    pcm = ax.pcolormesh(X, Y, H_norm.T, cmap="Greys", vmax=0.2)
+    # 4) formatting
+    ax.set_xlabel("true_distance")
+    ax.set_ylabel("decoded_distance")
+    f.colorbar(pcm, ax=ax, label="Pr")
+
+    ax.set_xlim(0, 1.6)
+    ax.set_ylim(0, 1.6)
+    ax.plot([0, 1.6], [0, 1.6], color="k", linestyle="--", alpha=0.5)
+    return
+
+
+# %% populate basic decoding across all late sesssions
+
+
+def load_decoding_results():
+    results_paths = list((RESULTS_DIR / "basic").iterdir())
+    dfs = []
+    for path in results_paths:
+        df = pd.read_csv(path)
+        df["subject"] = path.name.split(".")[0]
+        dfs.append(df)
+    results_df = pd.concat(dfs, axis=0)
+    return results_df
+
+
+def populate_decoding_results(max_jobs=20, verbose=True):
+    """ """
+
+    def _process_session(session, verbose):
+        if verbose:
+            print(f"Processing session {session.name}")
+        save_path = RESULTS_DIR / "basic" / session.name
+        results_df = decode_session_distance_to_goal(session, verbose=verbose)
+        results_df.to_csv(save_path, index=False)
+        if verbose:
+            print(f"Saved results for to {save_path}")
+
+    # load sessions
+    if verbose:
+        print("Loading sessions ...")
+    sessions = gs.get_maze_sessions(
+        subject_IDs="all",
+        maze_names="all",
+        days_on_maze="late",
+        with_data=[
+            "navigation_df",
+            "navigation_spike_counts_df",
+            "cluster_metrics",
+            "trials_df",
+        ],
+        must_have_data=True,
+    )
+    Parallel(n_jobs=max_jobs)(delayed(_process_session)(session, verbose=verbose) for session in sessions)
+
+    if verbose:
+        print("Finished populating decoding results ...")
+
+
+# %% basic decoding
+
+
+def decode_session_distance_to_goal(
+    session,
+    resolution=0.5,
+    metric=("distance_to_goal", "geodesic"),
+    include_multiunits=True,
+    moving_only=False,
+    max_steps_to_goal=30,
+    bin_spacing=0.05,
+    bin_method="uniform",
+    n_log_bins=30,
+    n_folds=5,
+    sqrt_spikes=True,
+    standardise_spikes=True,
+    alpha="opt",
+    verbose=False,
+):
+    """ """
+    # get input data
+    input_data = get_input_data(
+        session,
+        resolution,
+        metric,
+        include_multiunits,
+        moving_only,
+        max_steps_to_goal,
+        bin_spacing,
+        bin_method,
+        n_log_bins,
+    )
     distance_bin_mids = np.array(sorted([b.mid for b in input_data.distance_bin.unique()]))
     folds_df = folds.get_folds_df(session, goal_stratified=False, return_unique_IDs=True, n_folds=n_folds)
     _folds = folds_df.columns.get_level_values(0).unique()
-    results_df = input_data[["trial"]].droplevel(1, axis=1)
+    results_df = input_data[[("trial", ""), ("time", ""), ("moving", ""), ("steps_to_goal", "future")]].droplevel(
+        1, axis=1
+    )
     for res_col in ["true_distance", "decoded_distance", "distance_bin_mids"]:
         results_df[res_col] = np.nan
+    # decode distance CV
     for fold in _folds:
-        print(fold)
-        train_df, test_df = folds._get_test_train_dfs(input_data, folds_df[fold])
+        if verbose:
+            print(fold)
+        fold_df = folds_df[fold]
+        # get optimal alpha, CV over training folds
+        if alpha == "opt":
+            opt_alpha = get_CV_alpha(
+                input_data,
+                fold_df,
+                sqrt_spikes=sqrt_spikes,
+                standardise_spikes=standardise_spikes,
+                return_as="best",
+                verbose=verbose,
+            )
+        else:
+            opt_alpha = alpha
+        train_df, test_df = folds._get_test_train_dfs(input_data, fold_df)
         X_train, X_test = train_df.spike_count.values, test_df.spike_count.values
         if sqrt_spikes:
             X_train, X_test = np.sqrt(X_train), np.sqrt(X_test)
@@ -42,7 +177,7 @@ def test(session, n_folds=5, sqrt_spikes=False, standardise_spikes=False):
         y_train, y_test = train_df.distance_bin_id.values, test_df.distance_bin_id.values
         true_dist = test_df.distance_to_goal.geodesic.values  # n_samples
         # fit model
-        model = LogisticRegression(C=1, max_iter=10_000)
+        model = LogisticRegression(penalty="l2", C=opt_alpha, max_iter=10_000, random_state=0, class_weight="balanced")
         model.fit(X_train, y_train)
         # predict
         y_prob = model.predict_proba(X_test)  # n_samples, n_distance_bins
@@ -54,20 +189,93 @@ def test(session, n_folds=5, sqrt_spikes=False, standardise_spikes=False):
     return results_df
 
 
-def get_opt_reg(input_data, train_df, reg_range=np.logspace(-4, 4, 20), tol=1e-4, patience=5):
+def get_CV_alpha(input_data, fold_df, sqrt_spikes=True, standardise_spikes=True, return_as="best", verbose=False):
+    """ """
+    distance_bin_mids = np.array(sorted([b.mid for b in input_data.distance_bin.unique()]))
+    # split training data into folds
+    val_df = fold_df["train"]
+    _vfolds = val_df.columns.values
+    val_results = []
+    for i, vfold in enumerate(_vfolds):
+        if verbose:
+            print(f"    Validation fold {i}")
+        # index input data for validation test and train
+        test_df = input_data[input_data.trial_unique_ID.isin(val_df[vfold].values)]
+        train_df = input_data[input_data.trial_unique_ID.isin(val_df.drop(columns=vfold).unstack().dropna().values)]
+        # get X and y
+        X_train, X_test = train_df.spike_count.values, test_df.spike_count.values
+        if sqrt_spikes:
+            X_train, X_test = np.sqrt(X_train), np.sqrt(X_test)
+        if standardise_spikes:
+            scaler = StandardScaler()
+            X_train = scaler.fit_transform(X_train)
+            X_test = scaler.transform(X_test)
+        y_train, y_test = train_df.distance_bin_id.values, test_df.distance_bin_id.values
+        y_true = test_df.distance_to_goal.geodesic.values
+        # search over regularisation strengths
+        best_alpha, best_MSE = search_reg(X_train, X_test, y_train, y_true, distances=distance_bin_mids)
+        val_results.append(
+            {
+                "vfold": vfold,
+                "best_alpha": best_alpha,
+                "best_MSE": best_MSE,
+            }
+        )
+    reg_df = pd.DataFrame(val_results)
+    if return_as == "df":
+        return reg_df
+    elif return_as == "best":
+        # median opt reg strength across folds
+        opt_reg = reg_df.best_alpha.median()
+        return opt_reg
+    else:
+        raise ValueError(f"Return as must be 'df' of 'best'. ")
+
+
+def search_reg(
+    X_train,
+    X_test,
+    y_train,
+    y_true,
+    distances,
+    reg_range=np.logspace(-4, 4, 20),
+    tol=1e-3,
+    patience=None,
+    return_as="best",
+    verbose=False,
+):
     """
     CV search for optimal regulaisation strength (in training data)
     """
-    best_alpha = reg_range[0]
-    best_score = -np.inf
+    best_alpha = None
+    best_SE = np.inf
     history = []
-    no_improve_count = 0
+    no_improvement_count = 0
     for alpha in reg_range:
-        model = LogisticRegression(C=1, max_iter=10_000)
+        model = LogisticRegression(penalty="l2", C=alpha, max_iter=10_000, random_state=0, class_weight="balanced")
         model.fit(X_train, y_train)
-        score = model.score(X_test, y_test)
-
-    return
+        y_prob = model.predict_proba(X_test)
+        decoded_dist = np.dot(y_prob, distances)  # weighted average of decoded distances
+        SE = np.mean(np.abs((decoded_dist - y_true)))
+        if SE < best_SE - tol:
+            best_SE = SE
+            best_alpha = alpha
+            no_improvement_count = 0
+        else:
+            no_improvement_count += 1
+            if patience is not None and no_improvement_count >= patience:
+                if verbose:
+                    print(f"Stopping early at α = {alpha:.3e} with SE = {SE:.4f}")
+                break
+        if verbose:
+            print(f" α = {alpha:.3e},  SE = {SE:.4f}")
+        history.append((alpha, SE))
+    if return_as == "best":
+        return best_alpha, best_SE
+    elif return_as == "history":
+        return np.array(history).T
+    else:
+        raise ValueError(f"Unknown return_as: {return_as}. Must be 'best' or 'history'.")
 
 
 def get_input_data(

@@ -30,6 +30,7 @@ def downsample_nav_spikes_data(
             ("trial", ""),
             ("goal", ""),
             ("trial_phase", ""),
+            ("moving", ""),
             ("maze_position", "simple"),
             ("cardinal_movement_direction", ""),
             *distance_metrics,
