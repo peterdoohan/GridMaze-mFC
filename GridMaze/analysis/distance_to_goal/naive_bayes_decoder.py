@@ -148,7 +148,8 @@ def decode_session_distance_to_goal(
     x_bounds = (min(distances), max(distances))
     folds_df = folds.get_folds_df(session, goal_stratified=False, return_unique_IDs=False, n_folds=n_folds)
     _folds = folds_df.columns.get_level_values(0).unique()
-    params_df = get_fold_params_df(distance_tuning_df, folds_df, plot=False)
+    params_df = get_fold_params_df(distance_tuning_df, folds_df, plot=True)
+    return
     # remove non distance tuned clusters
     if min_r2 is not None:
         mean_r2 = params_df.groupby("cluster_unique_ID").r2.mean()  # r2 across folds
@@ -239,7 +240,13 @@ def decode_distance(
 
 
 def get_spikes_neg_log_likelihood(
-    dist, observed_spikes, params=None, tuning_curves=None, x_bounds=None, resolution=0.4, eps=1e-10
+    dist,
+    observed_spikes,
+    params=None,
+    tuning_curves=None,
+    x_bounds=None,
+    resolution=0.4,
+    eps=1e-10,
 ):
     """ """
     if params is not None:

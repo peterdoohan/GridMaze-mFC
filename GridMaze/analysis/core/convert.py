@@ -83,6 +83,10 @@ def _get_distance_bins(binning_method, n_distance_bins, distance_metrics, max_di
     elif binning_method == "non-uniform":
         bins = dd.bin_distribution_evenly(distance_metrics, n_distance_bins, max_distance=max_distance)
         bins = pd.IntervalIndex.from_breaks(bins, closed="left")
+    elif binning_method == "log":
+        edges = np.logspace(np.log10(1e-1), np.log10(max_distance), n_distance_bins + 1)
+        edges = np.concatenate(([0.0], edges))
+        bins = pd.IntervalIndex.from_breaks(edges, closed="left")
     return bins
 
 
