@@ -32,7 +32,41 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 # %% plot basic decoder
 
 
-def plot_distance_to_goal_decoding(results_df, moving_only=False, n_bins=35, f=None, ax=None):
+def plot_distance_decoding(results_df, ax=None):
+    """
+    plot mean true vs decoded distance with cross subject variance
+    """
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(3, 3))
+    ax.spines[["top", "right"]].set_visible(False)
+    distance_bins = sorted(results_df.distance_bin_mids.unique())
+    moving_df, stat_df = pd.DataFrame(index=distance_bins), pd.DataFrame(index=distance_bins)
+    for subject in SUBJECT_IDS:
+        subject_df = results_df[results_df.subject == subject]
+        mean_decoded_dist = subject_df.groupby(["moving", "distance_bin_mids"]).decoded_distance.mean().unstack().T
+        moving_df[subject] = mean_decoded_dist[True]
+        stat_df[subject] = mean_decoded_dist[False]
+    # plot moving
+    for df, label, color in zip([moving_df, stat_df], ["moving", "stationary"], ["blue", "grey"]):
+        mean_dist = df.mean(axis=1)
+        sem_dist = df.sem(axis=1)
+        ax.plot(distance_bins, mean_dist, label=label, color=color)
+        ax.fill_between(
+            distance_bins,
+            mean_dist - sem_dist,
+            mean_dist + sem_dist,
+            alpha=0.2,
+            color=color,
+        )
+    ax.set_xlabel("true distance to goal (m)")
+    ax.set_ylabel("decoded distance to goal (m)")
+    ax.set_xlim(0, 1.6)
+    ax.set_ylim(0, 1.6)
+    ax.plot([0, 1.6], [0, 1.6], color="k", linestyle="--", alpha=0.5)
+    ax.legend()
+
+
+def plot_distance_decoding_probs(results_df, moving_only=False, n_bins=35, f=None, ax=None):
     """ """
     if ax is None or f is None:
         f, ax = plt.subplots(1, 1, figsize=(4, 3))
@@ -123,6 +157,7 @@ def decode_session_distance_to_goal(
     bin_method="uniform",
     n_log_bins=30,
     n_folds=5,
+    output="max",
     sqrt_spikes=True,
     standardise_spikes=True,
     alpha="opt",
@@ -159,6 +194,7 @@ def decode_session_distance_to_goal(
             opt_alpha = get_CV_alpha(
                 input_data,
                 fold_df,
+                metric,
                 sqrt_spikes=sqrt_spikes,
                 standardise_spikes=standardise_spikes,
                 return_as="best",
@@ -175,21 +211,36 @@ def decode_session_distance_to_goal(
             X_train = scaler.fit_transform(X_train)
             X_test = scaler.transform(X_test)
         y_train, y_test = train_df.distance_bin_id.values, test_df.distance_bin_id.values
-        true_dist = test_df.distance_to_goal.geodesic.values  # n_samples
+        true_dist = test_df[metric].values  # n_samples
         # fit model
         model = LogisticRegression(penalty="l2", C=opt_alpha, max_iter=10_000, random_state=0, class_weight="balanced")
         model.fit(X_train, y_train)
         # predict
-        y_prob = model.predict_proba(X_test)  # n_samples, n_distance_bins
-        decoded_dist_weighted = np.dot(y_prob, distance_bin_mids)  # n_samples
+        if output == "weighted":
+            y_prob = model.predict_proba(X_test)  # n_samples, n_distance_bins
+            decoded_dist = np.dot(y_prob, distance_bin_mids)  # n_samples
+        elif output == "max":
+            y_pred = model.predict(X_test)
+            decoded_dist = distance_bin_mids[y_pred]  # n_samples
+        else:
+            raise ValueError(f"Unknown output type: {output}. Must be 'weighted' or 'max'.")
         resuls_idx = test_df.index
         results_df.loc[resuls_idx, "true_distance"] = true_dist
-        results_df.loc[resuls_idx, "decoded_distance"] = decoded_dist_weighted
+        results_df.loc[resuls_idx, "decoded_distance"] = decoded_dist
         results_df.loc[resuls_idx, "distance_bin_mids"] = test_df.distance_bin.apply(lambda x: x.mid)
     return results_df
 
 
-def get_CV_alpha(input_data, fold_df, sqrt_spikes=True, standardise_spikes=True, return_as="best", verbose=False):
+def get_CV_alpha(
+    input_data,
+    fold_df,
+    metric,
+    output="max",
+    sqrt_spikes=True,
+    standardise_spikes=True,
+    return_as="best",
+    verbose=False,
+):
     """ """
     distance_bin_mids = np.array(sorted([b.mid for b in input_data.distance_bin.unique()]))
     # split training data into folds
@@ -211,9 +262,11 @@ def get_CV_alpha(input_data, fold_df, sqrt_spikes=True, standardise_spikes=True,
             X_train = scaler.fit_transform(X_train)
             X_test = scaler.transform(X_test)
         y_train, y_test = train_df.distance_bin_id.values, test_df.distance_bin_id.values
-        y_true = test_df.distance_to_goal.geodesic.values
+        y_true = test_df[metric].values
         # search over regularisation strengths
-        best_alpha, best_MSE = search_reg(X_train, X_test, y_train, y_true, distances=distance_bin_mids)
+        best_alpha, best_MSE = search_reg(
+            X_train, X_test, y_train, y_test, y_true, output=output, distances=distance_bin_mids
+        )
         val_results.append(
             {
                 "vfold": vfold,
@@ -236,8 +289,10 @@ def search_reg(
     X_train,
     X_test,
     y_train,
+    y_test,
     y_true,
     distances,
+    output="max",
     reg_range=np.logspace(-4, 4, 20),
     tol=1e-3,
     patience=None,
@@ -254,9 +309,15 @@ def search_reg(
     for alpha in reg_range:
         model = LogisticRegression(penalty="l2", C=alpha, max_iter=10_000, random_state=0, class_weight="balanced")
         model.fit(X_train, y_train)
-        y_prob = model.predict_proba(X_test)
-        decoded_dist = np.dot(y_prob, distances)  # weighted average of decoded distances
-        SE = np.mean(np.abs((decoded_dist - y_true)))
+        if output == "weighted":
+            y_prob = model.predict_proba(X_test)
+            decoded_dist = np.dot(y_prob, distances)  # weighted average of decoded distances
+            SE = np.mean(np.abs((decoded_dist - y_true)))
+        elif output == "max":
+            y_pred = model.predict(X_test)
+            decoded_dist = distances[y_pred]
+            test_dist = distances[y_test]
+            SE = np.mean(np.abs((decoded_dist - test_dist)))
         if SE < best_SE - tol:
             best_SE = SE
             best_alpha = alpha
@@ -288,6 +349,7 @@ def get_input_data(
     bin_spacing=0.05,
     bin_method="uniform",
     n_log_bins=25,
+    balance_distances=False,
 ):
     """"""
     # load data
@@ -335,4 +397,14 @@ def get_input_data(
     input_df.loc[:, "distance_bin"] = pd.cut(input_df[metric], bins=bins, include_lowest=True).to_numpy()
     bin2bin_id = {b: i for i, b in enumerate(bins)}
     input_df.loc[:, "distance_bin_id"] = input_df.distance_bin.map(bin2bin_id)
-    return input_df
+    if not balance_distances:
+        return input_df
+    else:  # balance data across distance bins
+        bin_sizes = input_df.groupby("distance_bin_id").size()
+        min_size = bin_sizes.min()
+        balanced_data = (
+            input_df.groupby("distance_bin_id", group_keys=False)
+            .apply(lambda subdf: subdf.sample(n=min_size, random_state=0, replace=False))
+            .reset_index(drop=True)
+        )
+        return balanced_data
