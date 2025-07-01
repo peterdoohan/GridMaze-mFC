@@ -154,8 +154,10 @@ def decode_session_distance_to_goal(
     moving_only=False,
     max_steps_to_goal=30,
     bin_spacing=0.05,
+    max_distance=None,
     bin_method="uniform",
     n_log_bins=30,
+    balance_distances=True,
     n_folds=5,
     output="max",
     sqrt_spikes=True,
@@ -174,7 +176,9 @@ def decode_session_distance_to_goal(
         max_steps_to_goal,
         bin_spacing,
         bin_method,
+        max_distance,
         n_log_bins,
+        balance_distances,
     )
     distance_bin_mids = np.array(sorted([b.mid for b in input_data.distance_bin.unique()]))
     folds_df = folds.get_folds_df(session, goal_stratified=False, return_unique_IDs=True, n_folds=n_folds)
@@ -348,6 +352,7 @@ def get_input_data(
     max_steps_to_goal=30,
     bin_spacing=0.05,
     bin_method="uniform",
+    max_distance=None,
     n_log_bins=25,
     balance_distances=False,
 ):
@@ -379,7 +384,8 @@ def get_input_data(
         input_df = input_df[input_df.steps_to_goal.future < max_steps_to_goal]
     # remove frames where distance is above max (treat as outliers)
     if metric[0] == "distance_to_goal":
-        max_distance = dd.get_distance_percentile(metric, 0.85)
+        if max_distance is None:
+            max_distance = dd.get_distance_percentile(metric, 0.85)
         if bin_method == "uniform":
             n_bins = int(max_distance / bin_spacing)
         elif bin_method == "log":
@@ -400,11 +406,10 @@ def get_input_data(
     if not balance_distances:
         return input_df
     else:  # balance data across distance bins
-        bin_sizes = input_df.groupby("distance_bin_id").size()
-        min_size = bin_sizes.min()
+        max_size = input_df.groupby("distance_bin_id").size().max()
         balanced_data = (
             input_df.groupby("distance_bin_id", group_keys=False)
-            .apply(lambda subdf: subdf.sample(n=min_size, random_state=0, replace=False))
+            .sample(n=max_size, replace=True, random_state=42)
             .reset_index(drop=True)
         )
         return balanced_data
