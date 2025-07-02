@@ -3,6 +3,7 @@ Library for distance to goal rep, theta mod decoding.
 """
 
 # %% Imports
+import json
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
@@ -12,23 +13,46 @@ from sklearn.preprocessing import StandardScaler
 from GridMaze.analysis.core import folds
 from GridMaze.analysis.core import convert
 from GridMaze.analysis.core import downsample as ds
+from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.distance_to_goal import distributions as dd
 from GridMaze.analysis.distance_to_goal import logreg_decoder as ld
 
 # %% Global Variables
 
+from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
+
+RESULTS_DIR = RESULTS_PATH / "distance_to_goal" / "logreg_decoding"
+
+with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
+    SUBJECT_IDS = json.load(input_file)
 
 # %%
 
 
-def populate_decoding_results():
+def populate_decoding_results(verbose=True):
     """ """
+    # load sessions
+    if verbose:
+        print("Loading sessions ...")
+    sessions = gs.get_maze_sessions(
+        subject_IDs=["m2"],
+        maze_names="all",
+        days_on_maze="late",
+        with_data=[
+            "navigation_df",
+            "navigation_theta_spike_counts_df",
+            "cluster_metrics",
+            "trials_df",
+        ],
+        must_have_data=True,
+    )
     return
 
 
 def get_theta_mod_distance_to_goal_decoding(
     session,
-    resolution=0.5,
+    resolution=0.4,
+    lfp_type="theta",  # 'theta' or '4Hz'
     metric=("distance_to_goal", "geodesic"),
     include_multiunits=True,
     moving_only=True,
@@ -52,6 +76,7 @@ def get_theta_mod_distance_to_goal_decoding(
     input_data = get_input_data(
         session,
         resolution=resolution,
+        lfp_type=lfp_type,
         metric=metric,
         include_multiunits=include_multiunits,
         moving_only=moving_only,
@@ -75,6 +100,7 @@ def get_theta_mod_distance_to_goal_decoding(
         ],
         axis=1,
     )  # sample info + err for each sample at each lfp phase
+    results_df[("mean_phase_decoding", "")] = np.nan
 
     # decode distance CV
     folds_df = folds.get_folds_df(session, goal_stratified=False, return_unique_IDs=True, n_folds=n_folds)
@@ -118,6 +144,8 @@ def get_theta_mod_distance_to_goal_decoding(
 
         # test on each lfp_phase separately
         test_spikes_df = test_df.spike_count.swaplevel(axis=1).sort_index(axis=1)
+        y_test = test_df.distance_bin_id.values
+        true_dist = distance_bin_mids[y_test]
         for i, phase in enumerate(lfp_phases):
             if verbose:
                 print(f"    Testing on phase: {phase:.2f}")
@@ -126,8 +154,6 @@ def get_theta_mod_distance_to_goal_decoding(
                 X_test = np.sqrt(X_test)
             if standardise_spikes:
                 X_test = scaler.transform(X_test)
-            y_test = test_df.distance_bin_id.values
-            true_dist = distance_bin_mids[y_test]
             # get output metric
             if output == "weighted":
                 y_pred_prob = model.predict_proba(X_test)
@@ -141,6 +167,28 @@ def get_theta_mod_distance_to_goal_decoding(
                 NotImplementedError(f"Test metric {output} not implemented.")
             # store results
             results_df.loc[test_df.index, ("lfp_phase", phase)] = err
+
+        # test on mean spike counts across phases (baseline performance)
+        if verbose:
+            print("         Testing on mean phase spike counts")
+        X_test = test_df.spike_count.T.groupby(level=0).mean().T.values
+        if sqrt_spikes:
+            X_test = np.sqrt(X_test)
+        if standardise_spikes:
+            X_test = scaler.transform(X_test)
+        if output == "weighted":
+            y_pred_prob = model.predict_proba(X_test)
+            weighted_dist = y_pred_prob.dot(distance_bin_mids)
+            err = weighted_dist - true_dist
+        elif output == "max":
+            y_pred = model.predict(X_test)
+            y_pred_dist = distance_bin_mids[y_pred]
+            err = y_pred_dist - true_dist
+        else:
+            pass
+        # store results
+        results_df.loc[test_df.index, ("mean_phase_decoding", "")] = err
+
     return results_df
 
 
@@ -212,6 +260,7 @@ def get_CV_alpha(
 def get_input_data(
     session,
     resolution=0.4,
+    lfp_type="theta",
     metric=("distance_to_goal", "geodesic"),
     include_multiunits=True,
     moving_only=True,
@@ -225,9 +274,13 @@ def get_input_data(
     """ """
     # load data
     navigation_df = session.navigation_df.copy()
-    spike_counts_df = session.navigation_theta_spike_counts_df.reset_index(
-        drop=True
-    )  # [frames, clusters * 12 lfp phase bins]
+    if lfp_type == "theta":
+        spike_counts_df = session.navigation_theta_spike_counts_df
+    elif lfp_type == "4Hz":
+        spike_counts_df = session.navigation_4Hz_spike_counts_df
+    else:
+        raise ValueError(f"lfp_type {lfp_type} not recognised, must be 'theta' or '4Hz'")
+    spike_counts_df.reset_index(inplace=True, drop=True)  # [frames, clusters * 12 lfp phase bins]
     cluster_metrics = session.cluster_metrics
     session_info = session.session_info
 
