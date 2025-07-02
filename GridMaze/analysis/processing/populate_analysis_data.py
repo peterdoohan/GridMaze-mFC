@@ -14,6 +14,7 @@ from .get_trajectory_decisions_dfs import get_trajectory_decisions_df
 from .get_distance_tuning_metrics_df import get_distance_tuning_metrics_df
 from .get_place_direction_metrics_df import get_place_direcion_tuning_metrics_df
 from .get_action_tuning_metrics_df import get_egocentric_action_tuning_metrics_df
+from .get_lfp_aligned_spike_counts import get_navigation_theta_spike_counts_df, get_navigation_4Hz_spike_counts_df
 
 # %% Global variables
 
@@ -25,15 +26,31 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 
 ANALYSIS_DATA_STRUCTURES_DF = pd.DataFrame(
     [
-        {"filename": "frames.navigation.parquet", "function": get_navigation_df, "session_types": ["maze"]},
-        {"filename": "frames.spikeRates.parquet", "function": get_navigation_spike_rates_df, "session_types": ["maze"]},
+        {
+            "filename": "frames.navigation.parquet",
+            "function": get_navigation_df,
+            "session_types": ["maze"],
+        },
+        {
+            "filename": "frames.spikeRates.parquet",
+            "function": get_navigation_spike_rates_df,
+            "session_types": ["maze"],
+        },
         {
             "filename": "frames.spikeCounts.parquet",
             "function": get_navigation_spike_counts_df,
             "session_types": ["maze"],
         },
-        {"filename": "trial_aligned_rates.parquet", "function": get_trial_aligned_rates_df, "session_types": ["maze"]},
-        {"filename": "event_aligned_rates.parquet", "function": get_event_aligned_rates_df, "session_types": ["maze"]},
+        {
+            "filename": "trial_aligned_rates.parquet",
+            "function": get_trial_aligned_rates_df,
+            "session_types": ["maze"],
+        },
+        {
+            "filename": "event_aligned_rates.parquet",
+            "function": get_event_aligned_rates_df,
+            "session_types": ["maze"],
+        },
         {
             "filename": "navigation_strategies.parquet",
             "function": get_navigation_strategies_df,
@@ -59,17 +76,24 @@ ANALYSIS_DATA_STRUCTURES_DF = pd.DataFrame(
             "function": get_egocentric_action_tuning_metrics_df,
             "session_types": ["maze"],
         },
+        {
+            "filename": "frames.thetaSpikeCounts.parquet",
+            "function": get_navigation_theta_spike_counts_df,
+            "session_types": ["maze"],
+        },
+        {
+            "filename": "frames.4HzSpikeCounts.parquet",
+            "function": get_navigation_4Hz_spike_counts_df,
+            "session_types": ["maze"],
+        },
     ]
 )
-
-
-# %%
 
 
 # %% Process analysis data single process
 
 
-def populate_analysis_data(data_structures="all", overwrite=False, subject_IDs="all", max_jobs=2):
+def populate_analysis_data(data_structures="all", overwrite=False, subject_IDs="all", parallel_jobs=2):
     """ """
     subject_IDs = SUBJECT_IDS if subject_IDs == "all" else subject_IDs
     data_strucutres_df = (
@@ -101,10 +125,15 @@ def populate_analysis_data(data_structures="all", overwrite=False, subject_IDs="
                 print(f"FileNotFoundError: {row.function.__name__} failed for {processed_data_path}")
                 pass
 
-    Parallel(n_jobs=max_jobs)(
-        delayed(_process_session)(processed_data_path, analysis_data_path)
-        for processed_data_path, analysis_data_path in zip(processed_data_paths, analysis_data_paths)
-    )
+    if parallel_jobs:
+        Parallel(n_jobs=parallel_jobs)(
+            delayed(_process_session)(processed_data_path, analysis_data_path)
+            for processed_data_path, analysis_data_path in zip(processed_data_paths, analysis_data_paths)
+        )
+    else:
+        # process session sequentially
+        for processed_data_path, analysis_data_path in zip(processed_data_paths, analysis_data_paths):
+            _process_session(processed_data_path, analysis_data_path)
 
 
 def populate_analysis_data_single_session(

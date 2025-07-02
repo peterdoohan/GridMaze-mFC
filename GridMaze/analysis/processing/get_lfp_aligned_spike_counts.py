@@ -9,7 +9,6 @@ from scipy.signal import butter, filtfilt, hilbert
 
 from GridMaze.analysis.core import load_data
 from GridMaze.analysis.core import convert
-from GridMaze.analysis.event_aligned import lfp_utils as lu
 
 # %% Global Variables
 FS_LFP = 1500
@@ -22,14 +21,14 @@ FRAME_RATE = 60  # Hz
 # %% Functions
 
 
-def get_navigation_theta_spike_counts_df(processed_data_path, n_bins=12):
+def get_navigation_theta_spike_counts_df(processed_data_path, analysis_data_path, n_bins=12):
     """
     see _get_navigation_lfp_phase_binned_spike_counts_df
     """
     return _get_navigation_lfp_phase_binned_spike_counts_df(processed_data_path, lfp_phase="theta", n_bins=n_bins)
 
 
-def get_navigation_4Hz_spike_counts_df(processed_data_path, n_bins=12):
+def get_navigation_4Hz_spike_counts_df(processed_data_path, analysis_data_path, n_bins=12):
     """
     see _get_navigation_lfp_phase_binned_spike_counts_df
     """
@@ -158,13 +157,47 @@ def get_LFP(processed_data, shank=3, single_channel=False, remove_artifacts=True
     cluster_metrics = load_data.load(processed_data / "clusters.metrics.htsv")
     lfp_signal = load_data.load(processed_data / "lfp.signal.npy")
     if single_channel:  # converting from channel_id to channel_index in lfp_signal to get the signal
-        channel_id = lu._get_single_channel_for_LFP(lfp_metrics, cluster_metrics, shank)
+        channel_id = _get_single_channel_for_LFP(lfp_metrics, cluster_metrics, shank)
         channel_index = lfp_metrics[lfp_metrics.contact.id == channel_id].index[0]
         lfp = lfp_signal[:, channel_index]
     else:  # average lfp over multiple channels
-        channel_ids = lu._get_shank_channels_for_LFP(lfp_metrics, cluster_metrics, shank)
+        channel_ids = _get_shank_channels_for_LFP(lfp_metrics, cluster_metrics, shank)
         channel_indices = lfp_metrics.contact.id.isin(channel_ids).index.values
         lfp = lfp_signal[:, channel_indices].mean(axis=1)
     if remove_artifacts:
         lfp = lu._remove_artifacts(lfp, thres=500)
     return lfp
+
+
+def _get_single_channel_for_LFP(lfp_metrics, cluster_metrics, shank=3, verbose=False):
+    """
+    copy from event_aligned/lfp_units.py
+    """
+    cluster_metrics = cluster_metrics[cluster_metrics.single_unit]
+    single_unit_contact_ids = set(cluster_metrics.contact.id.unique())
+    lfp_shank = lfp_metrics[
+        (lfp_metrics.contact.shank == shank)
+        & (lfp_metrics.contact.qc == "good")
+        & (lfp_metrics.contact.id.isin(single_unit_contact_ids))
+    ].sort_values(("contact", "y"))
+    if lfp_shank.empty:
+        raise ValueError(f"No suitable channels found for shank: {shank}")
+    mid_index = len(lfp_shank) // 2
+    selected_contact = lfp_shank.iloc[mid_index].contact.id
+    if verbose:
+        print(f"Selected channel: {selected_contact}")
+    return selected_contact
+
+
+def _get_shank_channels_for_LFP(lfp_metrics, cluster_metrics, shank=3, verbose=False, min_good=2):
+    """
+    copy from event_aligned/lfp_units.py
+    """
+    cluster_metrics = cluster_metrics[cluster_metrics.single_unit]
+    lfp_shank = lfp_metrics[(lfp_metrics.contact.shank == shank) & (lfp_metrics.contact.qc == "good")]
+    if len(lfp_shank) < min_good:
+        raise ValueError(f"Shank {shank} has less than {min_good} good contacts")
+    contact_set = lfp_shank.contact.id.values
+    if verbose:
+        print(f"Shank {shank} contacts: {contact_set}")
+    return contact_set
