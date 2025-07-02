@@ -120,6 +120,10 @@ def _analysis_data(filepath):
         data = _load_multiindex_parquet(filepath)
     elif analysis_data_structure == "clusters.egocentricActionTuningMetrics.parquet":
         data = _load_multiindex_parquet(filepath)
+    elif analysis_data_structure == "frames.thetaSpikeCounts.parquet":
+        data = _load_multiindex_parquet(filepath)
+    elif analysis_data_structure == "frames.4HzSpikeCounts.binned.parquet":
+        data = _load_multiindex_parquet(filepath)
     else:
         raise ValueError(f"Analysis data structure {analysis_data_structure} not recognised")
     if data is None:
