@@ -22,7 +22,21 @@ FRAME_RATE = 60  # Hz
 # %% Functions
 
 
-def get_navigation_lfp_phase_binned_spike_counts_df(processed_data_path, lfp_phase="theta", n_bins=12):
+def get_navigation_theta_spike_counts_df(processed_data_path, n_bins=12):
+    """
+    see _get_navigation_lfp_phase_binned_spike_counts_df
+    """
+    return _get_navigation_lfp_phase_binned_spike_counts_df(processed_data_path, lfp_phase="theta", n_bins=n_bins)
+
+
+def get_navigation_4Hz_spike_counts_df(processed_data_path, n_bins=12):
+    """
+    see _get_navigation_lfp_phase_binned_spike_counts_df
+    """
+    return _get_navigation_lfp_phase_binned_spike_counts_df(processed_data_path, lfp_phase="4Hz", n_bins=n_bins)
+
+
+def _get_navigation_lfp_phase_binned_spike_counts_df(processed_data_path, lfp_phase="theta", n_bins=12):
     """ """
     try:
         session_info = load_data.load(processed_data_path / "session_info.json")
