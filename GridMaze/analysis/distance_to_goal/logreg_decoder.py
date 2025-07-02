@@ -8,6 +8,8 @@ import numpy as np
 import pandas as pd
 from joblib import delayed, Parallel
 from matplotlib import pyplot as plt
+from matplotlib.colors import LogNorm, Normalize
+from matplotlib.ticker import MaxNLocator
 import seaborn as sns
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
@@ -32,79 +34,80 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 # %% plot basic decoder
 
 
-def plot_distance_decoding(results_df, ax=None):
-    """
-    plot mean true vs decoded distance with cross subject variance
-    """
-    if ax is None:
-        f, ax = plt.subplots(1, 1, figsize=(3, 3))
-    ax.spines[["top", "right"]].set_visible(False)
-    distance_bins = sorted(results_df.distance_bin_mids.unique())
-    moving_df, stat_df = pd.DataFrame(index=distance_bins), pd.DataFrame(index=distance_bins)
-    for subject in SUBJECT_IDS:
-        subject_df = results_df[results_df.subject == subject]
-        mean_decoded_dist = subject_df.groupby(["moving", "distance_bin_mids"]).decoded_distance.mean().unstack().T
-        moving_df[subject] = mean_decoded_dist[True]
-        stat_df[subject] = mean_decoded_dist[False]
-    # plot moving
-    for df, label, color in zip([moving_df, stat_df], ["moving", "stationary"], ["blue", "grey"]):
-        mean_dist = df.mean(axis=1)
-        sem_dist = df.sem(axis=1)
-        ax.plot(distance_bins, mean_dist, label=label, color=color)
-        ax.fill_between(
-            distance_bins,
-            mean_dist - sem_dist,
-            mean_dist + sem_dist,
-            alpha=0.2,
-            color=color,
-        )
-    ax.set_xlabel("true distance to goal (m)")
-    ax.set_ylabel("decoded distance to goal (m)")
-    ax.set_xlim(0, 1.6)
-    ax.set_ylim(0, 1.6)
-    ax.plot([0, 1.6], [0, 1.6], color="k", linestyle="--", alpha=0.5)
-    ax.legend()
-
-
-def plot_distance_decoding_probs(results_df, moving_only=False, n_bins=35, f=None, ax=None):
+def plot_distance_decoding_probs(
+    results_df, moving_only=True, maze_names=["maze_1", "maze_2", "rooms_maze"], log_prob=False, vmax=0.1, ax=None
+):
     """ """
-    if ax is None or f is None:
-        f, ax = plt.subplots(1, 1, figsize=(4, 3))
-    ax.spines[["top", "right"]].set_visible(False)
-    # process data
     if moving_only:
         df = results_df[results_df.moving]
     else:
         df = results_df.copy()
-    # bin true vs decoded distances
-    x = df.true_distance.values
-    y = df.decoded_distance.values
-    # get 2D histogram
-    H, xedges, yedges = np.histogram2d(x, y, bins=n_bins)
-    H_norm = H / H.sum(axis=1, keepdims=True)  # normalise by true distance
-    # plot with pcolormesh
-    X, Y = np.meshgrid(xedges, yedges)
-    pcm = ax.pcolormesh(X, Y, H_norm.T, cmap="Greys", vmax=0.2)
-    # 4) formatting
-    ax.set_xlabel("true_distance")
-    ax.set_ylabel("decoded_distance")
-    f.colorbar(pcm, ax=ax, label="Pr")
-
-    ax.set_xlim(0, 1.6)
-    ax.set_ylim(0, 1.6)
-    ax.plot([0, 1.6], [0, 1.6], color="k", linestyle="--", alpha=0.5)
-    return
+    if maze_names:
+        df = df[df.maze_name.isin(maze_names)]
+    # average probs over session distance bins
+    p_df = df.groupby(["subject_ID", "distance_bin_mid"]).decoded_distance_prob.mean()
+    # average over subjects
+    p_df = p_df.groupby("distance_bin_mid").decoded_distance_prob.mean()  # [n_dist, n_dist]
+    # plotting
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(4, 4))
+    # plot heatmap
+    data = p_df.values.T
+    distances = p_df.index.values
+    if log_prob:
+        norm = LogNorm(vmin=0.001, vmax=vmax)
+        cbar_kwargs = {"ticks": MaxNLocator(5), "format": "%.e", "shrink": 0.8}
+    else:
+        norm = None
+        cbar_kwargs = {"shrink": 0.5}
+    sns.heatmap(
+        data,
+        square=True,
+        cmap="Greys",
+        norm=norm,
+        cbar_kws=cbar_kwargs,
+        ax=ax,
+        vmax=vmax,
+    )
+    ax.invert_yaxis()
+    ax.set_xticks(np.arange(0, len(distances), 5) + 0.5)
+    ax.set_xticklabels(np.round(distances[::5], 2), rotation=0)
+    ax.set_yticks(np.arange(0, len(distances), 5) + 0.5)
+    ax.set_yticklabels(np.round(distances[::5], 2))
+    ax.set_xlabel("True distance")
+    ax.set_ylabel("Decoded distance")
+    # get argmax
+    m_df = df.groupby(["subject_ID", "distance_bin_mid"]).decoded_distance_prob.mean()  # av samples in sessions
+    # get max prob decoded distance in each session
+    m_df = m_df.decoded_distance_prob.idxmax(axis=1).unstack().astype(float)
+    # average over subjects
+    m_df = m_df.groupby(["subject_ID"]).mean()
+    # convert to distance bins
+    m = m_df.values
+    m = (m / m_df.columns.max()) * m.shape[1]
+    # plot mean and sem across subjects
+    mean = np.mean(m, axis=0) + 0.5  # add offsets to plot in middle of boxes
+    sem = np.std(m, axis=0) / np.sqrt(m.shape[0]) + 0.5
+    x = np.arange(len(mean)) + 0.5
+    ax.plot(x, mean, color="royalblue", label="mean decoded distance")
+    ax.fill_between(
+        x,
+        mean - sem,
+        mean + sem,
+        color="royalblue",
+        alpha=0.3,
+    )
+    ax.plot([0, len(mean)], [0, len(mean)], color="royalblue", linestyle="--")
 
 
 # %% populate basic decoding across all late sesssions
 
 
-def load_decoding_results():
-    results_paths = list((RESULTS_DIR / "basic").iterdir())
+def load_decoding_results(subfolder="all_dist"):
+    results_paths = list((RESULTS_DIR / "basic" / subfolder).iterdir())
     dfs = []
     for path in results_paths:
-        df = pd.read_csv(path)
-        df["subject"] = path.name.split(".")[0]
+        df = pd.read_parquet(path)
         dfs.append(df)
     results_df = pd.concat(dfs, axis=0)
     return results_df
