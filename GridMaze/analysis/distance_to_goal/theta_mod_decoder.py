@@ -21,27 +21,34 @@ from GridMaze.analysis.distance_to_goal import logreg_decoder as ld
 # %%
 
 
-def test(
+def populate_decoding_results():
+    """ """
+    return
+
+
+def get_theta_mod_distance_to_goal_decoding(
     session,
     resolution=0.5,
     metric=("distance_to_goal", "geodesic"),
     include_multiunits=True,
-    moving_only=False,
+    moving_only=True,
     max_steps_to_goal=30,
-    bin_spacing=0.05,
-    max_distance=0.5,
+    bin_spacing=0.04,
+    max_distance=0.8,  # best decoding at short distances
     bin_method="uniform",
     n_log_bins=30,
     balance_distances=False,
-    n_folds=5,
+    n_folds=8,
     sqrt_spikes=True,
     standardise_spikes=True,
     alpha="opt",
-    test_metric="weighted_ME",
-    verbose=False,
+    output="max",
+    verbose=True,
 ):
     """ """
     # get input data
+    if verbose:
+        print("loading input data ...")
     input_data = get_input_data(
         session,
         resolution=resolution,
@@ -57,7 +64,17 @@ def test(
     )
     distance_bin_mids = np.array(sorted(input_data.distance_bin_mid.unique()))
     lfp_phases = input_data.spike_count.columns.get_level_values(1).unique().values
+
     # set up results df
+    results_df = pd.concat(
+        [
+            input_data[[("trial", "", ""), ("time", "", ""), (*metric, ""), ("distance_bin_mid", "", "")]].droplevel(
+                2, axis=1
+            ),
+            pd.DataFrame(index=input_data.index, columns=pd.MultiIndex.from_product([["lfp_phase"], lfp_phases])),
+        ],
+        axis=1,
+    )  # sample info + err for each sample at each lfp phase
 
     # decode distance CV
     folds_df = folds.get_folds_df(session, goal_stratified=False, return_unique_IDs=True, n_folds=n_folds)
@@ -72,6 +89,7 @@ def test(
                 input_data,
                 fold_df,
                 metric,
+                output,
                 sqrt_spikes=sqrt_spikes,
                 standardise_spikes=standardise_spikes,
                 return_as="best",
@@ -81,6 +99,7 @@ def test(
                 print(f"Optimal alpha for {fold} is {opt_alpha}")
         else:
             opt_alpha = alpha
+
         # split test train
         train_df, test_df = folds._get_test_train_dfs(input_data, fold_df)
         # train on spikes from all theta bins
@@ -92,42 +111,44 @@ def test(
             X_train = scaler.fit_transform(X_train)
         y_train = train_df.distance_bin_id.values
         # train model on average spike counts across all lfp phases
+        if verbose:
+            print(f"    Training on mean spike counts across all lfp phases")
         model = LogisticRegression(penalty="l2", C=opt_alpha, max_iter=10_000, random_state=0, class_weight="balanced")
         model.fit(X_train, y_train)
+
         # test on each lfp_phase separately
         test_spikes_df = test_df.spike_count.swaplevel(axis=1).sort_index(axis=1)
-        phase_metrics = np.zeros(len(lfp_phases))
         for i, phase in enumerate(lfp_phases):
             if verbose:
-                print(f"    Testing on {phase}")
+                print(f"    Testing on phase: {phase:.2f}")
             X_test = test_spikes_df[phase].values
             if sqrt_spikes:
                 X_test = np.sqrt(X_test)
             if standardise_spikes:
                 X_test = scaler.transform(X_test)
             y_test = test_df.distance_bin_id.values
+            true_dist = distance_bin_mids[y_test]
             # get output metric
-            if test_metric == "weighted_ME":
+            if output == "weighted":
                 y_pred_prob = model.predict_proba(X_test)
                 weighted_dist = y_pred_prob.dot(distance_bin_mids)
-                true_dist = distance_bin_mids[y_test]
-                phase_metrics[i] = np.mean(np.abs(weighted_dist - true_dist))
-            elif test_metric == "max_ME":
-                y_pred_prob = model.predict_proba(X_test)
-                weighted_dist = y_pred_prob.dot(distance_bin_mids)
-                true_dist = distance_bin_mids[y_test]
-                phase_metrics[i] = np.mean(np.abs(weighted_dist - true_dist))
+                err = weighted_dist - true_dist
+            elif output == "max":
+                y_pred = model.predict(X_test)
+                y_pred_dist = distance_bin_mids[y_pred]
+                err = y_pred_dist - true_dist
             else:
-                NotImplementedError(f"Test metric {test_metric} not implemented.")
-
-    return
+                NotImplementedError(f"Test metric {output} not implemented.")
+            # store results
+            results_df.loc[test_df.index, ("lfp_phase", phase)] = err
+    return results_df
 
 
 def get_CV_alpha(
     input_data,
     fold_df,
     metric,
-    output="max",
+    output,
     sqrt_spikes=True,
     standardise_spikes=True,
     return_as="best",
