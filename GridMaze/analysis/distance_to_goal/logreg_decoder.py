@@ -113,7 +113,7 @@ def load_decoding_results():
 def populate_decoding_results(max_jobs=20, subfolder=None, max_distance=None, verbose=True):
     """ """
 
-    def _process_session(session, subfolder, verbose):
+    def _process_session(session):
         if verbose:
             print(f"Processing session {session.name}")
         # set up save path
@@ -147,7 +147,7 @@ def populate_decoding_results(max_jobs=20, subfolder=None, max_distance=None, ve
         ],
         must_have_data=True,
     )
-    Parallel(n_jobs=max_jobs)(delayed(_process_session)(session, verbose=verbose) for session in sessions)
+    Parallel(n_jobs=max_jobs)(delayed(_process_session)(session) for session in sessions)
 
     if verbose:
         print("Finished populating decoding results ...")
