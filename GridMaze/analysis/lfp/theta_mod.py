@@ -75,6 +75,8 @@ def plot_population_theta_pref(population_theta_df, ax=None):
     subject_counts = cluster_prefs.groupby(level=0).value_counts().unstack()
     # normalise to prop of clusters per subject
     subject_counts = subject_counts.div(subject_counts.sum(axis=1), axis=0)
+    subject_counts.columns = subject_counts.columns.astype(float)
+    subject_counts = subject_counts.sort_index(axis=1)  # sort by phase
     # plot
     mean = subject_counts.mean()
     sem = subject_counts.sem()
@@ -102,7 +104,7 @@ def plot_population_theta_pref(population_theta_df, ax=None):
     return
 
 
-def get_population_theta_mod(verbose=True, save=False):
+def get_population_theta_mod(verbose=False, save=False):
     """ """
     save_path = RESULTS_DIR / "population_theta_mod.csv"
     if save_path.exists() and not save:
