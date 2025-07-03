@@ -33,15 +33,20 @@ def downsample_nav_spikes_data(
             ("moving", ""),
             ("maze_position", "simple"),
             ("cardinal_movement_direction", ""),
-            *distance_metrics,
         ]
     ]
     # downsample navigation info by taking values in mid window
     mid_window_inds = (spike_counts_df.index // ds_frames).unique() * ds_frames + (ds_frames // 2)
     mid_window_inds = mid_window_inds[mid_window_inds < len(nav_info)]
     nav_info = nav_info.iloc[mid_window_inds]
-    # account for differences in ds methods
     nav_info.reset_index(drop=True, inplace=True)
+    # downsample continous nav variables by taking mean of values in window
+    nav_cont = navigation_df[[*distance_metrics, ("speed", "")]]
+    ds_nav_cont = nav_cont.groupby(nav_cont.index // ds_frames).mean()
+    ds_nav_cont.reset_index(drop=True, inplace=True)
+    # add to nav_info
+    nav_info = pd.concat([nav_info, ds_nav_cont], axis=1)
+    # account for differences in ds methods
     if nav_info.shape[0] < ds_spike_counts_df.shape[0]:
         ds_spike_counts_df = ds_spike_counts_df.iloc[:-1]
     return nav_info, ds_spike_counts_df
