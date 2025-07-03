@@ -6,6 +6,7 @@ Library for distance to goal rep, theta mod decoding.
 import json
 import numpy as np
 import pandas as pd
+from joblib import Parallel, delayed
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
@@ -21,7 +22,7 @@ from GridMaze.analysis.distance_to_goal import logreg_decoder as ld
 
 from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
 
-RESULTS_DIR = RESULTS_PATH / "distance_to_goal" / "logreg_decoding"
+RESULTS_DIR = RESULTS_PATH / "distance_to_goal" / "logreg_decoding" / "lfp_mod"
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
@@ -29,23 +30,53 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 # %%
 
 
-def populate_decoding_results(verbose=True):
+def populate_decoding_results(lfp_type="theta", max_jobs=10, verbose=True):
     """ """
-    # load sessions
-    if verbose:
-        print("Loading sessions ...")
-    sessions = gs.get_maze_sessions(
-        subject_IDs=["m2"],
-        maze_names="all",
-        days_on_maze="late",
-        with_data=[
-            "navigation_df",
-            "navigation_theta_spike_counts_df",
-            "cluster_metrics",
-            "trials_df",
-        ],
-        must_have_data=True,
-    )
+
+    def _process_session(session):
+        """ """
+        if verbose:
+            print(f"Processing session {session.name}")
+        # set up save path
+        save_path = RESULTS_DIR / lfp_type / f"{session.name}.parquet"
+        # reun decode with defualt settings
+        results_df = get_theta_mod_distance_to_goal_decoding(session, lfp_type=lfp_type, verbose=verbose)
+        # add session info
+        results_df[("subject_ID", "")] = session.subject_ID
+        results_df[("maze_name", "")] = session.maze_name
+        results_df[("day_on_maze", "")] = session.day_on_maze
+        # save
+        results_df.to_parquet(save_path)
+        if verbose:
+            print(f"Saved results for to {save_path}")
+
+    with_data = [
+        "navigation_df",
+        "cluster_metrics",
+        "trials_df",
+    ]
+    if lfp_type == "theta":
+        with_data.append("navigation_theta_spike_counts_df")
+    elif lfp_type == "4Hz":
+        with_data.append("navigation_4Hz_spike_counts_df")
+    else:
+        raise ValueError(f"lfp_type {lfp_type} not recognised, must be 'theta' or '4Hz'")
+    for subject_ID in SUBJECT_IDS:
+        if verbose:
+            print(f"Loading sessions for for {subject_ID} ...")
+        sessions = gs.get_maze_sessions(
+            subject_IDs=[subject_ID],
+            maze_names="all",
+            days_on_maze="all",
+            with_data=with_data,
+            must_have_data=True,
+        )
+        # process sessions in parallel
+        if verbose:
+            print(f"Running {len(sessions)} sessions ...")
+        Parallel(n_jobs=max_jobs)(delayed(_process_session)(session) for session in sessions)
+        if verbose:
+            print(f"Finished populating {subject_ID} decoding results ...")
     return
 
 
@@ -93,9 +124,7 @@ def get_theta_mod_distance_to_goal_decoding(
     # set up results df
     results_df = pd.concat(
         [
-            input_data[[("trial", "", ""), ("time", "", ""), (*metric, ""), ("distance_bin_mid", "", "")]].droplevel(
-                2, axis=1
-            ),
+            input_data.drop("spike_count", level=0, axis=1).droplevel(2, axis=1),
             pd.DataFrame(index=input_data.index, columns=pd.MultiIndex.from_product([["lfp_phase"], lfp_phases])),
         ],
         axis=1,
