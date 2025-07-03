@@ -6,9 +6,12 @@ Library for distance to goal rep, theta mod decoding.
 import json
 import numpy as np
 import pandas as pd
+from matplotlib import pyplot as plt
 from joblib import Parallel, delayed
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
+from pingouin import multivariate_ttest
+from matplotlib.ticker import ScalarFormatter
 
 
 from GridMaze.analysis.core import folds
@@ -27,7 +30,80 @@ RESULTS_DIR = RESULTS_PATH / "distance_to_goal" / "logreg_decoding" / "lfp_mod"
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
 
-# %%
+# %% ploting
+
+
+def plot_theta_mod_decoding(
+    results_df, maze_names=["maze_1", "maze_2", "rooms_maze"], max_distance=None, print_stats=True, ax=None
+):
+    """ """
+    df = results_df[results_df.maze_name.isin(maze_names)]
+    if max_distance is not None:
+        df = df[df.distance_to_goal.geodesic < max_distance]
+    # get session averages
+    x = df.groupby(["subject_ID", "maze_name", "day_on_maze"]).lfp_phase.mean()
+    # demean session averages (accout for systemic offsets)
+    x_norm = x.sub(x.mean(axis=1), axis=0)
+    # average across subjects
+    phase_mean_decoding = x_norm.groupby("subject_ID").lfp_phase.mean().lfp_phase
+    # # average across subjects
+    mean = phase_mean_decoding.mean()
+    sem = phase_mean_decoding.sem()
+    phase = mean.index.astype(float)
+    # plotting
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(3, 3))
+    ax.axhline(0, color="k", linestyle="--", alpha=0.5)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.errorbar(
+        phase,
+        mean.values,
+        yerr=sem.values,
+        fmt="o-",
+        color="midnightblue",
+        markersize=6,
+        linewidth=2,
+        capsize=None,
+        elinewidth=2,
+    )
+    ax.set_xlabel("theta phase")
+    ax.set_ylabel("decoding bias (m)\n (distance-to-goal)")
+    ax.set_xticks(np.arange(-np.pi, np.pi + 0.1, np.pi / 2))
+    ax.set_xticklabels(["-π", "-π/2", "0", "π/2", "π"])
+    formatter = ScalarFormatter(useMathText=True)
+    formatter.set_scientific(True)
+    # force it even if values are modest; (0,0) means always use 10^n
+    formatter.set_powerlimits((0, 0))
+    ax.yaxis.set_major_formatter(formatter)
+    if print_stats:
+        _get_stats(phase_mean_decoding)
+    return
+
+
+def _get_stats(phase_mean_decoding):
+    """ """
+    phis = phase_mean_decoding.columns.astype(float)
+    data = phase_mean_decoding.values
+    beta_cos = data.dot(np.cos(phis))
+    beta_sin = data.dot(np.sin(phis))
+    betas = np.column_stack([beta_cos, beta_sin])
+    zeros = np.zeros_like(betas)
+    mv_test = multivariate_ttest(betas, zeros, paired=False)
+    return print(mv_test)
+
+
+# %% populate and load data
+
+
+def load_decoding_results(lfp_type="theta"):
+    """ """
+    results_paths = list((RESULTS_DIR / lfp_type).iterdir())
+    dfs = []
+    for path in results_paths:
+        df = pd.read_parquet(path)
+        dfs.append(df)
+    results_df = pd.concat(dfs, axis=0)
+    return results_df
 
 
 def populate_decoding_results(lfp_type="theta", max_jobs=10, verbose=True):
@@ -67,7 +143,7 @@ def populate_decoding_results(lfp_type="theta", max_jobs=10, verbose=True):
         sessions = gs.get_maze_sessions(
             subject_IDs=[subject_ID],
             maze_names="all",
-            days_on_maze="all",
+            days_on_maze="late",
             with_data=with_data,
             must_have_data=True,
         )
@@ -80,6 +156,7 @@ def populate_decoding_results(lfp_type="theta", max_jobs=10, verbose=True):
     return
 
 
+# %%
 def get_theta_mod_distance_to_goal_decoding(
     session,
     resolution=0.4,
