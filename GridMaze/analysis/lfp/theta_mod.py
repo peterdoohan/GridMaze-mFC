@@ -97,7 +97,6 @@ def plot_population_theta_pref(population_theta_df, ax=None):
     )
     ax.set_xlabel("theta phase")
     ax.set_ylabel("prop. population")
-    # ax.set_ylim(_even_split * 0.95, _even_split * 1.05)
     ax.set_xticks(np.arange(-np.pi, np.pi + 0.1, np.pi / 2))
     ax.set_xticklabels(["-π", "-π/2", "0", "π/2", "π"])
     return
@@ -180,10 +179,37 @@ def get_session_theta_mod(session, navigation_only=True, moving_only=True, max_s
 
 def plot_theta_aligned_lfp(theta_aligned_df, ax=None):
     """ """
-    return
+    # average signal across sessions for each subject
+    subject_means = theta_aligned_df.T.groupby(level=0).mean()
+    # plot mean and sem across subjects
+    mean = subject_means.mean()
+    sem = subject_means.sem()
+    phases = mean.index.values.astype(float)
+    # plotting
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(3, 3))
+    ax.axhline(0, color="k", linestyle="--", alpha=0.5)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.plot(
+        phases,
+        mean.values,
+        color="k",
+        linewidth=2,
+    )
+    ax.fill_between(
+        phases,
+        mean.values - sem.values,
+        mean.values + sem.values,
+        color="k",
+        alpha=0.3,
+    )
+    ax.set_xlabel("theta phase")
+    ax.set_ylabel("LFP (uV)")
+    ax.set_xticks(np.arange(-np.pi, np.pi + 0.1, np.pi / 2))
+    ax.set_xticklabels(["-π", "-π/2", "0", "π/2", "π"])
 
 
-def get_theta_aligned_lfp_df(save=False, verbose=True):
+def get_theta_aligned_lfp_df(save=False, verbose=False):
     """
     Note get sessions one-by-one to avoid memory issues
     with massive LFP arrays.
@@ -192,7 +218,7 @@ def get_theta_aligned_lfp_df(save=False, verbose=True):
     if save_path.exists() and not save:
         if verbose:
             print(f"Loading theta aligned lfp from {save_path}")
-        return pd.read_csv(save_path, index_col=[0, 1])
+        return pd.read_csv(save_path, index_col=[0], header=[0, 1])
 
     aligned_lfps = []
     for subject in SUBJECT_IDS:
