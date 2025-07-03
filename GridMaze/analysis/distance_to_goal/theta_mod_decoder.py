@@ -106,7 +106,7 @@ def load_decoding_results(lfp_type="theta"):
     return results_df
 
 
-def populate_decoding_results(lfp_type="theta", max_jobs=10, verbose=True):
+def populate_decoding_results(lfp_type="theta", subfolder=None, max_distance=0.8, max_jobs=10, verbose=True):
     """ """
 
     def _process_session(session):
@@ -114,9 +114,14 @@ def populate_decoding_results(lfp_type="theta", max_jobs=10, verbose=True):
         if verbose:
             print(f"Processing session {session.name}")
         # set up save path
-        save_path = RESULTS_DIR / lfp_type / f"{session.name}.parquet"
+        if subfolder is None:
+            save_path = RESULTS_DIR / lfp_type / f"{session.name}.parquet"
+        else:
+            save_path = RESULTS_DIR / subfolder / f"{session.name}.parquet"
         # reun decode with defualt settings
-        results_df = get_theta_mod_distance_to_goal_decoding(session, lfp_type=lfp_type, verbose=verbose)
+        results_df = get_theta_mod_distance_to_goal_decoding(
+            session, lfp_type=lfp_type, max_distance=max_distance, verbose=verbose
+        )
         # add session info
         results_df[("subject_ID", "")] = session.subject_ID
         results_df[("maze_name", "")] = session.maze_name
@@ -137,6 +142,7 @@ def populate_decoding_results(lfp_type="theta", max_jobs=10, verbose=True):
         with_data.append("navigation_4Hz_spike_counts_df")
     else:
         raise ValueError(f"lfp_type {lfp_type} not recognised, must be 'theta' or '4Hz'")
+
     for subject_ID in SUBJECT_IDS:
         if verbose:
             print(f"Loading sessions for for {subject_ID} ...")
@@ -371,7 +377,7 @@ def get_input_data(
     include_multiunits=True,
     moving_only=True,
     max_steps_to_goal=30,
-    bin_spacing=0.05,
+    bin_spacing=0.04,
     bin_method="uniform",
     max_distance=None,
     n_log_bins=25,
