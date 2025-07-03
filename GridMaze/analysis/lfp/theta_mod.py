@@ -19,8 +19,14 @@ from GridMaze.analysis.processing import get_lfp_aligned_spike_counts as la
 # %% Global Variables
 from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
 
+with open(EXPERIMENT_INFO_PATH / "maze_configs.json", "r") as input_file:
+    MAZE_CONFIGS = json.load(input_file)
+
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
+
+with open(EXPERIMENT_INFO_PATH / "maze_day2date.json", "r") as input_file:
+    MAZE_DAY2DATE = json.load(input_file)
 
 RESULTS_DIR = RESULTS_PATH / "lfp"
 
@@ -172,9 +178,55 @@ def get_session_theta_mod(session, navigation_only=True, moving_only=True, max_s
 # %% get average theta aligend lfp
 
 
-def get_session_theta_aligned_lfp(session):
+def get_theta_aligned_lfp_df(save=False, verbose=True):
+    """
+    Note get sessions one-by-one to avoid memory issues
+    with massive LFP arrays.
+    """
+    save_path = RESULTS_DIR / "theta_aligned_lfp.csv"
+    if save_path.exists() and not save:
+        if verbose:
+            print(f"Loading theta aligned lfp from {save_path}")
+        return pd.read_csv(save_path, index_col=[0, 1])
+
+    aligned_lfps = []
+    for subject in SUBJECT_IDS:
+        for maze in MAZE_CONFIGS.keys():
+            days_on_maze = [int(d) for d in MAZE_DAY2DATE[maze].keys()]
+            late_days = days_on_maze[-7:]
+            for day in late_days:
+                try:
+                    session = gs.get_maze_sessions(
+                        subject_IDs=[subject],
+                        maze_names=[maze],
+                        days_on_maze=[day],
+                        with_data=["lfp_times", "lfp_signal", "lfp_metrics", "cluster_metrics"],
+                        must_have_data=True,
+                    )
+                    if verbose:
+                        print(session.name)
+                    theta_aligned_lfp = get_session_theta_aligned_lfp(session)
+                    aligned_lfps.append(theta_aligned_lfp)
+                except FileNotFoundError:
+                    pass  # minority of sessions missing data
+    theta_alinged_df = pd.concat(aligned_lfps, axis=1)
+    if save:
+        if verbose:
+            print(f"Saving theta aligned lfp to {save_path}")
+        theta_alinged_df.to_csv(save_path)
+    return theta_alinged_df
+
+
+def get_session_theta_aligned_lfp(session, n_bins=32):
     """ """
     lfp_signal = lu.get_LFP(session)
     # get theta phase
-
-    return
+    theta_phase = la.get_lfp_phase(lfp_signal, freq_range=THETA_RANGE, N=4)
+    # bin phases finely
+    bin_edges, theta_phase_bins = la.bin_lfp_phase(theta_phase, n_bins=n_bins)
+    # average lfp signal in each phase bin
+    theta_aligned_lfp = np.zeros(len(bin_edges) - 1)
+    for i in range(n_bins):
+        theta_aligned_lfp[i] = lfp_signal[theta_phase_bins == i].mean()
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    return pd.Series(index=bin_centers, data=theta_aligned_lfp, name=(session.subject_ID, session.name))
