@@ -178,6 +178,11 @@ def get_session_theta_mod(session, navigation_only=True, moving_only=True, max_s
 # %% get average theta aligend lfp
 
 
+def plot_theta_aligned_lfp(theta_aligned_df, ax=None):
+    """ """
+    return
+
+
 def get_theta_aligned_lfp_df(save=False, verbose=True):
     """
     Note get sessions one-by-one to avoid memory issues
