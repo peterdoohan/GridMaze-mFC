@@ -40,13 +40,13 @@ def plot_population_theta_mod(population_theta_df, ax=None):
     # average theta mod across subjects
     sub_mean_df = population_theta_df.groupby(level=0).mean()
     # plot mean and sem across subjects
-    mean = sub_mean_df.mean() * 100  # convert to %
-    sem = sub_mean_df.sem() * 100  # convert to %
+    mean = sub_mean_df.mean()
+    sem = sub_mean_df.sem()
     phases = mean.index.values.astype(float)
     # plotting
     if ax is None:
         f, ax = plt.subplots(1, 1, figsize=(3, 3))
-    _even_split = 100 / len(phases)
+    _even_split = 1 / len(phases)
     ax.axhline(_even_split, color="k", linestyle="--", alpha=0.5)
     ax.spines[["top", "right"]].set_visible(False)
     ax.errorbar(
@@ -61,7 +61,7 @@ def plot_population_theta_mod(population_theta_df, ax=None):
         elinewidth=2,
     )
     ax.set_xlabel("theta phase")
-    ax.set_ylabel("% spikes")
+    ax.set_ylabel("Normalised firing rate")
     ax.set_ylim(_even_split * 0.95, _even_split * 1.05)
     ax.set_xticks(np.arange(-np.pi, np.pi + 0.1, np.pi / 2))
     ax.set_xticklabels(["-π", "-π/2", "0", "π/2", "π"])
