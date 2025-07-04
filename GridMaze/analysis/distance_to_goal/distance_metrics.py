@@ -4,6 +4,7 @@ Library for comparing distance to goal tuning metrics
 
 # %% Imports
 import json
+import random
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -41,7 +42,14 @@ with open(EXPERIMENT_INFO_PATH / "maze_day2date.json", "r") as input_file:
 
 MAZE2MAX_DAY = {m: int((list(MAZE_DAY2DATE[m].keys())[-1])) for m in MAZE_DAY2DATE.keys()}
 
-DISTANCE_METRICS = ["geodesic", "euclidean", "manhattan", "future"]
+DISTANCE_METRICS = [
+    ("distance_to_goal", "geodesic"),
+    ("distance_to_goal", "euclidean"),
+    ("distance_to_goal", "manhattan"),
+    ("distance_to_goal", "future"),
+    ("progress_to_goal", "path_length"),
+    ("progress_to_goal", "time"),
+]
 
 
 # %% plot results from CPD summary
@@ -415,43 +423,59 @@ def quick_weight_check(comparisons_df):
 
 def get_distance_metric_weight_summaries(
     session,
-    metric_1="geodesic",
-    metric_2="euclidean",
+    metric_1=("distance_to_goal", "geodesic"),
+    metric_2=("distance_to_goal", "euclidean"),
     resolution=0.5,
     fixed_alpha=False,
     model="PoissonRegressor",
     n_bases=10,
     basis_type="gamma",
-    max_steps_to_goal=25,
+    max_steps_to_goal=30,
+    n_folds=5,
+    mon_dec_tol=0.12,
     max_jobs=20,
 ):
     """
     Runs a Poission GLM predicting spikes from basis activations of two distance metrics.
     """
+    _metric_1, _metric_2 = ".".join(metric_1), ".".join(metric_2)
+    if "progress_to_goal" in [metric_1[0], metric_2[0]]:
+        mon_dec_trial = True
+        max_steps_to_goal = None
+    else:
+        mon_dec_trial = False
     # get input data
     input_data = get_input_data(
         session,
-        metric_1=("distance_to_goal", metric_1),
-        metric_2=("distance_to_goal", metric_2),
+        metric_1=metric_1,
+        metric_2=metric_2,
         resolution=resolution,
         max_steps_to_goal=max_steps_to_goal,
+        mon_dec_trials=mon_dec_trial,
+        mon_dec_tol=mon_dec_tol,
     )
     cluster_unique_IDs = input_data.spike_count.columns.values
     # get a set of basis function activates for each distance metric
     basis_activation_dfs = []
     for i, m in enumerate([metric_1, metric_2]):
-        _m = ("distance_to_goal", m)
-        if m == "future":
-            _max = dd.get_distance_percentile(("distance_to_goal", "geodesic"), percentile=85)
-        else:
-            _max = dd.get_distance_percentile(_m, percentile=85)
-        basis_fn = db.distance_basis_generator(
-            n_bases=n_bases,
-            basis=basis_type,
-            btype="distance",
-            max_distance=_max,
-        )
-        basis_activations = basis_fn(input_data[_m])
+        if m[0] == "distance_to_goal":
+            if m == "future":
+                _max = dd.get_distance_percentile(("distance_to_goal", "geodesic"), percentile=90)
+            else:
+                _max = dd.get_distance_percentile(m, percentile=90)
+            basis_fn = db.distance_basis_generator(
+                n_bases=n_bases,
+                basis=basis_type,
+                btype="distance",
+                max_distance=_max,
+            )
+        elif m[0] == "progress_to_goal":
+            basis_fn = db.distance_basis_generator(
+                n_bases=n_bases,
+                basis=basis_type,
+                btype="progress",
+            )
+        basis_activations = basis_fn(input_data[m])
         basis_activations = pd.DataFrame(
             basis_activations,
             columns=pd.MultiIndex.from_product([[f"metric_{i+1}"], np.arange(0, n_bases)]),
@@ -462,7 +486,7 @@ def get_distance_metric_weight_summaries(
     input_data = pd.concat([input_data, *basis_activation_dfs], axis=1)
     if not fixed_alpha:
         # get xval opt alpha for each cluster
-        folds_df = folds.get_folds_df(session, goal_stratified=False, n_folds=5)
+        folds_df = folds.get_folds_df(session, goal_stratified=False, n_folds=n_folds)
         cluster_alphas = get_test_train_opt_alpha(folds_df, input_data, model=model)
     else:
         cluster_alphas = pd.Series(index=cluster_unique_IDs, data=fixed_alpha)
@@ -584,40 +608,56 @@ def run_pairwise_CPD_comparisons(session, verbose=True):
 
 def get_distance_metric_CPDs(
     session,
-    metric_1="geodesic",
-    metric_2="euclidean",
+    metric_1=("distance_to_goal", "geodesic"),
+    metric_2=("distance_to_goal", "euclidean"),
     resolution=0.5,
     model="PoissonRegressor",
     n_bases=10,
     basis_type="gamma",
-    max_steps_to_goal=25,
+    max_steps_to_goal=30,
+    n_folds=5,
+    mon_dec_tol=0.12,
     max_jobs=20,
 ):
     """ """
+    _metric_1, _metric_2 = ".".join(metric_1), ".".join(metric_2)
+    if "progress_to_goal" in [metric_1[0], metric_2[0]]:
+        mon_dec_trial = True
+        max_steps_to_goal = None
+    else:
+        mon_dec_trial = False
     # get input data
     input_data = get_input_data(
         session,
-        metric_1=("distance_to_goal", metric_1),
-        metric_2=("distance_to_goal", metric_2),
+        metric_1=metric_1,
+        metric_2=metric_2,
         resolution=resolution,
         max_steps_to_goal=max_steps_to_goal,
+        mon_dec_trials=mon_dec_trial,
+        mon_dec_tol=mon_dec_tol,
     )
     cluster_unique_IDs = input_data.spike_count.columns.values
     # get a set of basis function activations for each distance metric
     basis_activation_dfs = []
     for i, m in enumerate([metric_1, metric_2]):
-        _m = ("distance_to_goal", m)
-        if m == "future":
-            _max = dd.get_distance_percentile(("distance_to_goal", "geodesic"), percentile=85)
-        else:
-            _max = dd.get_distance_percentile(_m, percentile=85)
-        basis_fn = db.distance_basis_generator(
-            n_bases=n_bases,
-            basis=basis_type,
-            btype="distance",
-            max_distance=_max,
-        )
-        basis_activations = basis_fn(input_data[_m])
+        if m[0] == "distance_to_goal":
+            if m == "future":
+                _max = dd.get_distance_percentile(("distance_to_goal", "geodesic"), percentile=90)
+            else:
+                _max = dd.get_distance_percentile(m, percentile=90)
+            basis_fn = db.distance_basis_generator(
+                n_bases=n_bases,
+                basis=basis_type,
+                btype="distance",
+                max_distance=_max,
+            )
+        elif m[0] == "progress_to_goal":
+            basis_fn = db.distance_basis_generator(
+                n_bases=n_bases,
+                basis=basis_type,
+                btype="progress",
+            )
+        basis_activations = basis_fn(input_data[m])
         basis_activations = pd.DataFrame(
             basis_activations,
             columns=pd.MultiIndex.from_product([[f"metric_{i+1}"], np.arange(0, n_bases)]),
@@ -626,12 +666,13 @@ def get_distance_metric_CPDs(
         basis_activation_dfs.append(basis_activations)
     # combine basis activations with input data
     input_data = pd.concat([input_data, *basis_activation_dfs], axis=1)
-    folds_df = folds.get_folds_df(session, goal_stratified=False, n_folds=5)
+    valid_trials = input_data.trial.unique()
+    folds_df = folds.get_folds_df(session, goal_stratified=False, n_folds=n_folds, valid_trials=valid_trials)
     _folds = folds_df.columns.get_level_values(0).unique()
     model_name2regessor_classes = {
         "full": ["metric_1", "metric_2"],
-        f"reduced_{metric_1}": ["metric_2"],
-        f"reduced_{metric_2}": ["metric_1"],
+        f"reduced_{_metric_1}": ["metric_2"],
+        f"reduced_{_metric_2}": ["metric_1"],
     }
     all_results = []
     for fold in _folds:
@@ -668,7 +709,7 @@ def get_distance_metric_CPDs(
     # average metric across folds
     model_metrics = df.groupby(["cluster_unique_ID", "model_name"])[metric].mean().unstack()
     cpd_df = pd.DataFrame(index=model_metrics.index)
-    for m in [metric_1, metric_2]:
+    for m in [_metric_1, _metric_2]:
         reduced = model_metrics[f"reduced_{m}"]
         full = model_metrics["full"]
         cpd_df[m] = (reduced - full) / (reduced)
