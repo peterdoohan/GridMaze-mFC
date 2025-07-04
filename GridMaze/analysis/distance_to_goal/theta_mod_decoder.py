@@ -106,7 +106,7 @@ def load_decoding_results(lfp_type="theta"):
     return results_df
 
 
-def populate_decoding_results(lfp_type="theta", subfolder=None, max_distance=0.8, max_jobs=10, verbose=True):
+def populate_decoding_results(lfp_type="theta", subfolder=None, max_distance=0.8, max_jobs=False, verbose=True):
     """ """
 
     def _process_session(session):
@@ -154,9 +154,13 @@ def populate_decoding_results(lfp_type="theta", subfolder=None, max_distance=0.8
             must_have_data=True,
         )
         # process sessions in parallel
-        if verbose:
-            print(f"Running {len(sessions)} sessions ...")
-        Parallel(n_jobs=max_jobs)(delayed(_process_session)(session) for session in sessions)
+        if max_jobs:
+            if verbose:
+                print(f"Running {len(sessions)} sessions ...")
+            Parallel(n_jobs=max_jobs)(delayed(_process_session)(session) for session in sessions)
+        else:
+            for session in sessions:
+                _process_session(session)
         if verbose:
             print(f"Finished populating {subject_ID} decoding results ...")
     return
