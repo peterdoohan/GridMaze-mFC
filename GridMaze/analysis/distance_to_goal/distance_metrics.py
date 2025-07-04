@@ -354,7 +354,7 @@ def _is_late_session(row):
 
 def get_weight_metrics_summary_df(verbose=False):
     """ """
-    save_path = RESULTS_DIR / "weight_metric_summary_df.csv"
+    save_path = RESULTS_DIR / "weight_metric_summary_df2.csv"
     if save_path.exists():
         if verbose:
             print(f"Loading weight metric summaries df from {save_path}")
@@ -397,7 +397,8 @@ def run_pairwise_weight_metric_comparisons(session, verbose=True):
     metric_pairs = list(combinations(DISTANCE_METRICS, 2))
     dfs = []
     for metric_1, metric_2 in metric_pairs:
-        _name = f"{metric_1}_vs_{metric_2}"
+        _metric_1, _metric_2 = ".".join(metric_1), ".".join(metric_2)
+        _name = f"{_metric_1}_vs_{_metric_2}"
         if verbose:
             print(_name)
         weight_metrics_df = get_distance_metric_weight_summaries(session, metric_1, metric_2)
@@ -433,7 +434,7 @@ def get_distance_metric_weight_summaries(
     max_steps_to_goal=30,
     n_folds=5,
     mon_dec_tol=0.12,
-    max_jobs=20,
+    max_jobs=10,
 ):
     """
     Runs a Poission GLM predicting spikes from basis activations of two distance metrics.
@@ -551,7 +552,7 @@ def _process_cluster_betas(model, X, y, alpha, cluster, n_bases, _metric_1, _met
 
 def get_distance_metric_CPD_summary_df(verbose=False):
     """ """
-    save_path = RESULTS_DIR / "cpd_summary_df.csv"
+    save_path = RESULTS_DIR / "cpd_summary_df2.csv"
     if save_path.exists():
         if verbose:
             print(f"Loading CPD summaries df from {save_path}")
@@ -594,7 +595,8 @@ def run_pairwise_CPD_comparisons(session, verbose=True):
     metric_pairs = list(combinations(DISTANCE_METRICS, 2))
     cpd_dfs = []
     for metric_1, metric_2 in metric_pairs:
-        _name = f"{metric_1}_vs_{metric_2}"
+        _metric_1, _metric_2 = ".".join(metric_1), ".".join(metric_2)
+        _name = f"{_metric_1}_vs_{_metric_2}"
         if verbose:
             print(_name)
         cpd_df = get_distance_metric_CPDs(session, metric_1=metric_1, metric_2=metric_2)
@@ -618,7 +620,7 @@ def get_distance_metric_CPDs(
     max_steps_to_goal=30,
     n_folds=5,
     mon_dec_tol=0.12,
-    max_jobs=20,
+    max_jobs=10,
 ):
     """ """
     _metric_1, _metric_2 = ".".join(metric_1), ".".join(metric_2)
