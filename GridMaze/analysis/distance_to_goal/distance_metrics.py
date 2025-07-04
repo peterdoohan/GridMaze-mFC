@@ -837,3 +837,8 @@ def get_input_data(session, metric_1, metric_2, resolution=0.2, max_steps_to_goa
     # combine and return
     input_data = pd.concat([nav_info, spike_counts], axis=1)
     return input_data
+
+
+def get_ddtg_monotonically_decreasing_trials():
+    """ """
+    return
