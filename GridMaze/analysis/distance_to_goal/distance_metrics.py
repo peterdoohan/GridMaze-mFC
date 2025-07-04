@@ -796,8 +796,21 @@ def get_test_train_arrays(train_df, test_df, regressor_classes=["metric_1", "met
 
 
 # %%
-def get_input_data(session, metric_1, metric_2, resolution=0.2, max_steps_to_goal=25, min_spikes=300):
-    """ """
+def get_input_data(
+    session,
+    metric_1,
+    metric_2,
+    resolution=0.2,
+    max_steps_to_goal=25,
+    min_spikes=300,
+    mon_dec_trials=False,
+    mon_dec_tol=0.12,
+):
+    """
+    mon_dec refers to monotonically decreasing trials
+    """
+    if "progress_to_goal" in [metric_1[0], metric_2[0]]:
+        assert mon_dec_trials, "Must set mon_dec_trials=True to use progress_to_goal metric"
     # load data
     navigation_df = session.navigation_df
     spike_counts_df = session.navigation_spike_counts_df.reset_index(drop=True)
@@ -824,17 +837,22 @@ def get_input_data(session, metric_1, metric_2, resolution=0.2, max_steps_to_goa
         resolution=resolution,
         distance_metrics=distance_metrics,
     )
-    # filter for navigation trial phaes and distance / steps to goal
-    masks = [
-        (nav_info.trial_phase == "navigation"),
-        (nav_info.steps_to_goal.future.le(max_steps_to_goal)),
-    ]
+    # filter for navigation trial phaes and steps to goal or dtg monotonically decreasing trials
+    masks = [nav_info.trial_phase == "navigation"]
+    if max_steps_to_goal is not None:
+        masks.append((nav_info.steps_to_goal.future.le(max_steps_to_goal)))
+    if mon_dec_trials:
+        # get trials that are monotonically decreasing
+        valid_trials = get_monotonic_decreasing_trials(session, tol=mon_dec_tol, resolution=resolution, plot=False)
+        masks.append(nav_info.trial.isin(valid_trials))
     mask = np.logical_and.reduce(masks)
     nav_info = nav_info[mask]
     spike_counts = spike_counts[mask]
+
     # check remaining clusters pass min_spikes
     reject_clusters = spike_counts.columns[spike_counts.spike_count.sum().lt(min_spikes)]
     spike_counts = spike_counts.drop(columns=reject_clusters)
+
     # combine and return
     input_data = pd.concat([nav_info, spike_counts], axis=1)
     return input_data
