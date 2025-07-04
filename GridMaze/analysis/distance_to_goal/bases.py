@@ -11,9 +11,9 @@ from scipy.stats import gamma, norm
 
 # %% Global variables
 
-GAMMA_2P_SCALE = {"distance": 0.15, "steps": 1.5}
+GAMMA_2P_SCALE = {"distance": 0.15, "steps": 1.5, "progress": 0.1}
 
-GAUSSIAN_2P_SCALE = {"distance": 0.75, "steps": 1.5}
+GAUSSIAN_2P_SCALE = {"distance": 0.15, "steps": 1.5, "progress": 0.1}
 
 # %% Baiss activation generator
 
@@ -42,6 +42,8 @@ def distance_basis_generator(
         x_sample = np.linspace(0, max_steps, max_steps + 1)
     elif btype == "distance":
         x_sample = np.linspace(0, max_distance, 1000)
+    elif btype == "progress":
+        x_sample = np.linspace(0, 1, 1000)
     else:
         raise ValueError(f"Unknown btype {btype!r}")
     if basis == "gamma":
@@ -110,6 +112,9 @@ def plot_gamma_basis_functions(
     elif btype == "distance":
         x = np.linspace(0, max_distance, 100)
         scale = GAMMA_2P_SCALE["distance"]
+    elif btype == "progress":
+        x = np.linspace(0, 1, 100)
+        scale = GAMMA_2P_SCALE["progress"]
     else:
         NotImplementedError
     cmap = plt.get_cmap("viridis")
@@ -148,6 +153,9 @@ def get_gamma_basis_shape_params(
     elif btype == "distance":
         scale = GAMMA_2P_SCALE["distance"]
         domain_max = max_distance
+    elif btype == "progress":
+        scale = GAMMA_2P_SCALE["progress"]
+        domain_max = 1.0
     else:
         raise ValueError(f"Unknown btype {btype!r}")
 
@@ -178,6 +186,9 @@ def get_gaussian_basis_centres(n, btype="steps", max_distance=1.8, max_steps=20)
     elif btype == "distance":
         # n centres between 0 and max_distance
         return np.linspace(0, max_distance, n)
+    elif btype == "progress":
+        # n centres between 0 and 1
+        return np.linspace(0, 1, n)
     else:
         raise NotImplementedError(f"Unknown dtype {btype}")
 
@@ -212,6 +223,9 @@ def plot_gaussian_basis_functions(
     elif btype == "distance":
         x = np.linspace(0, max_distance, 1000)
         scale = GAUSSIAN_2P_SCALE["distance"]
+    elif btype == "progress":
+        x = np.linspace(0, 1, 1000)
+        scale = GAUSSIAN_2P_SCALE["progress"]
     else:
         raise NotImplementedError(f"Unknown btype {btype}")
 
