@@ -828,6 +828,7 @@ def get_input_data(
                 metric_2,
                 ("steps_to_goal", "future"),
                 ("distance_to_goal", "future"),
+                ("distance_to_goal", "geodesic"),
             ]
         )
     )
