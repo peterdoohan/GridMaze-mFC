@@ -4,7 +4,6 @@ Library for comparing distance to goal tuning metrics
 
 # %% Imports
 import json
-from tkinter import font
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -29,6 +28,8 @@ from GridMaze.analysis.distance_to_goal import distributions as dd
 
 # %% Global Variables
 from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
+
+FRAME_RATE = 60
 
 RESULTS_DIR = RESULTS_PATH / "distance_to_goal" / "distance_metrics"
 
@@ -839,6 +840,32 @@ def get_input_data(session, metric_1, metric_2, resolution=0.2, max_steps_to_goa
     return input_data
 
 
-def get_ddtg_monotonically_decreasing_trials():
+def get_monotonic_decreasing_trials(session, tol=0.12, resolution=0.2, plot=False):
     """ """
-    return
+    ds_frames = int(FRAME_RATE * resolution)
+    navigation_df = session.navigation_df
+    navigation_df = navigation_df[navigation_df.trial_phase == "navigation"].copy()
+    trials = navigation_df.trial.dropna().unique()
+    valid_trials = []
+    for trial in trials:
+        trial_df = navigation_df[navigation_df.trial == trial]
+        dtg = trial_df.distance_to_goal.geodesic
+        if resolution:
+            dtg = dtg.groupby(dtg.index // ds_frames).mean()
+        ddtg = dtg.diff().fillna(0)
+        pct_inc = (ddtg.gt(0)).mean()
+        if pct_inc < tol:
+            _valid = True
+            valid_trials.append(trial)
+        else:
+            _valid = False
+        if plot:
+            f, ax = plt.subplots(1, 1, figsize=(3, 3))
+            label = f"{trial} ({pct_inc:.2f}:{_valid})"
+            dtg.plot(ax=ax)
+            ax.set_title(label)
+            ax.set_xlabel("frame")
+            ax.set_ylabel("distance to goal (m)")
+            plt.show()
+
+    return np.array(valid_trials)
