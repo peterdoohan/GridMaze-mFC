@@ -484,9 +484,10 @@ def get_distance_metric_weight_summaries(
         basis_activation_dfs.append(basis_activations)
     # combine basis activations with input data
     input_data = pd.concat([input_data, *basis_activation_dfs], axis=1)
+    valid_trials = input_data.trial.unique()
+    folds_df = folds.get_folds_df(session, goal_stratified=False, n_folds=n_folds, valid_trials=valid_trials)
     if not fixed_alpha:
         # get xval opt alpha for each cluster
-        folds_df = folds.get_folds_df(session, goal_stratified=False, n_folds=n_folds)
         cluster_alphas = get_test_train_opt_alpha(folds_df, input_data, model=model)
     else:
         cluster_alphas = pd.Series(index=cluster_unique_IDs, data=fixed_alpha)
@@ -505,8 +506,8 @@ def get_distance_metric_weight_summaries(
             cluster_alphas.loc[cluster],
             cluster,
             n_bases,
-            metric_1,
-            metric_2,
+            _metric_1,
+            _metric_2,
         )
         for i, cluster in enumerate(cluster_unique_IDs)
     )
@@ -515,7 +516,7 @@ def get_distance_metric_weight_summaries(
     return results_df
 
 
-def _process_cluster_betas(model, X, y, alpha, cluster, n_bases, metric_1, metric_2):
+def _process_cluster_betas(model, X, y, alpha, cluster, n_bases, _metric_1, _metric_2):
     """ """
     if model == "PoissonRegressor":
         Model = PoissonRegressor(alpha=alpha, max_iter=10_000)
@@ -532,7 +533,7 @@ def _process_cluster_betas(model, X, y, alpha, cluster, n_bases, metric_1, metri
     L2_metric_1, L2_metric_2 = np.linalg.norm(beta_metic_1, ord=2), np.linalg.norm(beta_metic_2, ord=2)
     L2_sum = L2_metric_1 + L2_metric_2
     results = []
-    for metric, L1, L2 in zip([metric_1, metric_2], [L1_metric_1, L1_metric_2], [L2_metric_1, L2_metric_2]):
+    for metric, L1, L2 in zip([_metric_1, _metric_2], [L1_metric_1, L1_metric_2], [L2_metric_1, L2_metric_2]):
         results.append(
             {
                 "cluster_unique_ID": cluster,
