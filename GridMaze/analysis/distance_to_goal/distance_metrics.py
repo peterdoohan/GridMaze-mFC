@@ -692,7 +692,11 @@ def get_distance_metric_CPDs(
         fold_results = []
         for model_name, regressor_classes in model_name2regessor_classes.items():
             cluster_alphas = get_train_folds_opt_alpha(
-                fold_df, input_data, model=model, regressor_classes=regressor_classes
+                fold_df,
+                input_data,
+                model=model,
+                regressor_classes=regressor_classes,
+                max_jobs=max_jobs,
             )
             train_trials = fold_df["train"].unstack().dropna().values
             test_trials = fold_df["test"].unstack().dropna().values
