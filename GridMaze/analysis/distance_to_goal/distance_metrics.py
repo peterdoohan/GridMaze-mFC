@@ -392,7 +392,7 @@ def get_weight_metrics_summary_df(verbose=False):
     return results_df
 
 
-def run_pairwise_weight_metric_comparisons(session, verbose=True):
+def run_pairwise_weight_metric_comparisons(session, max_jobs=10, verbose=True):
     """ """
     metric_pairs = list(combinations(DISTANCE_METRICS, 2))
     dfs = []
@@ -401,7 +401,7 @@ def run_pairwise_weight_metric_comparisons(session, verbose=True):
         _name = f"{_metric_1}_vs_{_metric_2}"
         if verbose:
             print(_name)
-        weight_metrics_df = get_distance_metric_weight_summaries(session, metric_1, metric_2)
+        weight_metrics_df = get_distance_metric_weight_summaries(session, metric_1, metric_2, max_jobs=max_jobs)
         weight_metrics_df.columns = pd.MultiIndex.from_product([[_name], weight_metrics_df.columns])
         dfs.append(weight_metrics_df)
     comparisons_df = pd.concat(dfs, axis=1)
@@ -550,7 +550,7 @@ def _process_cluster_betas(model, X, y, alpha, cluster, n_bases, _metric_1, _met
 # %% CPD function
 
 
-def get_distance_metric_CPD_summary_df(verbose=False):
+def get_distance_metric_CPD_summary_df(max_jobs=40, verbose=False):
     """ """
     save_path = RESULTS_DIR / "cpd_summary_df2.csv"
     if save_path.exists():
@@ -576,7 +576,7 @@ def get_distance_metric_CPD_summary_df(verbose=False):
             if verbose:
                 print(session.name)
             try:
-                comparisons_df = run_pairwise_CPD_comparisons(session, verbose=verbose)
+                comparisons_df = run_pairwise_CPD_comparisons(session, max_jobs=max_jobs, verbose=verbose)
                 dfs.append(comparisons_df)
             except Exception as e:
                 if verbose:
@@ -590,7 +590,7 @@ def get_distance_metric_CPD_summary_df(verbose=False):
     return results_df
 
 
-def run_pairwise_CPD_comparisons(session, verbose=True):
+def run_pairwise_CPD_comparisons(session, max_jobs=10, verbose=True):
     """ """
     metric_pairs = list(combinations(DISTANCE_METRICS, 2))
     cpd_dfs = []
@@ -599,7 +599,13 @@ def run_pairwise_CPD_comparisons(session, verbose=True):
         _name = f"{_metric_1}_vs_{_metric_2}"
         if verbose:
             print(_name)
-        cpd_df = get_distance_metric_CPDs(session, metric_1=metric_1, metric_2=metric_2)
+        cpd_df = get_distance_metric_CPDs(
+            session,
+            metric_1=metric_1,
+            metric_2=metric_2,
+            max_jobs=max_jobs,
+            verbose=verbose,
+        )
         cpd_df.columns = pd.MultiIndex.from_product([[_name], cpd_df.columns])
         cpd_dfs.append(cpd_df)
     comparisons_df = pd.concat(cpd_dfs, axis=1)
@@ -621,6 +627,7 @@ def get_distance_metric_CPDs(
     n_folds=5,
     mon_dec_tol=0.12,
     max_jobs=10,
+    verbose=False,
 ):
     """ """
     _metric_1, _metric_2 = ".".join(metric_1), ".".join(metric_2)
@@ -679,6 +686,8 @@ def get_distance_metric_CPDs(
     }
     all_results = []
     for fold in _folds:
+        if verbose:
+            print(fold)
         fold_df = folds_df[fold]
         fold_results = []
         for model_name, regressor_classes in model_name2regessor_classes.items():
@@ -690,7 +699,7 @@ def get_distance_metric_CPDs(
             train_df = input_data[input_data.trial_unique_ID.isin(train_trials)]
             test_df = input_data[input_data.trial_unique_ID.isin(test_trials)]
             X_train, Y_train, X_test, Y_test = get_test_train_arrays(train_df, test_df, regressor_classes, scale_X=True)
-            model_results = Parallel(n_jobs=max_jobs)(
+            model_results = Parallel(n_jobs=max_jobs, verbose=True)(
                 delayed(_process_cluster_cpd)(
                     X_train,
                     Y_train[:, i],

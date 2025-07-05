@@ -20,6 +20,7 @@ from GridMaze.analysis.core import downsample as ds
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.distance_to_goal import distributions as dd
 from GridMaze.analysis.distance_to_goal import logreg_decoder as ld
+from GridMaze.analysis.place_direction.future_decoding import get_decision_points
 
 # %% Global Variables
 
@@ -34,12 +35,48 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 
 
 def plot_theta_mod_decoding(
-    results_df, maze_names=["maze_1", "maze_2", "rooms_maze"], max_distance=None, print_stats=True, ax=None
+    results_df,
+    maze_names=["maze_1", "maze_2", "rooms_maze"],
+    max_session_decoding_err=None,
+    at_decision_point=None,
+    simple_maze=None,
+    distance_range=None,
+    speed_range=None,
+    print_stats=True,
+    ax=None,
 ):
     """ """
     df = results_df[results_df.maze_name.isin(maze_names)]
-    if max_distance is not None:
-        df = df[df.distance_to_goal.geodesic < max_distance]
+    # filter for max session decoding error
+    if max_session_decoding_err is not None:
+        mean_session_err = (
+            results_df.set_index(["subject_ID", "maze_name", "day_on_maze"])
+            .mean_phase_decoding.abs()
+            .groupby(level=[0, 1, 2])
+            .mean()
+        )
+        reject_session = list(mean_session_err[mean_session_err.gt(max_session_decoding_err)].index.values)
+        rs_mask = np.array([tuple(x) in reject_session for x in df[["subject_ID", "maze_name", "day_on_maze"]].values])
+        df = df[~rs_mask]
+    # filter for decision points
+    if at_decision_point is not None:
+        assert simple_maze is not None
+        decision_points = get_decision_points(simple_maze, return_as="tuples")
+        dp_mask = [
+            tuple(x) in decision_points
+            for x in df[[("maze_position", "simple"), ("cardinal_movement_direction", "")]].values
+        ]
+        if at_decision_point:
+            df = df[dp_mask]
+        else:
+            df = df[~np.array(dp_mask)]
+    # filter for distance to goal
+    if distance_range is not None:
+        df = df[df.distance_to_goal.geodesic.between(*distance_range)]
+    # filter for speed
+    if speed_range is not None:
+        df = df[df.speed.between(*speed_range)]
+
     # get session averages
     x = df.groupby(["subject_ID", "maze_name", "day_on_maze"]).lfp_phase.mean()
     # demean session averages (accout for systemic offsets)
