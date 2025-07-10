@@ -392,8 +392,39 @@ def get_weight_metrics_summary_df(verbose=False):
     return results_df
 
 
-def run_pairwise_weight_metric_comparisons(session, max_jobs=10, verbose=True):
+def populate_weight_metric_summary_dfs(subject_IDs=["m2"], verbose=True, max_jobs=10):
     """ """
+    if verbose:
+        print("loading sessions ...")
+    sessions = gs.get_maze_sessions(
+        subject_IDs=[subject_IDs],
+        maze_names="all",
+        days_on_maze="all",
+        with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
+        must_have_data=True,
+    )
+    for session in sessions:
+        if verbose:
+            print(session.name)
+        try:
+            run_pairwise_weight_metric_comparisons(session, max_jobs=max_jobs, verbose=verbose, save=True)
+        except Exception as e:
+            if verbose:
+                print(f"Error processing {session.name}: \n {e}")
+
+
+def run_pairwise_weight_metric_comparisons(session, max_jobs=10, verbose=True, save=False):
+    """ """
+    save_path = RESULTS_DIR / "weight_summaries" / f"{session.name}.csv"
+    if not save and save_path.exists():
+        if verbose:
+            print(f"Loading weight metric summaries df from {save_path}")
+        comparisons_df = pd.read_csv(save_path, index_col=0, header=[0, 1])
+        # fix cols when loading from disk
+        comparisons_df.columns = pd.MultiIndex.from_tuples(
+            [c if "Unnamed" not in c[1] else (c[0], "") for c in comparisons_df.columns]
+        )
+        return comparisons_df
     metric_pairs = list(combinations(DISTANCE_METRICS, 2))
     dfs = []
     for metric_1, metric_2 in metric_pairs:
@@ -408,6 +439,12 @@ def run_pairwise_weight_metric_comparisons(session, max_jobs=10, verbose=True):
     comparisons_df[("subject_ID", "")] = session.subject_ID
     comparisons_df[("maze_name", "")] = session.maze_name
     comparisons_df[("day_on_maze", "")] = session.day_on_maze
+    # save
+    if save:
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        comparisons_df.to_csv(save_path, index=True)
+        if verbose:
+            print(f"Saved weight metric summaries df to {save_path}")
     return comparisons_df
 
 
@@ -551,7 +588,9 @@ def _process_cluster_betas(model, X, y, alpha, cluster, n_bases, _metric_1, _met
 
 
 def get_distance_metric_CPD_summary_df(max_jobs=10, verbose=False):
-    """ """
+    """
+    TODO: update to be just a load function
+    """
     save_path = RESULTS_DIR / "cpd_summary_df2.csv"
     if save_path.exists():
         if verbose:
