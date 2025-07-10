@@ -550,7 +550,7 @@ def _process_cluster_betas(model, X, y, alpha, cluster, n_bases, _metric_1, _met
 # %% CPD function
 
 
-def get_distance_metric_CPD_summary_df(max_jobs=40, verbose=False):
+def get_distance_metric_CPD_summary_df(max_jobs=10, verbose=False):
     """ """
     save_path = RESULTS_DIR / "cpd_summary_df2.csv"
     if save_path.exists():
@@ -703,7 +703,7 @@ def get_distance_metric_CPDs(
             train_df = input_data[input_data.trial_unique_ID.isin(train_trials)]
             test_df = input_data[input_data.trial_unique_ID.isin(test_trials)]
             X_train, Y_train, X_test, Y_test = get_test_train_arrays(train_df, test_df, regressor_classes, scale_X=True)
-            model_results = Parallel(n_jobs=max_jobs, verbose=True)(
+            model_results = Parallel(n_jobs=max_jobs, verbose=verbose)(
                 delayed(_process_cluster_cpd)(
                     X_train,
                     Y_train[:, i],
