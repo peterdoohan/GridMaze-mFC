@@ -590,8 +590,45 @@ def get_distance_metric_CPD_summary_df(max_jobs=10, verbose=False):
     return results_df
 
 
-def run_pairwise_CPD_comparisons(session, max_jobs=10, verbose=True):
+def populate_CPD_summary_dfs(subject_IDs=["m2"], verbose=True, max_jobs=10):
     """ """
+    # option to do for single subjects
+    if verbose:
+        print(f"Loading sessions ...")
+    sessions = gs.get_maze_sessions(
+        subject_IDs=[subject_IDs],
+        maze_names="all",
+        days_on_maze="all",
+        with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
+        must_have_data=True,
+    )
+    for session in sessions:
+        if verbose:
+            print(session.name)
+        try:
+            run_pairwise_CPD_comparisons(session, max_jobs=max_jobs, verbose=verbose, save=True)
+        except Exception as e:
+            if verbose:
+                print(f"Error processing {session.name}: \n {e}")
+    if verbose:
+        print("Finished populating CPD summary dfs.")
+
+
+def run_pairwise_CPD_comparisons(session, max_jobs=10, verbose=True, save=False):
+    """
+    Note NaNs in comparison df are in cases where progress vs distance instances have fewer
+    included clusters than
+    """
+    save_path = RESULTS_DIR / "cpd_summaries" / f"{session.name}.csv"
+    if not save and save_path.exists():
+        if verbose:
+            print(f"Loading CPD summaries df from {save_path}")
+        comparisons_df = pd.read_csv(save_path, index_col=0, header=[0, 1])
+        # fix cols when loading from disk
+        comparisons_df.columns = pd.MultiIndex.from_tuples(
+            [c if "Unnamed" not in c[1] else (c[0], "") for c in comparisons_df.columns]
+        )
+        return comparisons_df
     metric_pairs = list(combinations(DISTANCE_METRICS, 2))
     cpd_dfs = []
     for metric_1, metric_2 in metric_pairs:
@@ -612,6 +649,12 @@ def run_pairwise_CPD_comparisons(session, max_jobs=10, verbose=True):
     comparisons_df[("subject_ID", "")] = session.subject_ID
     comparisons_df[("maze_name", "")] = session.maze_name
     comparisons_df[("day_on_maze", "")] = session.day_on_maze
+    # save
+    if save:
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        comparisons_df.to_csv(save_path, index=True)
+        if verbose:
+            print(f"Saved CPD summaries df to {save_path}")
     return comparisons_df
 
 
@@ -703,7 +746,7 @@ def get_distance_metric_CPDs(
             train_df = input_data[input_data.trial_unique_ID.isin(train_trials)]
             test_df = input_data[input_data.trial_unique_ID.isin(test_trials)]
             X_train, Y_train, X_test, Y_test = get_test_train_arrays(train_df, test_df, regressor_classes, scale_X=True)
-            model_results = Parallel(n_jobs=max_jobs, verbose=verbose)(
+            model_results = Parallel(n_jobs=max_jobs, verboss=False)(
                 delayed(_process_cluster_cpd)(
                     X_train,
                     Y_train[:, i],
@@ -895,22 +938,26 @@ def get_input_data(
         resolution=resolution,
         distance_metrics=distance_metrics,
     )
-    # filter for navigation trial phaes and steps to goal or dtg monotonically decreasing trials
-    masks = [nav_info.trial_phase == "navigation"]
-    if max_steps_to_goal is not None:
-        masks.append((nav_info.steps_to_goal.future.le(max_steps_to_goal)))
-    if mon_dec_trials:
-        # get trials that are monotonically decreasing
-        valid_trials = get_monotonic_decreasing_trials(session, tol=mon_dec_tol, resolution=resolution, plot=False)
-        masks.append(nav_info.trial.isin(valid_trials))
-    mask = np.logical_and.reduce(masks)
-    nav_info = nav_info[mask]
-    spike_counts = spike_counts[mask]
+    # filter for navigation trial phase
+    nav_masks = nav_info.trial_phase == "navigation"
+    nav_info, spike_counts = nav_info[nav_masks], spike_counts[nav_masks]
 
     # check remaining clusters pass min_spikes
     reject_clusters = spike_counts.columns[spike_counts.spike_count.sum().lt(min_spikes)]
     spike_counts = spike_counts.drop(columns=reject_clusters)
 
+    # apply other filters for max steps to goal and monotonically decreasing trials
+    other_masks = []
+    if max_steps_to_goal is not None:
+        other_masks.append((nav_info.steps_to_goal.future.le(max_steps_to_goal)))
+    if mon_dec_trials:
+        # get trials that are monotonically decreasing
+        valid_trials = get_monotonic_decreasing_trials(session, tol=mon_dec_tol, resolution=resolution, plot=False)
+        other_masks.append(nav_info.trial.isin(valid_trials))
+    if len(other_masks) > 0:
+        mask = np.logical_and.reduce(other_masks)
+        nav_info = nav_info[mask]
+        spike_counts = spike_counts[mask]
     # combine and return
     input_data = pd.concat([nav_info, spike_counts], axis=1)
     return input_data
