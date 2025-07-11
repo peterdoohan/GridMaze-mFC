@@ -127,7 +127,7 @@ def plot_session_theta_mod_distance_to_goal_tuning(
     theta_trough_ind=[0, 11],
     bin_spacing=0.04,
     max_steps_to_goal=30,
-    moving_only=False,
+    moving_only=True,
     smooth_SD=1,
 ):
     """
