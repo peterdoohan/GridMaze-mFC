@@ -123,8 +123,8 @@ def _plot_distance_tuning(mean, sem, distances, ax, color):
 def plot_session_theta_mod_distance_to_goal_tuning(
     session,
     metrics=("distance_to_goal", "geodesic"),
-    theta_peak_ind=[4, 5, 6, 7],
-    theta_trough_ind=[0, 1, 10, 11],
+    theta_peak_ind=[5, 6],
+    theta_trough_ind=[0, 11],
     bin_spacing=0.04,
     max_steps_to_goal=30,
     moving_only=False,
