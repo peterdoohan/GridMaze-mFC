@@ -392,12 +392,13 @@ def get_weight_metrics_summary_df(verbose=False):
     return results_df
 
 
-def populate_weight_metric_summary_dfs(subject_IDs=["m2"], verbose=True, max_jobs=10):
+def populate_weight_metric_summary_dfs(subject_ID="m2", verbose=True, max_jobs=10):
     """ """
+    subject_ID = [subject_ID] if subject_ID != "all" else subject_ID
     if verbose:
         print("loading sessions ...")
     sessions = gs.get_maze_sessions(
-        subject_IDs=[subject_IDs],
+        subject_IDs=subject_ID,
         maze_names="all",
         days_on_maze="all",
         with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
@@ -432,9 +433,13 @@ def run_pairwise_weight_metric_comparisons(session, max_jobs=10, verbose=True, s
         _name = f"{_metric_1}_vs_{_metric_2}"
         if verbose:
             print(_name)
-        weight_metrics_df = get_distance_metric_weight_summaries(session, metric_1, metric_2, max_jobs=max_jobs)
-        weight_metrics_df.columns = pd.MultiIndex.from_product([[_name], weight_metrics_df.columns])
-        dfs.append(weight_metrics_df)
+        try:
+            weight_metrics_df = get_distance_metric_weight_summaries(session, metric_1, metric_2, max_jobs=max_jobs)
+            weight_metrics_df.columns = pd.MultiIndex.from_product([[_name], weight_metrics_df.columns])
+            dfs.append(weight_metrics_df)
+        except Exception as e:
+            if verbose:  # some early session for progress to goal don't have enoug trials
+                print(f"Error running pairwise comparison for {_metric_1} vs {_metric_2}: \n {e}")
     comparisons_df = pd.concat(dfs, axis=1)
     comparisons_df[("subject_ID", "")] = session.subject_ID
     comparisons_df[("maze_name", "")] = session.maze_name
@@ -675,15 +680,19 @@ def run_pairwise_CPD_comparisons(session, max_jobs=10, verbose=True, save=False)
         _name = f"{_metric_1}_vs_{_metric_2}"
         if verbose:
             print(_name)
-        cpd_df = get_distance_metric_CPDs(
-            session,
-            metric_1=metric_1,
-            metric_2=metric_2,
-            max_jobs=max_jobs,
-            verbose=verbose,
-        )
-        cpd_df.columns = pd.MultiIndex.from_product([[_name], cpd_df.columns])
-        cpd_dfs.append(cpd_df)
+        try:
+            cpd_df = get_distance_metric_CPDs(
+                session,
+                metric_1=metric_1,
+                metric_2=metric_2,
+                max_jobs=max_jobs,
+                verbose=verbose,
+            )
+            cpd_df.columns = pd.MultiIndex.from_product([[_name], cpd_df.columns])
+            cpd_dfs.append(cpd_df)
+        except Exception as e:
+            if verbose:  # some early session for progress to goal don't have enoug trials
+                print(f"Error running pairwise comparison for {_metric_1} vs {_metric_2}: \n {e}")
     comparisons_df = pd.concat(cpd_dfs, axis=1)
     comparisons_df[("subject_ID", "")] = session.subject_ID
     comparisons_df[("maze_name", "")] = session.maze_name
