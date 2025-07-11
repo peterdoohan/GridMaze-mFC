@@ -26,12 +26,10 @@ def run_distance_metrics_analysis():
             print(f"Submitting job for {subject_ID} {analysis_type}")
             os.system(f"chmod +x {script_path}")
             os.system(f"sbatch {script_path}")
-    return
 
 
 def get_SLURM_script(subject_ID, analysis_type):
     job_name = f"{subject_ID}_{analysis_type}"
-    """"""
     script = f"""#!/bin/bash
 #SBATCH --job-name={job_name}
 #SBATCH --output=jobs/distance_metrics/out/{job_name}.out
@@ -44,15 +42,17 @@ def get_SLURM_script(subject_ID, analysis_type):
 
 module load miniconda
 conda deactivate
-conda activte goalNav_mEC
-python
+conda activate goalNav_mEC
+
+python <<EOF
 from GridMaze.analysis.distance_to_goal import distance_metrics as dm
 """
-
     if analysis_type == "cpd":
-        script += f"""dm.populate_CPD_summary_dfs('{subject_ID}')\""""
+        script += f"dm.populate_CPD_summary_dfs('{subject_ID}')\n"
     elif analysis_type == "weights":
-        script += f"""dm.populate_weight_metric_summary_dfs('{subject_ID}')\""""
+        script += f"dm.populate_weight_metric_summary_dfs('{subject_ID}')\n"
+
+    script += "EOF\n"
 
     script_path = f"jobs/distance_metrics/slurm/{job_name}.sh"
     with open(script_path, "w") as f:

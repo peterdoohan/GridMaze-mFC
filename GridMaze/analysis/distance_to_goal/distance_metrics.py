@@ -634,13 +634,15 @@ def get_distance_metric_CPD_summary_df(max_jobs=10, verbose=False):
     return results_df
 
 
-def populate_CPD_summary_dfs(subject_IDs=["m2"], verbose=True, max_jobs=10):
+def populate_CPD_summary_dfs(subject_ID="m2", verbose=True, max_jobs=10):
     """ """
     # option to do for single subjects
+    if subject_ID != "all":
+        subject_ID = [subject_ID]
     if verbose:
         print(f"Loading sessions ...")
     sessions = gs.get_maze_sessions(
-        subject_IDs=[subject_IDs],
+        subject_IDs=subject_ID,
         maze_names="all",
         days_on_maze="all",
         with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
