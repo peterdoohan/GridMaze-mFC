@@ -156,17 +156,21 @@ def populate_decoding_results(lfp_type="theta", subfolder=None, max_distance=0.8
         else:
             save_path = RESULTS_DIR / subfolder / f"{session.name}.parquet"
         # reun decode with defualt settings
-        results_df = get_theta_mod_distance_to_goal_decoding(
-            session, lfp_type=lfp_type, max_distance=max_distance, verbose=verbose
-        )
-        # add session info
-        results_df[("subject_ID", "")] = session.subject_ID
-        results_df[("maze_name", "")] = session.maze_name
-        results_df[("day_on_maze", "")] = session.day_on_maze
-        # save
-        results_df.to_parquet(save_path)
-        if verbose:
-            print(f"Saved results for to {save_path}")
+        try:
+            results_df = get_theta_mod_distance_to_goal_decoding(
+                session, lfp_type=lfp_type, max_distance=max_distance, verbose=verbose
+            )
+            # add session info
+            results_df[("subject_ID", "")] = session.subject_ID
+            results_df[("maze_name", "")] = session.maze_name
+            results_df[("day_on_maze", "")] = session.day_on_maze
+            # save
+            results_df.to_parquet(save_path)
+            if verbose:
+                print(f"Saved results for to {save_path}")
+        except Exception as e:
+            if verbose:  # not enough trials in some early sessions
+                print(f"Error processing session {session.name}: {e}")
 
     with_data = [
         "navigation_df",
@@ -186,7 +190,7 @@ def populate_decoding_results(lfp_type="theta", subfolder=None, max_distance=0.8
         sessions = gs.get_maze_sessions(
             subject_IDs=[subject_ID],
             maze_names="all",
-            days_on_maze="late",
+            days_on_maze="all",
             with_data=with_data,
             must_have_data=True,
         )
