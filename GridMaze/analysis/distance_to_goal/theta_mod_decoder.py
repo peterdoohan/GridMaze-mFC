@@ -31,7 +31,7 @@ RESULTS_DIR = RESULTS_PATH / "distance_to_goal" / "logreg_decoding" / "lfp_mod"
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
 
-# %% ploting
+# %% plotting
 
 
 def plot_theta_mod_decoding(
