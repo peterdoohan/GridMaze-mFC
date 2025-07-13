@@ -187,6 +187,17 @@ class Cluster:
                 "smooth_SD": 1,
                 "color": "darkcyan",
             }
+        elif feature == "distance_to_goal_theta":
+            default_kwargs = {
+                "metrics": ("distance_to_goal", "geodesic"),
+                "theta_peak_ind": [4, 5, 6, 7],
+                "theta_trough_ind": [0, 1, 10, 11],
+                "bin_spacing": 0.04,
+                "max_steps_to_goal": 30,
+                "moving_only": True,
+                "smooth_SD": 2,
+                "colors": ("darkcyan", "royalblue"),
+            }
         elif feature == "trial_events":
             default_kwargs = {"smooth_SD": 10, "color": "darkgreen", "goal_stratified": False}
 
@@ -312,6 +323,38 @@ class Cluster:
             distance_rates_df = pd.concat([distance_info, navigation_rates_df], axis=1)
             distance_tuning_df = distance_to_goal.get_distance_to_goal_tuning_df(distance_rates_df, metrics)
             return distance_tuning_df, metrics
+
+        elif feature == "distance_to_goal_theta":
+            # load data
+            try:
+                navigation_df = load_data.load(self.analysis_data_path / "frames.navigation.parquet")
+                theta_spike_counts = load_data.load(self.analysis_data_path / "frames.thetaSpikeCounts.parquet")
+                theta_spike_counts = theta_spike_counts.reset_index(drop=True)
+            except FileNotFoundError:
+                print(
+                    f"Missing analysis data to load theta distance to goal tuning for cluster {self.cluster_unique_ID}"
+                )
+                return None
+            metrics = feature_kwargs["metrics"]
+            phases = theta_spike_counts.columns.get_level_values(2).unique().astype(float)
+            theta_peak_cols = phases[feature_kwargs["theta_peak_ind"]]
+            theta_trough_cols = phases[feature_kwargs["theta_trough_ind"]]
+            theta_spikes = theta_spike_counts.spike_count[self.cluster_unique_ID]
+            theta_peak_spikes = theta_spikes[theta_peak_cols].sum(axis=1)
+            theta_trough_spikes = theta_spikes[theta_trough_cols].sum(axis=1)
+            distance_spikes_df = navigation_df[
+                [("goal", ""), ("trial", ""), ("moving", ""), ("steps_to_goal", "future"), metrics]
+            ].copy()
+            distance_spikes_df.loc[:, ("theta", "peak")] = theta_peak_spikes
+            distance_spikes_df.loc[:, ("theta", "trough")] = theta_trough_spikes
+            distance_theta_tuning_df = distance_to_goal.get_theta_distance_to_goal_tuning(
+                distance_spikes_df,
+                metrics=metrics,
+                bin_spacing=feature_kwargs["bin_spacing"],
+                max_steps_to_goal=feature_kwargs["max_steps_to_goal"],
+                moving_only=feature_kwargs["moving_only"],
+            )
+            return distance_theta_tuning_df, metrics
 
         elif feature == "trial_events":
             try:  # load session data
@@ -451,6 +494,13 @@ class Cluster:
                 goal_stratified=feature_kwargs["goal_stratified"],
                 smooth_SD=feature_kwargs["smooth_SD"],
                 color=feature_kwargs["color"],
+                ax=ax,
+            )
+        elif feature == "distance_to_goal_theta":
+            distance_to_goal.plot_theta_distance_tuning(
+                *tuning_data,
+                smooth_SD=feature_kwargs["smooth_SD"],
+                colors=feature_kwargs["colors"],
                 ax=ax,
             )
         elif feature == "trial_events":
