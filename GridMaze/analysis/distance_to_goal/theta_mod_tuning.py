@@ -26,6 +26,57 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 # %% Function
 
 
+def plot_theta_x_shift_hist(summary_df, ax=None, print_stats=True):
+    """ """
+    # set up fig
+    if ax is None:
+        f, ax = plt.subplots(figsize=(3, 3))
+    # ax.axvline(0, color="black", linestyle="--", alpha=0.5)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_xlabel("opt. x-shift (cm)")
+    ax.set_ylabel("prop. distance tuned neurons")
+
+    # process data
+    shift_counts = summary_df.groupby(level=0).value_counts().unstack()
+    norm_shift_counts = shift_counts.div(shift_counts.sum(axis=1), axis=0)
+    shifts = norm_shift_counts.columns.astype(float).values
+    shifts_cm = shifts * 100  # convert to cm
+    mean = norm_shift_counts.mean(axis=0).values
+    sem = norm_shift_counts.sem(axis=0).values
+    # plot
+    ax.bar(shifts_cm, mean, yerr=sem, color="grey", width=1.8, alpha=0.7)
+    ax.set_ylim(0, 0.25)
+    ax.set_xticks(shifts_cm)
+    ax.set_xticklabels([f"{s:.0f}" for s in shifts_cm])
+    # stats
+    if print_stats:
+        p_value = get_stats(summary_df, plot=False)
+        print(f"p-value for x-shift < 0: {p_value:.3f}")
+
+
+def get_stats(summary_df, n_resamples=10_000, plot=False):
+    """
+    Get random effects p-value to see if distribution of cluster
+    x-shifts is significantly less than 0. As hypothesised from
+    theta-mod decoding analyses
+    """
+    mean_shift = np.zeros(n_resamples)
+    for i in range(n_resamples):
+        # randomly sample subjects
+        sampled_subjects = np.random.choice(SUBJECT_IDS, size=len(SUBJECT_IDS), replace=True)
+        shifts = pd.concat([summary_df.loc[s] for s in sampled_subjects], axis=0, ignore_index=True)
+        mean_shift[i] = shifts.mean()
+    # calculate p-value
+    p_value = (mean_shift > 0).sum() / n_resamples
+    if plot:
+        f, ax = plt.subplots(figsize=(3, 3))
+        ax.hist(mean_shift, bins=50, color="grey", alpha=0.7)
+        ax.axvline(0, color="red", linestyle="--")
+        ax.set_xlabel("mean x-shift (m)")
+        ax.set_ylabel("count")
+    return p_value
+
+
 def get_theta_x_shift_summary(verbose=True, save=False):
     """ """
     save_path = RESULTS_DIR / "theta_x_shift_summary.csv"
@@ -66,7 +117,7 @@ def get_theta_x_shift_summary(verbose=True, save=False):
 
 def get_session_theta_x_shift(
     session,
-    min_split_half_corr=0.6,
+    min_split_half_corr=0.75,
     metrics=("distance_to_goal", "geodesic"),
     theta_peak_ind=[4, 5, 6, 7],
     theta_trough_ind=[0, 1, 10, 11],
@@ -92,6 +143,9 @@ def get_session_theta_x_shift(
     valid_units = distance_tuning_metrics[
         distance_tuning_metrics.single_unit & (distance_tuning_metrics.split_half_corr.value > min_split_half_corr)
     ].cluster_unique_ID.values
+    if len(valid_units) == 0:
+        # no clusters with sufficient distance tuning
+        return None
 
     # get theta phases
     phases = theta_spike_counts.columns.get_level_values(2).unique().astype(float)
@@ -125,7 +179,7 @@ def get_session_theta_x_shift(
     return results
 
 
-def get_theta_x_shift(theta_tuning, bin_spacing, smooth_SD=2, n_shift=2, plot=True):
+def get_theta_x_shift(theta_tuning, bin_spacing, smooth_SD=2, n_shift=2, demean=False, plot=True):
     """ """
     peak = theta_tuning.theta.peak
     trough = theta_tuning.theta.trough
@@ -135,11 +189,17 @@ def get_theta_x_shift(theta_tuning, bin_spacing, smooth_SD=2, n_shift=2, plot=Tr
         ]
     # only cal MSE over bins that are vald in all shifts
     valid_bins = trough.index[n_shift:-n_shift]
+    _peak = peak.loc[valid_bins]
+    if demean:
+        _peak = _peak - _peak.mean()
     # calculate MSE for all shifts
     shifts = np.arange(-n_shift, n_shift + 1, 1)
     MSEs = np.zeros(len(shifts))
     for i, s in enumerate(shifts):
         shift_trough = trough.shift(s)
+        _shift_trough = shift_trough.loc[valid_bins]
+        if demean:
+            _shift_trough = _shift_trough - _shift_trough.mean()
         MSEs[i] = ((peak.loc[valid_bins] - shift_trough.loc[valid_bins]) ** 2).mean()
     min_shift = shifts[np.argmin(MSEs)]
     if plot:
