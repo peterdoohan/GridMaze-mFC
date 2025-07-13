@@ -4,23 +4,67 @@ Is there a systematic shift in distance tuning curves across theta phases (peak 
 """
 
 # %% Imports
+import json
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
-
 from scipy.ndimage import gaussian_filter1d
 
-from GridMaze.analysis.core import convert
-
+from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.cluster_tuning import distance_to_goal as dtg
 
 # %% Global Variables
+
+from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
+
+RESULTS_DIR = RESULTS_PATH / "distance_to_goal" / "theta_mod_tuning"
+
+with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
+    SUBJECT_IDS = json.load(input_file)
 
 
 # %% Function
 
 
-def test(
+def get_theta_x_shift_summary(verbose=True, save=False):
+    """ """
+    save_path = RESULTS_DIR / "theta_x_shift_summary.csv"
+    if not save and save_path.exists():
+        if verbose:
+            print(f"Loading existing results from {save_path}")
+        return pd.read_csv(save_path, index_col=[0, 1])
+    all_results = []
+    for subject_ID in SUBJECT_IDS:
+        if verbose:
+            print(subject_ID)
+            print("loading sessions ...")
+        sessions = gs.get_maze_sessions(
+            subject_IDs=[subject_ID],
+            maze_names="all",
+            days_on_maze="all",
+            with_data=[
+                "navigation_df",
+                "navigation_theta_spike_counts_df",
+                "cluster_distance_tuning_metrics",
+            ],
+        )
+        for session in sessions:
+            if verbose:
+                print(session.name)
+            session_results = get_session_theta_x_shift(session, plot=False)  # default params
+            if session_results is None:
+                continue  # no valid clusters in this session
+            session_results.index = pd.MultiIndex.from_tuples([(subject_ID, c) for c in session_results.index])
+            all_results.append(session_results)
+    x_shift_summary = pd.concat(all_results)
+    if save:
+        if verbose:
+            print(f"Saving results to {save_path}")
+        x_shift_summary.to_csv(save_path)
+    return x_shift_summary
+
+
+def get_session_theta_x_shift(
     session,
     min_split_half_corr=0.6,
     metrics=("distance_to_goal", "geodesic"),
@@ -31,8 +75,14 @@ def test(
     moving_only=True,
     smooth_SD=4,
     n_shift=4,
+    plot=True,
 ):
-    """ """
+    """
+    Calculates distance tuning curves for clusters in a session that have good distnace tuning (min_split_half_corr > thres)
+    at the peak and trough of theta phase, separately, then calculates the optimal x shift needed to get best alignement between
+    the tuning curves. If systematic shift differece in rep of goal at theta peak vs trough, the distribution of optimal
+    x shifts should be shifted from 0.
+    """
     # load data
     navigation_df = session.navigation_df.copy()
     distance_info = navigation_df[[("goal", ""), ("trial", ""), ("moving", ""), ("steps_to_goal", "future"), metrics]]
@@ -47,9 +97,8 @@ def test(
     phases = theta_spike_counts.columns.get_level_values(2).unique().astype(float)
     theta_peak_cols = phases[theta_peak_ind]
     theta_trough_cols = phases[theta_trough_ind]
-
+    results = pd.Series(index=valid_units, name="theta_shift")
     for cluster in valid_units:
-        print(cluster)
         theta_spikes = theta_spike_counts.spike_count[cluster]
         theta_spikes = theta_spike_counts.spike_count[cluster]
         theta_peak_spikes = theta_spikes[theta_peak_cols].sum(axis=1)
@@ -66,10 +115,17 @@ def test(
         )
         mean_tuning = distance_theta_tuning_df.groupby("distance_bin").mean()
         mean_tuning.index = [c.mid for c in mean_tuning.index]
-        get_x_shift_err(mean_tuning, smooth_SD=smooth_SD, n_shift=n_shift, plot=True)
+        results.loc[cluster] = get_theta_x_shift(
+            mean_tuning,
+            bin_spacing,
+            smooth_SD=smooth_SD,
+            n_shift=n_shift,
+            plot=plot,
+        )
+    return results
 
 
-def get_x_shift_err(theta_tuning, smooth_SD=2, n_shift=2, plot=True):
+def get_theta_x_shift(theta_tuning, bin_spacing, smooth_SD=2, n_shift=2, plot=True):
     """ """
     peak = theta_tuning.theta.peak
     trough = theta_tuning.theta.trough
@@ -103,4 +159,4 @@ def get_x_shift_err(theta_tuning, smooth_SD=2, n_shift=2, plot=True):
         best_shifted_trough.plot(ax=axes[1], label=f"trough shifted {min_shift} bins")
         axes[1].legend()
     # return shift with lowest MSE
-    return min_shift
+    return min_shift * bin_spacing  # shift in m
