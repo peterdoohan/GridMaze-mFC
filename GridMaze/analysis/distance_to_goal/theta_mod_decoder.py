@@ -11,6 +11,8 @@ from joblib import Parallel, delayed
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from pingouin import multivariate_ttest
+from scipy.stats import ttest_1samp
+from statsmodels.stats.multitest import multipletests
 from matplotlib.ticker import ScalarFormatter
 
 
@@ -34,55 +36,84 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 # %% plotting
 
 
-def plot_theta_mod_decoding(
+def plot_speed_split_decoding_bias(results_df, colors=["tan", "indianred"], print_stats=True, ax=None):
+    """ """
+    df = results_df.copy()
+    # subtract mean phase deocding error form each specific lfp phase decoding error
+    df.loc[:, "lfp_phase"] = df.lfp_phase.sub(df.mean_phase_decoding, axis=0).values
+    median_speed = df.speed.median()
+    # median split data into fast and slow decoding samples
+    slow_df = df[df.speed < median_speed]
+    fast_df = df[df.speed >= median_speed]
+    # get mean decoding error for each subject in all conditions
+    _df, _slow_df, _fast_df = [df.groupby("subject_ID").lfp_phase.mean() for df in [df, slow_df, fast_df]]
+    # normalise phase decoding bias for fast and slow by non split data mean (for each subject)
+    slow_norm = _slow_df.sub(_df.mean(axis=1), axis=0).lfp_phase
+    fast_norm = _fast_df.sub(_df.mean(axis=1), axis=0).lfp_phase
+    # plotting
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(3, 3))
+    ax.spines[["top", "right"]].set_visible(False)
+    for data, color, label in zip([slow_norm, fast_norm], colors, ["slow", "fast"]):
+        mean = data.mean()
+        sem = data.sem()
+        phase = mean.index.astype(float)
+        ax.errorbar(
+            phase,
+            mean.values,
+            yerr=sem.values,
+            fmt="o-",
+            color=color,
+            markersize=6,
+            linewidth=2,
+            capsize=None,
+            elinewidth=2,
+            label=label,
+        )
+    _format_ax(ax)
+    ax.legend()
+    if print_stats:
+        stats = get_speed_split_stats(_slow_df, _fast_df)
+        print(stats)
+
+
+def get_speed_split_stats(_slow_df, _fast_df):
+    """ """
+    slow, fast = _slow_df.lfp_phase, _fast_df.lfp_phase
+    delta_df = (fast - slow).T
+    # hypoth delta is greater than 0 with multiple t-tests
+    p_vals = []
+    for i in range(delta_df.shape[0]):
+        _, p = ttest_1samp(delta_df.iloc[i], 0, alternative="greater")
+        p_vals.append(p)
+    p_vals = np.array(p_vals)
+    # correct for multiple comparisons
+    reject, p_vals_corrected, _, _ = multipletests(p_vals, alpha=0.05, method="fdr_bh")
+    # output as pd.Serues
+    output = pd.Series(index=delta_df.index.astype(float).round(2), data=p_vals_corrected)
+    return output
+
+
+def plot_decoding_theta_bias(
     results_df,
     maze_names=["maze_1", "maze_2", "rooms_maze"],
-    max_session_decoding_err=None,
-    at_decision_point=None,
-    simple_maze=None,
     distance_range=None,
     speed_range=None,
     print_stats=True,
     ax=None,
 ):
     """ """
+    # filter for mazes
     df = results_df[results_df.maze_name.isin(maze_names)]
-    # filter for max session decoding error
-    if max_session_decoding_err is not None:
-        mean_session_err = (
-            results_df.set_index(["subject_ID", "maze_name", "day_on_maze"])
-            .mean_phase_decoding.abs()
-            .groupby(level=[0, 1, 2])
-            .mean()
-        )
-        reject_session = list(mean_session_err[mean_session_err.gt(max_session_decoding_err)].index.values)
-        rs_mask = np.array([tuple(x) in reject_session for x in df[["subject_ID", "maze_name", "day_on_maze"]].values])
-        df = df[~rs_mask]
-    # filter for decision points
-    if at_decision_point is not None:
-        assert simple_maze is not None
-        decision_points = get_decision_points(simple_maze, return_as="tuples")
-        dp_mask = [
-            tuple(x) in decision_points
-            for x in df[[("maze_position", "simple"), ("cardinal_movement_direction", "")]].values
-        ]
-        if at_decision_point:
-            df = df[dp_mask]
-        else:
-            df = df[~np.array(dp_mask)]
     # filter for distance to goal
     if distance_range is not None:
         df = df[df.distance_to_goal.geodesic.between(*distance_range)]
     # filter for speed
     if speed_range is not None:
         df = df[df.speed.between(*speed_range)]
-
-    # get session averages
-    x = df.groupby(["subject_ID", "maze_name", "day_on_maze"]).lfp_phase.mean()
-    # demean session averages (accout for systemic offsets)
-    x_norm = x.sub(x.mean(axis=1), axis=0)
-    # average across subjects
-    phase_mean_decoding = x_norm.groupby("subject_ID").lfp_phase.mean().lfp_phase
+    _df = df.groupby(["subject_ID"]).lfp_phase.mean()
+    x_norm = _df.sub(_df.mean(axis=1), axis=0)
+    phase_mean_decoding = x_norm.lfp_phase
     # # average across subjects
     mean = phase_mean_decoding.mean()
     sem = phase_mean_decoding.sem()
@@ -103,21 +134,25 @@ def plot_theta_mod_decoding(
         capsize=None,
         elinewidth=2,
     )
+    _format_ax(ax)
+    if print_stats:
+        _get_decoding_bias_stats(phase_mean_decoding)
+    return
+
+
+def _format_ax(ax):
     ax.set_xlabel("theta phase")
     ax.set_ylabel("decoding bias (m)\n (distance-to-goal)")
     ax.set_xticks(np.arange(-np.pi, np.pi + 0.1, np.pi / 2))
     ax.set_xticklabels(["-π", "-π/2", "0", "π/2", "π"])
     formatter = ScalarFormatter(useMathText=True)
     formatter.set_scientific(True)
-    # force it even if values are modest; (0,0) means always use 10^n
     formatter.set_powerlimits((0, 0))
     ax.yaxis.set_major_formatter(formatter)
-    if print_stats:
-        _get_stats(phase_mean_decoding)
     return
 
 
-def _get_stats(phase_mean_decoding):
+def _get_decoding_bias_stats(phase_mean_decoding):
     """ """
     phis = phase_mean_decoding.columns.astype(float)
     data = phase_mean_decoding.values
