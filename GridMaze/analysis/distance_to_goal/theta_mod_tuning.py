@@ -44,7 +44,8 @@ def plot_theta_x_shift_hist(summary_df, ax=None, print_stats=True):
     mean = norm_shift_counts.mean(axis=0).values
     sem = norm_shift_counts.sem(axis=0).values
     # plot
-    ax.bar(shifts_cm, mean, yerr=sem, color="grey", width=1.8, alpha=0.7)
+    colors = 4 * ["darkcyan"] + ["grey"] + 4 * ["royalblue"]
+    ax.bar(shifts_cm, mean, yerr=sem, color=colors, width=1.8, alpha=0.5, zorder=2)
     ax.set_ylim(0, 0.25)
     ax.set_xticks(shifts_cm)
     ax.set_xticklabels([f"{s:.0f}" for s in shifts_cm])
@@ -77,7 +78,7 @@ def get_stats(summary_df, n_resamples=10_000, plot=False):
     return p_value
 
 
-def get_theta_x_shift_summary(verbose=True, save=False):
+def get_theta_x_shift_summary(verbose=False, save=False):
     """ """
     save_path = RESULTS_DIR / "theta_x_shift_summary.csv"
     if not save and save_path.exists():
@@ -117,7 +118,7 @@ def get_theta_x_shift_summary(verbose=True, save=False):
 
 def get_session_theta_x_shift(
     session,
-    min_split_half_corr=0.75,
+    min_split_half_corr=0.7,
     metrics=("distance_to_goal", "geodesic"),
     theta_peak_ind=[4, 5, 6, 7],
     theta_trough_ind=[0, 1, 10, 11],
