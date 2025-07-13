@@ -123,12 +123,12 @@ def _plot_distance_tuning(mean, sem, distances, ax, color):
 def plot_session_theta_mod_distance_to_goal_tuning(
     session,
     metrics=("distance_to_goal", "geodesic"),
-    theta_peak_ind=[5, 6],
-    theta_trough_ind=[0, 11],
+    theta_peak_ind=[4, 5, 6, 7],
+    theta_trough_ind=[0, 1, 10, 11],
     bin_spacing=0.04,
     max_steps_to_goal=30,
     moving_only=True,
-    smooth_SD=1,
+    smooth_SD=2,
 ):
     """
     Note: theta_peak_ind work with the 12 theta bins used in navigation_theta_spike_counts_df.
@@ -167,11 +167,14 @@ def plot_session_theta_mod_distance_to_goal_tuning(
             max_steps_to_goal=max_steps_to_goal,
             moving_only=moving_only,
         )
+        f, ax = plt.subplots(1, 1, figsize=(4, 2), clear=True)
         plot_theta_distance_tuning(
             distance_theta_tuning_df,
             metrics=metrics,
             smooth_SD=smooth_SD,
+            ax=ax,
         )
+        ax.set_title(cluster)
 
 
 def get_theta_distance_to_goal_tuning(
