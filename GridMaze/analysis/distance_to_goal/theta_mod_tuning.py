@@ -9,8 +9,15 @@ import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 from scipy.ndimage import gaussian_filter1d
+from scipy.stats import zscore
 
 from GridMaze.analysis.core import get_sessions as gs
+from GridMaze.analysis.core import filter as filt
+from GridMaze.analysis.core import convert
+from GridMaze.analysis.distance_to_goal import distributions as dd
+from GridMaze.analysis.distance_to_goal import population_tuning as pt
+from GridMaze.analysis.processing import get_distance_tuning_metrics_df as dtm
+
 from GridMaze.analysis.cluster_tuning import distance_to_goal as dtg
 
 # %% Global Variables
@@ -22,7 +29,7 @@ RESULTS_DIR = RESULTS_PATH / "distance_to_goal" / "theta_mod_tuning"
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
 
-
+FRAME_RATE = 60
 # %% Function
 
 
@@ -80,7 +87,7 @@ def get_stats(summary_df, n_resamples=10_000, plot=False):
 
 def get_theta_x_shift_summary(verbose=False, save=False):
     """ """
-    save_path = RESULTS_DIR / "theta_x_shift_summary.csv"
+    save_path = RESULTS_DIR / "theta_x_shift_summary2.csv"
     if not save and save_path.exists():
         if verbose:
             print(f"Loading existing results from {save_path}")
@@ -93,7 +100,7 @@ def get_theta_x_shift_summary(verbose=False, save=False):
         sessions = gs.get_maze_sessions(
             subject_IDs=[subject_ID],
             maze_names="all",
-            days_on_maze="all",
+            days_on_maze="late",
             with_data=[
                 "navigation_df",
                 "navigation_theta_spike_counts_df",
@@ -221,3 +228,178 @@ def get_theta_x_shift(theta_tuning, bin_spacing, smooth_SD=2, n_shift=2, demean=
         axes[1].legend()
     # return shift with lowest MSE
     return min_shift * bin_spacing  # shift in m
+
+
+# %% Different set of analyses looking averaging tuning across cells split by theta before quantifying shift
+
+
+def test(
+    pop_tuning_curves,
+    pop_tuning_metrics,
+    sign="pos",
+    n_groups=4,
+    smooth_SD=3,
+    normalise="zscore",
+):
+    """ """
+    if sign == "pos":
+        keep_clusters = pop_tuning_metrics[pop_tuning_metrics.gamma_4p["size"].gt(0)].cluster_unique_ID.values
+    elif sign == "neg":
+        keep_clusters = pop_tuning_metrics[pop_tuning_metrics.gamma_4p["size"].lt(0)].cluster_unique_ID.values
+    df = pop_tuning_curves[keep_clusters].T
+    x = df.columns.astype(float).values  # distance bin mids
+    df = df.unstack(level=1).swaplevel(0, 1, axis=1).sort_index(axis=1)  # n_clusters, 2 (peak, trough) * n_distances
+    # order clusters by distance peak
+    if sign == "pos":
+        df["idx_order"] = _get_idx_order(pop_tuning_metrics, df.index.values, x, fit="gamma_4p", op="max")
+    elif sign == "neg":
+        df["idx_order"] = _get_idx_order(pop_tuning_metrics, df.index.values, x, fit="gamma_4p", op="min")
+    else:
+        raise ValueError("sign must be 'pos' or 'neg'")
+    df = df.sort_values(by=[("idx_order", "")], ascending=True)
+    df.drop(columns=[("idx_order", "")], inplace=True)
+    # smooth & normalise
+    if smooth_SD:
+        df.loc[:, "peak"] = gaussian_filter1d(df.peak.values, smooth_SD, axis=1)
+        df.loc[:, "trough"] = gaussian_filter1d(df.trough.values, smooth_SD, axis=1)
+    if normalise == "max":
+        grand_max = df.max(axis=1)
+        df.loc[:, "peak"] = df.peak.div(grand_max, axis=0).values
+        df.loc[:, "trough"] = df.trough.div(grand_max, axis=0).values
+    # split into n_groups of neurons
+    n_neurons = df.shape[0]
+    group_size = n_neurons // n_groups
+    # group df every n neurons
+    group_means_df = df.groupby(np.arange(n_neurons) // group_size).mean()
+    return group_means_df
+
+
+def _get_idx_order(pop_tuning_metrics, cluster_unique_IDs, x, fit="gamma_4p", op="max"):
+    metrics_df = pop_tuning_metrics.set_index("cluster_unique_ID")
+    params = metrics_df.loc[cluster_unique_IDs][fit]
+    curve_fits = dtm.gamma_4p(
+        x[:, None],
+        params["size"].values,
+        params["shape"].values,
+        params["scale"].values,
+        params["shift"].values,
+    )
+    if op == "max":
+        idx_order = np.argmax(curve_fits, axis=0)
+    elif op == "min":
+        idx_order = np.argmin(curve_fits, axis=0)
+    x_orders = x[idx_order]
+    return x_orders
+
+
+def get_population_theta_split_distance_tuning(verbose=True, min_split_half_corr=0.7):
+    """ """
+    all_tuning_curves = []
+    all_metrics = []
+    for subject_ID in SUBJECT_IDS:
+        if verbose:
+            print(subject_ID)
+            print("loading sessions ...")
+        sessions = gs.get_maze_sessions(
+            subject_IDs=[subject_ID],
+            maze_names="all",
+            days_on_maze="all",
+            with_data=[
+                "navigation_df",
+                "navigation_theta_spike_counts_df",
+                "cluster_distance_tuning_metrics",
+            ],
+        )
+        for session in sessions:
+            if verbose:
+                print(session.name)
+            tuning_curves = get_session_theta_split_distance_tuning(session, min_split_half_corr=min_split_half_corr)
+            if tuning_curves is None:
+                continue  # no distance tunned cells
+            distance_metrics = session.cluster_distance_tuning_metrics
+            distance_metrics = distance_metrics[distance_metrics.split_half_corr.value > min_split_half_corr]
+            all_tuning_curves.append(tuning_curves)
+            all_metrics.append(distance_metrics)
+    pop_tuning_curves = pd.concat(all_tuning_curves, axis=1)
+    pop_tuning_metrics = pd.concat(all_metrics, axis=0)
+    return pop_tuning_curves, pop_tuning_metrics
+
+
+def get_session_theta_split_distance_tuning(
+    session,
+    metrics=("distance_to_goal", "geodesic"),
+    min_split_half_corr=0.7,
+    theta_peak_ind=[3, 4, 5, 6],
+    theta_trough_ind=[0, 9, 10, 11],
+    bin_spacing=0.02,
+    max_steps_to_goal=30,
+    moving_only=True,
+):
+    """ """
+    # load data
+    navigation_df = session.navigation_df.copy()
+    theta_spike_counts = session.navigation_theta_spike_counts_df.reset_index(drop=True).copy()
+    distance_tuning_metrics = session.cluster_distance_tuning_metrics
+    # filter for single units
+    valid_units = distance_tuning_metrics[
+        distance_tuning_metrics.single_unit & (distance_tuning_metrics.split_half_corr.value > min_split_half_corr)
+    ].cluster_unique_ID.values
+    if len(valid_units) == 0:
+        # no clusters with sufficient distance tuning
+        return None
+    keep_cols = theta_spike_counts.columns.get_level_values(1).isin(valid_units)
+    theta_spike_counts = theta_spike_counts[theta_spike_counts.columns[keep_cols]]
+    # get theta phases
+    phases = theta_spike_counts.columns.get_level_values(2).unique().astype(float)
+    phase_cols = theta_spike_counts.columns.get_level_values(2)
+    theta_peak_vals = phases[theta_peak_ind]
+    theta_trough_vals = phases[theta_trough_ind]
+    # sum spikes in theta peak and trough phases for each cluster
+    peak_spike_counts = theta_spike_counts[theta_spike_counts.columns[phase_cols.isin(theta_peak_vals)]]
+    peak_spike_counts = peak_spike_counts.T.groupby(level=1).sum().T
+    trough_spike_counts = theta_spike_counts[theta_spike_counts.columns[phase_cols.isin(theta_trough_vals)]]
+    trough_spike_counts = trough_spike_counts.T.groupby(level=1).sum().T
+    # combine nav and spike
+    navigation_df.columns = pd.MultiIndex.from_tuples([(*c, "") for c in navigation_df.columns])
+    peak_spike_counts.columns = pd.MultiIndex.from_tuples(
+        [("spike_count", c, "peak") for c in peak_spike_counts.columns]
+    )
+    trough_spike_counts.columns = pd.MultiIndex.from_tuples(
+        [("spike_count", c, "trough") for c in trough_spike_counts.columns]
+    )
+    nav_spikes_df = pd.concat(
+        [navigation_df, peak_spike_counts, trough_spike_counts],
+        axis=1,
+    )
+    metrics = (*metrics, "")
+    # now filter the data
+    nav_spikes_df = filt.filter_navigation_rates_df(
+        nav_spikes_df,
+        navigation_only=True,
+        moving_only=moving_only,
+        exclude_time_at_goal=False,
+        max_steps_to_goal=max_steps_to_goal,
+    ).reset_index(drop=True)
+    # bin distances to goal
+    max_distance = dd.get_distance_percentile(metrics, 0.85)
+    n_bins = int(max_distance / bin_spacing)
+    nav_spikes_df = nav_spikes_df[nav_spikes_df[metrics] < max_distance]
+    bins = convert._get_distance_bins(
+        binning_method="uniform",
+        n_distance_bins=n_bins,
+        distance_metrics=metrics,
+        max_distance=max_distance,
+    )
+    # bin distances
+    nav_spikes_df.loc[:, ("distance_bin", "", "")] = pd.cut(
+        nav_spikes_df[metrics], bins=bins, include_lowest=True
+    ).to_numpy()
+    # get average rates at each distance over trials
+    grouped_df = nav_spikes_df.groupby(["trial", "distance_bin"]).spike_count
+    distance_occ = grouped_df.count() * (1 / FRAME_RATE)  # convert to seconds
+    distance_spikes = grouped_df.sum()
+    distance_theta_rates = distance_spikes / distance_occ
+    # average over trials
+    distance_theta_tuning = distance_theta_rates.groupby("distance_bin").spike_count.mean().sort_index(axis=1)
+    distance_theta_tuning.index = [c.mid for c in distance_theta_tuning.index]
+    return distance_theta_tuning.spike_count
