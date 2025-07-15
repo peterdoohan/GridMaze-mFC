@@ -426,8 +426,8 @@ def plot_subject_theta_x_shifts(ax=None, print_stats=True):
     for i, subject in enumerate(SUBJECT_IDS):
         color = colors[i]
         shift = x_shifts[subject] * 100  # convert to cm
-        ax.scatter(shift, y_offset * i, color=color, s=50)
-    ax.set_ylim(-0.2, 0.2)
+        ax.scatter(shift, y_offset * i, color=color, s=60)
+    ax.set_ylim(-0.1, 0.15)
     ax.set_yticks([])
     ax.set_xlim(-5, 1)
 
