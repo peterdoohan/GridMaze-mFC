@@ -4,11 +4,9 @@ Look for anatomical gradients in distance to goal tuning
 """
 
 # %% Imports
-import re
 import json
 import numpy as np
 import pandas as pd
-import seaborn as sns
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from matplotlib.colors import Normalize
@@ -27,11 +25,11 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 # %% Functions
 
 
-def plot_anatomical_distance_tuning(anat_df, f=None, ax=None, jitter=2, colormap="cool"):
+def plot_anatomical_distance_tuning(anat_df, f=None, axes=None, jitter=2, colormap="cool"):
     """ """
     dist_tuned_cells = anat_df[anat_df.distance_tuned]
     other_cells = anat_df[~anat_df.distance_tuned]
-    if ax is None or f is None:
+    if axes is None or f is None:
         f, axes = plt.subplots(1, 2, figsize=(5, 3), width_ratios=[2, 1])
     for ax in axes:
         for spine in ax.spines.values():
