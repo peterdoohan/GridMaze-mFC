@@ -10,6 +10,9 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+from matplotlib import cm
+from matplotlib.colors import Normalize
+from scipy.stats import gamma
 
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.distance_to_goal import population_tuning as pt
@@ -24,112 +27,101 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 # %% Functions
 
 
-def plot_voxel_distance_tuning_heatmap(
-    population_anatomy_df,
-    ax=None,
-):
+def plot_anatomical_distance_tuning(anat_df, f=None, ax=None, jitter=2, colormap="cool"):
     """ """
-    # process data
-    voxel_map = population_anatomy_df.groupby(["y", "x"]).tunned_distance.mean().unstack()
-    # plot
-    if ax is None:
-        f, ax = plt.subplots(1, 1, figsize=(3, 3))
-    # plot heatmap
-    sns.heatmap(
-        voxel_map,
-        cmap="viridis_r",
-        cbar_kws={"label": "Tunned Distance", "shrink": 0.5},
-        square=True,
-        alpha=1,
-        ax=ax,
-    )
-    ax.set_xticks([])
-    ax.set_yticks([])
-    ax.set_xticklabels([])
-    ax.set_yticklabels([])
-    ax.set_xlabel("Anterior -> Posterior")
-    ax.set_ylabel("Ventral -> Doral")
-
-
-def plot_region_distance_tuning_distributions(population_anatomy_df, ignore_layers=True, min_cells=20, axes=None):
-    """ """
-    if ignore_layers:
-        population_anatomy_df["region"] = population_anatomy_df.region.apply(
-            lambda x: re.match(r"([A-Za-z]+)(.*)", x).groups()[0]
-        )
-    if min_cells is not None:
-        cell_counts = population_anatomy_df.groupby("region").count().tunned_distance
-        regions = cell_counts[cell_counts.gt(min_cells)].index.values
-    else:
-        regions = population_anatomy_df.region.unique()
-    if axes is None:
-        f, axes = plt.subplots(len(regions), 1, figsize=(3, len(regions)), sharex=True, sharey=True)
+    dist_tuned_cells = anat_df[anat_df.distance_tuned]
+    other_cells = anat_df[~anat_df.distance_tuned]
+    if ax is None or f is None:
+        f, axes = plt.subplots(1, 2, figsize=(5, 3), width_ratios=[2, 1])
     for ax in axes:
-        ax.spines[["top", "right"]].set_visible(False)
-    for region, ax in zip(regions, axes.flatten()):
-        region_df = population_anatomy_df[population_anatomy_df.region == region]
-        sns.histplot(region_df, x="tunned_distance", stat="proportion", element="step", alpha=0.2, ax=ax, color="black")
-        ax.set_ylabel(region)
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        ax.tick_params(left=False, right=False, bottom=False, top=False, labelleft=False, labelbottom=False)
+    axes[0].set_xlabel("P -> A")
+    axes[0].set_ylabel("V -> D")
+    axes[1].set_xlabel("L -> M")
+    axes[1].set_ylabel("V -> D")
+    # plot non-distance tunned cells
+    for ax, (x, y) in zip(axes, [("x", "y"), ("z", "y")]):
+        _x = other_cells["voxel"][x].values.astype(float)
+        _y = other_cells["voxel"][y].values.astype(float)
+        if jitter:
+            _x += np.random.uniform(-jitter, jitter, size=_x.shape)
+            _y += np.random.uniform(-jitter, jitter, size=_y.shape)
+        ax.scatter(_x, _y, color="grey", s=0.5, alpha=0.1)
+    # plot distance tuned cells
+    for ax, (x, y) in zip(axes, [("x", "y"), ("z", "y")]):
+        _x = dist_tuned_cells["voxel"][x].values.astype(float)
+        _y = dist_tuned_cells["voxel"][y].values.astype(float)
+        if jitter:
+            _x += np.random.uniform(-jitter, jitter, size=_x.shape)
+            _y += np.random.uniform(-jitter, jitter, size=_y.shape)
+        # color cell by distance tuning
+        dist_p50 = dist_tuned_cells.distance_p50.values
+        vmin, vmax = dist_p50.min(), 1.5
+        cmap = cm.get_cmap(colormap)
+        norm = Normalize(vmin=vmin, vmax=vmax, clip=True)
+        # colors = cmap(norm(dist_p50))
+        if x == "z":
+            sc = ax.scatter(_x, _y, c=dist_p50, cmap=cmap, norm=norm, s=0.5, alpha=0.3)
+        else:
+            ax.scatter(_x, _y, c=dist_p50, cmap=cmap, norm=norm, s=0.5, alpha=0.3)
+    for ax in axes:
+        ax.invert_yaxis()
+        ax.invert_xaxis()
+    cbar = f.colorbar(sc, ax=axes[1], label="close --> far \n distance tunned")
+    cbar.outline.set_visible(False)
+    cbar.ax.tick_params(left=False, labelleft=False, right=False, labelright=False)
 
-    return
 
-
-def get_population_anatomy_df(subject_IDs="all", late_sessions=True, sign="pos", verbose=False):
+def get_population_anatomy_df(subject_IDs="all", verbose=False):
     """"""
-    days_on_maze = "late" if late_sessions else "all"
     subject_IDs = SUBJECT_IDS if subject_IDs == "all" else subject_IDs
     if verbose:
         print("Loading sessions...")
     sessions = gs.get_maze_sessions(
         subject_IDs=subject_IDs,
         maze_names="all",
-        days_on_maze=days_on_maze,
-        with_data=["navigation_df", "navigation_spike_rates_df", "cluster_metrics", "cluster_distance_tuning_metrics"],
+        days_on_maze="all",
+        with_data=["cluster_metrics", "cluster_distance_tuning_metrics"],
     )
     anat_dfs = []
     for session in sessions:
         if verbose:
             print(session.name)
-        anat_df = _get_session_anatomical_distance_tuning(session, sign=sign)
+        anat_df = get_session_anatomical_distance_tuning(session)
         anat_dfs.append(anat_df)
-    results_df = pd.concat(anat_dfs, axis=0).reset_index(drop=True)
+    results_df = pd.concat(anat_dfs, axis=0)
     return results_df
 
 
-def _get_session_anatomical_distance_tuning(session, sign="pos", fit="gamma_4p"):
+def get_session_anatomical_distance_tuning(session, min_split_half_corr=0.5):
     """
-    returns df with x,y voxel coordinates and distance tuning peak for each cluster
+    min_split_half_corr defines if neuron is distance tuned or not
     """
-    distance_tuning_df = pt._get_session_distance_tuning(session)
-    cluster_distance_tuning_metrics_df = session.cluster_distance_tuning_metrics
-    cluster_metrics_df = session.cluster_metrics
-    # filter for distance tunned clusters
-    distance_tuned_mask = (
-        cluster_metrics_df.single_unit
-        & cluster_distance_tuning_metrics_df.distance_tuned
-        & cluster_distance_tuning_metrics_df.gamma_4p_cv.sig
+    # load data
+    distance_tuning_metrics = session.cluster_distance_tuning_metrics
+    distance_tuning_metrics = distance_tuning_metrics[distance_tuning_metrics.single_unit]
+    cluster_metrics = session.cluster_metrics  # with anatomy data
+    cluster_metrics = cluster_metrics[cluster_metrics.single_unit].reset_index(drop=True)
+    # get distance tuning info
+    output_df = pd.DataFrame(index=distance_tuning_metrics.cluster_unique_ID)
+    params_df = distance_tuning_metrics.gamma_4p
+    output_df[("distance_p50", "")] = gamma.ppf(
+        0.5, loc=0, a=params_df["shape"].values, scale=params_df["scale"].values
     )
-    cluster_distance_tuning_metrics_df = cluster_distance_tuning_metrics_df[distance_tuned_mask]
-    cluster_metrics_df = cluster_metrics_df[distance_tuned_mask]
-    # filter for pos/neg fit tuned
-    if sign == "pos":
-        sign_mask = cluster_distance_tuning_metrics_df[fit]["size"].gt(0)
-    else:  # neg
-        sign_mask = cluster_distance_tuning_metrics_df[fit]["size"].lt(0)
-    cluster_distance_tuning_metrics_df = cluster_distance_tuning_metrics_df[sign_mask]
-    cluster_metrics_df = cluster_metrics_df[sign_mask]
-    distance_tuning_df = distance_tuning_df.loc[cluster_distance_tuning_metrics_df.cluster_unique_ID.values]
-    df = pd.concat(
+    split_half_corrs = distance_tuning_metrics.split_half_corr.value.values
+    output_df[("split_half_corr", "")] = split_half_corrs
+    output_df[("distance_tuned", "")] = split_half_corrs > min_split_half_corr
+    # get anatomy info
+    _output_df = pd.concat(
         [
-            distance_tuning_df.reset_index(drop=True),
-            cluster_distance_tuning_metrics_df.reset_index(drop=True),
-            cluster_metrics_df.reset_index(drop=True),
+            output_df.reset_index(drop=True),
+            cluster_metrics.xs("voxel", axis=1, level=0, drop_level=False).reset_index(),
+            cluster_metrics.xs("region", axis=1, level=0, drop_level=False).reset_index(),
         ],
         axis=1,
     )
-    # get distance tuning peak
-    x = df.distance_to_goal.columns.values.astype(float)
-    anat_df = df.voxel[["x", "y"]]
-    anat_df["tunned_distance"] = df.apply(lambda row: pt.get_idx_order(row, x, fit=fit, op="max"), axis=1)
-    anat_df["region"] = df.region.acronym
-    return anat_df
+    _output_df.index = output_df.index
+    _output_df.columns = pd.MultiIndex.from_tuples(_output_df.columns)
+    return _output_df
