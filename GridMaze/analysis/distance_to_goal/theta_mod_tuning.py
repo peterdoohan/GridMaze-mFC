@@ -5,11 +5,13 @@ Is there a systematic shift in distance tuning curves across theta phases (peak 
 
 # %% Imports
 import json
+from turtle import distance
 import numpy as np
 import pandas as pd
+import seaborn as sns
 from matplotlib import pyplot as plt
 from scipy.ndimage import gaussian_filter1d
-from scipy.stats import zscore
+from scipy.interpolate import interp1d
 
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import filter as filt
@@ -233,13 +235,79 @@ def get_theta_x_shift(theta_tuning, bin_spacing, smooth_SD=2, n_shift=2, demean=
 # %% Different set of analyses looking averaging tuning across cells split by theta before quantifying shift
 
 
-def test(
+def plot_heatmap_slices(
+    tuning_curves, tunning_metrics, sign="pos", neuron_groups=6, distance_groups=6, how="horizontal", ax=None
+):
+    """ """
+    # set up fig
+    if ax is None:
+        f, ax = plt.subplots(figsize=(5, 5))
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_ylabel("norm. firing rate")
+    # process heatmap
+    df = get_theta_split_distance_heatmap(
+        tuning_curves,
+        tunning_metrics,
+        sign=sign,
+        downsample=True,
+        neuron_groups=neuron_groups,
+        distance_groups=distance_groups,
+    )
+    if how == "horizontal":
+        # plot firing rate of neuron groups over distances
+        cmap = sns.color_palette("hls", neuron_groups)
+        for i in range(neuron_groups):
+            g = df.iloc[i]
+            color = cmap[i]
+            for phase, ls in zip(
+                ["trough", "peak"],
+                ["-", "--"],
+            ):
+                g_phase = g.loc[phase]
+                x = g_phase.index.astype(float).values
+                y = g_phase.values
+                ax.plot(
+                    x,
+                    y,
+                    color=color,
+                    label=f"{i}: {phase}",
+                    linestyle=ls,
+                )
+        ax.set_xlabel("distance to goal (m)")
+        ax.legend(fontsize=8, loc="center left", bbox_to_anchor=(1, 0.5))
+    elif how == "vertical":
+        distances = df.columns.get_level_values(1).astype(float).unique().values
+        cmap = sns.color_palette("hls", len(distances))
+        _df = df.unstack()
+        for i, d in enumerate(distances):
+            color = cmap[i]
+            for phase, ls in zip(
+                ["trough", "peak"],
+                ["-", "--"],
+            ):
+                g_phase = _df.loc[(phase, d)]
+                x = g_phase.index.astype(int).values
+                y = g_phase.values
+                ax.plot(
+                    x,
+                    y,
+                    color=color,
+                    label=f"{d:.2f} m: {phase}",
+                    linestyle=ls,
+                )
+        ax.set_xlabel("neuron group")
+        ax.legend(fontsize=8, loc="center left", bbox_to_anchor=(1, 0.5))
+
+
+def get_theta_split_distance_heatmap(
     pop_tuning_curves,
     pop_tuning_metrics,
     sign="pos",
-    n_groups=4,
-    smooth_SD=3,
-    normalise="zscore",
+    smooth_SD=2,
+    normalise="max",
+    downsample=True,
+    neuron_groups=6,
+    distance_groups=6,
 ):
     """ """
     if sign == "pos":
@@ -266,12 +334,55 @@ def test(
         grand_max = df.max(axis=1)
         df.loc[:, "peak"] = df.peak.div(grand_max, axis=0).values
         df.loc[:, "trough"] = df.trough.div(grand_max, axis=0).values
-    # split into n_groups of neurons
-    n_neurons = df.shape[0]
-    group_size = n_neurons // n_groups
-    # group df every n neurons
-    group_means_df = df.groupby(np.arange(n_neurons) // group_size).mean()
-    return group_means_df
+    if not downsample:
+        return df
+    else:
+        assert neuron_groups > 0, "neuron_groups must be greater than 0 for downsmapling"
+        group_means_df = _downsample_neurons(df, neuron_groups)
+        if distance_groups:
+            group_means_df = _downsample_distances(group_means_df, distance_groups)
+        return group_means_df
+
+
+def _downsample_neurons(df, n_bins):
+    """Downsample the neuron tuning DataFrame by averaging over n_bins."""
+    n_neurons, n_distances = df.shape
+    # chunk neurons into n groups and average
+    neuron_group_size = n_neurons // n_bins
+    _n_groups = np.minimum(np.arange(n_neurons) // neuron_group_size, n_bins - 1)
+    return df.groupby(_n_groups).mean()
+
+
+def _downsample_distances(df, n_bins):
+    """
+    Downsample the distance tuning DataFrame by averaging over n_bins.
+    The DataFrame should have a MultiIndex with the first level being 'peak' or 'trough'
+    and the second level being the distance bins.
+    """
+    parts = []
+    for kind in ["peak", "trough"]:
+        sub = df[kind]  # shape (n_neuron_groups, n_distances)
+        distances = sub.columns.astype(float).values  # original distances
+        n = len(distances)
+        size = n // n_bins
+        # assign each original column to an integer bin
+        bins = np.arange(n) // size
+        bins = np.minimum(bins, n_bins - 1)
+        # collapse into bin‐means via transpose‐group‐transpose
+        agg = sub.T.groupby(bins).mean().T
+        # compute the midpoint of each bin
+        mids = []
+        for j in range(n_bins):
+            idx = np.where(bins == j)[0]
+            if idx.size:
+                d0 = distances[idx].min()
+                d1 = distances[idx].max()
+                mids.append((d0 + d1) / 2.0)
+            else:
+                mids.append(np.nan)
+        agg.columns = pd.MultiIndex.from_tuples([(kind, mid) for mid in mids], names=df.columns.names)
+        parts.append(agg)
+    return pd.concat(parts, axis=1).sort_index(axis=1)
 
 
 def _get_idx_order(pop_tuning_metrics, cluster_unique_IDs, x, fit="gamma_4p", op="max"):
@@ -292,11 +403,33 @@ def _get_idx_order(pop_tuning_metrics, cluster_unique_IDs, x, fit="gamma_4p", op
     return x_orders
 
 
-def get_population_theta_split_distance_tuning(verbose=True, min_split_half_corr=0.7):
+def test_heatmap_x_shift(tuning_df, bin_spacing=0.04, smooth_SD=2, normalise="max", upsampled_spacing=0.005):
+    """ """
+    df = tuning_df.T.unstack(level=1).swaplevel(0, 1, axis=1).sort_index(axis=1)
+    if smooth_SD:
+        df.loc[:, "peak"] = gaussian_filter1d(df.peak.values, smooth_SD, axis=1)
+        df.loc[:, "trough"] = gaussian_filter1d(df.trough.values, smooth_SD, axis=1)
+    if normalise == "max":
+        grand_max = df.max(axis=1)
+        df.loc[:, "peak"] = df.peak.div(grand_max, axis=0).values
+        df.loc[:, "trough"] = df.trough.div(grand_max, axis=0).values
+    peak = df["peak"].values
+    trough = df["trough"].values
+    # upsample
+    current_bins = peak.shape[1]
+    upsampled_bins = int(current_bins * (bin_spacing / upsampled_spacing))
+    x_new = np.linspace(0, current_bins - 1, upsampled_bins)
+    peak_upsamp = interp1d(np.arange(current_bins), peak, axis=1)(x_new)
+    trough_upsamp = interp1d(np.arange(current_bins), trough, axis=1)(x_new)
+    return peak, peak_upsamp
+
+
+def get_population_theta_split_distance_tuning(subject_ID="all", verbose=True, min_split_half_corr=0.7):
     """ """
     all_tuning_curves = []
     all_metrics = []
-    for subject_ID in SUBJECT_IDS:
+    _subject_IDs = [subject_ID] if not subject_ID == "all" else SUBJECT_IDS
+    for subject_ID in _subject_IDs:
         if verbose:
             print(subject_ID)
             print("loading sessions ...")
@@ -331,7 +464,7 @@ def get_session_theta_split_distance_tuning(
     min_split_half_corr=0.7,
     theta_peak_ind=[3, 4, 5, 6],
     theta_trough_ind=[0, 9, 10, 11],
-    bin_spacing=0.02,
+    bin_spacing=0.04,
     max_steps_to_goal=30,
     moving_only=True,
 ):
@@ -403,3 +536,6 @@ def get_session_theta_split_distance_tuning(
     distance_theta_tuning = distance_theta_rates.groupby("distance_bin").spike_count.mean().sort_index(axis=1)
     distance_theta_tuning.index = [c.mid for c in distance_theta_tuning.index]
     return distance_theta_tuning.spike_count
+
+
+# %%
