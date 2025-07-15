@@ -4,15 +4,14 @@ Is there a systematic shift in distance tuning curves across theta phases (peak 
 """
 
 # %% Imports
-from enum import KEEP
 import json
-from turtle import distance
 import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib import pyplot as plt
 from scipy.ndimage import gaussian_filter1d
 from scipy.interpolate import interp1d
+from scipy.stats import ttest_1samp
 
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import filter as filt
@@ -237,12 +236,19 @@ def get_theta_x_shift(theta_tuning, bin_spacing, smooth_SD=2, n_shift=2, demean=
 
 
 def plot_heatmap_slices(
-    tuning_curves, tunning_metrics, sign="pos", neuron_groups=6, distance_groups=6, how="horizontal", ax=None
+    tuning_curves,
+    tunning_metrics,
+    sign="pos",
+    neuron_groups=6,
+    distance_groups=6,
+    how="horizontal",
+    cmap="plasma_r",
+    ax=None,
 ):
     """ """
     # set up fig
     if ax is None:
-        f, ax = plt.subplots(figsize=(5, 5))
+        f, ax = plt.subplots(figsize=(3, 3))
     ax.spines[["top", "right"]].set_visible(False)
     ax.set_ylabel("norm. firing rate")
     # process heatmap
@@ -256,7 +262,7 @@ def plot_heatmap_slices(
     )
     if how == "horizontal":
         # plot firing rate of neuron groups over distances
-        cmap = sns.color_palette("hls", neuron_groups)
+        cmap = sns.color_palette(cmap, neuron_groups)
         for i in range(neuron_groups):
             g = df.iloc[i]
             color = cmap[i]
@@ -278,7 +284,7 @@ def plot_heatmap_slices(
         ax.legend(fontsize=8, loc="center left", bbox_to_anchor=(1, 0.5))
     elif how == "vertical":
         distances = df.columns.get_level_values(1).astype(float).unique().values
-        cmap = sns.color_palette("hls", len(distances))
+        cmap = sns.color_palette(cmap, len(distances))
         _df = df.unstack()
         for i, d in enumerate(distances):
             color = cmap[i]
@@ -404,6 +410,33 @@ def _get_idx_order(pop_tuning_metrics, cluster_unique_IDs, x, fit="gamma_4p", op
     return x_orders
 
 
+def plot_subject_theta_x_shifts(ax=None, print_stats=True):
+    """ """
+    # set up fig
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(3, 1))
+    ax.spines[["top", "left", "right"]].set_visible(False)
+    ax.axvline(0, color="black", linestyle="--", alpha=0.5)
+    ax.set_xlabel("opt. x-shift (cm) \n (theta peak - theta trough)")
+
+    # load population x-shifts for each subject (dict)
+    x_shifts = get_population_distance_tuning_theta_x_shifts()
+    colors = sns.color_palette("hls", len(SUBJECT_IDS))
+    y_offset = 0.02
+    for i, subject in enumerate(SUBJECT_IDS):
+        color = colors[i]
+        shift = x_shifts[subject] * 100  # convert to cm
+        ax.scatter(shift, y_offset * i, color=color, s=50)
+    ax.set_ylim(-0.2, 0.2)
+    ax.set_yticks([])
+    ax.set_xlim(-5, 1)
+
+    if print_stats:
+        _shifts = np.array(list(x_shifts.values()))
+        t_val, p_val = ttest_1samp(_shifts, 0, alternative="less")
+        print(f"t-test: t = {t_val:.3f}, p = {p_val:.3f}")
+
+
 def get_population_distance_tuning_theta_x_shifts(
     min_split_half_corr=0.7,
     shift=0.08,
@@ -412,7 +445,7 @@ def get_population_distance_tuning_theta_x_shifts(
     normalise=False,
     upsampled_spacing=0.001,
     save=False,
-    verbose=True,
+    verbose=False,
 ):
     """ """
     save_path = RESULTS_DIR / "population_theta_x_shifts.json"
