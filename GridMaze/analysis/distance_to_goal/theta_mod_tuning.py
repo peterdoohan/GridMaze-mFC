@@ -4,6 +4,7 @@ Is there a systematic shift in distance tuning curves across theta phases (peak 
 """
 
 # %% Imports
+from enum import KEEP
 import json
 from turtle import distance
 import numpy as np
@@ -403,8 +404,53 @@ def _get_idx_order(pop_tuning_metrics, cluster_unique_IDs, x, fit="gamma_4p", op
     return x_orders
 
 
-def test_heatmap_x_shift(tuning_df, bin_spacing=0.04, smooth_SD=2, normalise="max", upsampled_spacing=0.005):
+def get_population_distance_tuning_theta_x_shifts(
+    min_split_half_corr=0.7,
+    shift=0.08,
+    bin_spacing=0.04,
+    smooth_SD=3,
+    normalise=False,
+    upsampled_spacing=0.001,
+    save=False,
+    verbose=True,
+):
     """ """
+    save_path = RESULTS_DIR / "population_theta_x_shifts.json"
+    if not save and save_path.exists():
+        if verbose:
+            print(f"Loading existing results from {save_path}")
+        with open(save_path, "r") as input_file:
+            x_shifts = json.load(input_file)
+        return x_shifts
+    x_shifts = {}
+    for subject in SUBJECT_IDS:
+        tuning_df, _ = get_population_theta_split_distance_tuning(
+            subject_ID=subject,
+            verbose=verbose,
+            min_split_half_corr=min_split_half_corr,
+        )
+        x_shifts[subject] = get_opt_heatmap_x_shift(
+            tuning_df,
+            shift,
+            bin_spacing,
+            smooth_SD,
+            normalise,
+            upsampled_spacing,
+        )
+    if save:
+        if verbose:
+            print(f"Saving results to {save_path}")
+        with open(save_path, "w") as output_file:
+            json.dump(x_shifts, output_file)
+    return x_shifts
+
+
+def get_opt_heatmap_x_shift(
+    tuning_df, shift=0.08, bin_spacing=0.04, smooth_SD=3, normalise=False, upsampled_spacing=0.001
+):
+    """
+    Find best x-shift moving across whole heatmaps from peak and trough
+    """
     df = tuning_df.T.unstack(level=1).swaplevel(0, 1, axis=1).sort_index(axis=1)
     if smooth_SD:
         df.loc[:, "peak"] = gaussian_filter1d(df.peak.values, smooth_SD, axis=1)
@@ -419,9 +465,23 @@ def test_heatmap_x_shift(tuning_df, bin_spacing=0.04, smooth_SD=2, normalise="ma
     current_bins = peak.shape[1]
     upsampled_bins = int(current_bins * (bin_spacing / upsampled_spacing))
     x_new = np.linspace(0, current_bins - 1, upsampled_bins)
-    peak_upsamp = interp1d(np.arange(current_bins), peak, axis=1)(x_new)
-    trough_upsamp = interp1d(np.arange(current_bins), trough, axis=1)(x_new)
-    return peak, peak_upsamp
+    peak_upsamp = interp1d(np.arange(current_bins), peak, axis=1, kind="quadratic")(x_new)
+    trough_upsamp = interp1d(np.arange(current_bins), trough, axis=1, kind="quadratic")(x_new)
+    # calculate MSE for all shifts
+    n_shifts = int(shift / upsampled_spacing)
+    # mask the edges of the upsampled data up to the max shift
+    shift_mask = np.zeros_like(peak_upsamp, dtype=bool)
+    shift_mask[:, :n_shifts] = True
+    shift_mask[:, -n_shifts:] = True
+    _peak_upsamp = peak_upsamp[~shift_mask]
+    _shifts = np.arange(-n_shifts, n_shifts + 1, 1)
+    mses = []
+    for i, _shift in enumerate(_shifts):
+        shifted_trough = np.roll(trough_upsamp, _shift, axis=1)
+        _shifted_trough = shifted_trough[~shift_mask]
+        mses.append(((_peak_upsamp - _shifted_trough) ** 2).mean())
+    best_shift = _shifts[np.argmin(mses)]
+    return best_shift * upsampled_spacing
 
 
 def get_population_theta_split_distance_tuning(subject_ID="all", verbose=True, min_split_half_corr=0.7):
