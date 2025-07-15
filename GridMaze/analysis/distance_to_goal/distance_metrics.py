@@ -592,46 +592,16 @@ def _process_cluster_betas(model, X, y, alpha, cluster, n_bases, _metric_1, _met
 # %% CPD function
 
 
-def get_distance_metric_CPD_summary_df(max_jobs=10, verbose=False):
-    """
-    TODO: update to be just a load function
-    """
-    save_path = RESULTS_DIR / "cpd_summary_df2.csv"
-    if save_path.exists():
-        if verbose:
-            print(f"Loading CPD summaries df from {save_path}")
-        results_df = pd.read_csv(save_path, index_col=0, header=[0, 1])
+def get_distance_metric_CPD_summary_df():
+    cpd_results_dir = RESULTS_DIR / "cpd_summaries"
+    results_paths = list(cpd_results_dir.glob("*.csv"))
+    dfs = []
+    for p in results_paths:
+        df = pd.read_csv(p, index_col=0, header=[0, 1])
         # fix cols when loading from disk
-        results_df.columns = pd.MultiIndex.from_tuples(
-            [c if "Unnamed" not in c[1] else (c[0], "") for c in results_df.columns]
-        )
-    else:
-        if verbose:
-            print(f"loading sessions ...")
-        sessions = gs.get_maze_sessions(
-            subject_IDs="all",
-            maze_names="all",
-            days_on_maze="all",
-            with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
-            must_have_data=True,
-        )
-        dfs = []
-        for session in sessions:
-            if verbose:
-                print(session.name)
-            try:
-                comparisons_df = run_pairwise_CPD_comparisons(session, max_jobs=max_jobs, verbose=verbose)
-                dfs.append(comparisons_df)
-            except Exception as e:
-                if verbose:
-                    print(f"Error processing {session.name}: \n {e}")
-        results_df = pd.concat(dfs, axis=0)
-        # save
-        save_path.parent.mkdir(parents=True, exist_ok=True)
-        results_df.to_csv(save_path, index=True)
-        if verbose:
-            print(f"Saved CPD summaries df to {save_path}")
-    return results_df
+        df.columns = pd.MultiIndex.from_tuples([c if "Unnamed" not in c[1] else (c[0], "") for c in df.columns])
+        dfs.append(df)
+    return pd.concat(dfs, axis=0)
 
 
 def populate_CPD_summary_dfs(subject_ID="m2", verbose=True, max_jobs=10):
