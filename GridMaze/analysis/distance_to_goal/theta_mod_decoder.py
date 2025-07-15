@@ -33,7 +33,7 @@ RESULTS_DIR = RESULTS_PATH / "distance_to_goal" / "logreg_decoding" / "lfp_mod"
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
 
-# %% plotting
+# %% dev: speed split analysis
 
 
 def plot_speed_split_decoding_bias(results_df, colors=["tan", "indianred"], print_stats=True, ax=None):
@@ -94,6 +94,9 @@ def get_speed_split_stats(_slow_df, _fast_df):
     return output
 
 
+# %% main theta mod analysis
+
+
 def plot_decoding_theta_bias(
     results_df,
     maze_names=["maze_1", "maze_2", "rooms_maze"],
@@ -103,8 +106,9 @@ def plot_decoding_theta_bias(
     ax=None,
 ):
     """ """
+    df = results_df.copy()
     # filter for mazes
-    df = results_df[results_df.maze_name.isin(maze_names)]
+    df = df[df.maze_name.isin(maze_names)]
     # filter for distance to goal
     if distance_range is not None:
         df = df[df.distance_to_goal.geodesic.between(*distance_range)]
