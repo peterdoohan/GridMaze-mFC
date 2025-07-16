@@ -5,6 +5,7 @@ Library for comparing distance to goal tuning metrics
 # %% Imports
 import json
 import random
+from re import M
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -50,136 +51,6 @@ DISTANCE_METRICS = [
     ("progress_to_goal", "path_length"),
     ("progress_to_goal", "time"),
 ]
-
-
-# %% plot results from CPD summary
-
-
-def plot_CPD_timeseries(summary_df, axes=None, comparison="geodesic_vs_euclidean", group_days=3):
-    """ """
-    # remove CPD outliers
-    outlier_mask = summary_df[comparison].lt(-0.5).any(axis=1)
-    df = summary_df[~outlier_mask]
-    if group_days:
-        # update maze day label to group days together
-        df.loc[:, ("day_on_maze", "")] = (df.day_on_maze // group_days) * group_days
-    # process data
-    df = df.groupby(["subject_ID", "maze_name", "day_on_maze"])[comparison].mean()[comparison]
-    sub_grouped_df = df.groupby(["maze_name", "day_on_maze"])
-    mean_df = sub_grouped_df.mean()
-    sem_df = sub_grouped_df.sem()
-    # plotting
-    metric_1, metric_2 = comparison.split("_vs_")
-    mean_df = mean_df.mul(100)  # convert to %
-    sem_df = sem_df.mul(100)
-    if axes is None:
-        f, axes = plt.subplots(1, 3, figsize=(6, 2), sharey=True)
-    for ax in axes:
-        ax.spines[["top", "right"]].set_visible(False)
-        ax.axhline(0, color="k", linestyle="--", alpha=0.5)
-    axes[0].set_ylabel("CPD (%)")
-
-    for maze_name, ax in zip(MAZE_DAY2DATE.keys(), axes):
-        for metric in [metric_1, metric_2]:
-            mean = mean_df.loc[maze_name][metric]
-            sem = sem_df.loc[maze_name][metric]
-            ax.plot(mean.index, mean.values, label=metric)
-            ax.fill_between(mean.index, mean - sem, mean + sem, alpha=0.2)
-            ax.set_xlabel("days on maze")
-        ax.set_title(maze_name)
-    axes[-1].legend(fontsize=8, loc="lower left")
-
-
-def plot_cross_subject_CPD_comparison(
-    summary_df,
-    comparison="geodesic_vs_euclidean",
-    maze_names=["maze_1", "maze_2"],
-    late_sessions=True,
-    outlier_threshold=-0.1,
-    ax=None,
-):
-    """ """
-    # filter data
-    df = summary_df[summary_df.maze_name.isin(maze_names)]
-    if late_sessions:
-        df = df[df.apply(_is_late_session, axis=1)]
-    df.drop(columns=[("maze_name", ""), ("day_on_maze", "")], inplace=True)
-    df.set_index("subject_ID", append=True, inplace=True)
-    df = df[comparison]
-    # filter for outliers where clusters were not fit well
-    outlier_mask = df.lt(outlier_threshold).any(axis=1)
-    df = df[~outlier_mask].copy()
-    # process data
-    mean_cpd = df.groupby("subject_ID").mean().unstack().reset_index()
-    mean_cpd.columns = ["metric", "subject_ID", "CPD"]
-    # plot
-    mean_cpd["CPD"] = mean_cpd["CPD"].mul(100)  # convert to %
-    if ax is None:
-        f, ax = plt.subplots(1, 1, figsize=(3, 3))
-
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.set_ylabel("CPD (%)")
-    ax.axhline(0, color="k", linestyle="--", alpha=0.5)
-    sns.pointplot(
-        data=mean_cpd,
-        x="metric",
-        y="CPD",
-        hue="subject_ID",
-        palette=sns.color_palette("hls", len(SUBJECT_IDS)),
-        errorbar=None,
-        dodge=False,
-        markers="o",
-        linestyles="-",
-        legend=False,
-        markersize=10,
-        linewidth=4,
-    )
-    ax.set_ylim(-1, 2)
-    return
-
-
-def plot_pairwise_CPD_summary(summary_df, late_sessions=True, maze_names=["maze_1", "maze_2"], ax=None):
-    """ """
-    # process summary data
-    df = summary_df[summary_df.maze_name.isin(maze_names)]
-    if late_sessions:
-        df = df[df.apply(_is_late_session, axis=1)]
-    dfs = []
-    for subject in SUBJECT_IDS:
-        subject_df = df[df.subject_ID == subject].copy()
-        subject_df.drop(columns=[("subject_ID", ""), ("maze_name", ""), ("day_on_maze", "")], inplace=True)
-        comparisons = subject_df.columns.get_level_values(0).unique()
-        cpd_df = pd.DataFrame(index=DISTANCE_METRICS, columns=DISTANCE_METRICS, dtype=float)
-        for c in comparisons:
-            metric_1, metric_2 = c.split("_vs_")
-            mean_cpd = subject_df[c].mean()
-            cpd_df.loc[metric_1, metric_2] = mean_cpd.loc[metric_1]
-            cpd_df.loc[metric_2, metric_1] = mean_cpd.loc[metric_2]
-        cpd_df.fillna(0, inplace=True)
-        dfs.append(cpd_df)
-    # average CPDs across subjects
-    subject_av_cpds = np.mean(np.stack([x.values for x in dfs]), axis=0)
-    output_df = pd.DataFrame(index=DISTANCE_METRICS, columns=DISTANCE_METRICS, data=subject_av_cpds)
-
-    # plot
-    if ax is None:
-        f, ax = plt.subplots(1, 1, figsize=(2, 2), sharey=True)
-    output_df = output_df.mul(100)  # convert to %
-    for d in DISTANCE_METRICS:
-        output_df.loc[d, d] = np.nan
-    cmap = sns.color_palette("Reds", as_cmap=True)
-    cmap.set_bad(color="lightgrey")
-    sns.heatmap(
-        output_df,
-        vmin=0,
-        cmap=cmap,
-        ax=ax,
-        square=True,
-        fmt=".1f",
-        cbar_kws={"shrink": 0.75, "label": f"CPD (%)"},
-    )
-    ax.tick_params(axis="x", which="both", top=True, bottom=False, labeltop=True, labelbottom=False, labelrotation=45)
-
 
 # %% plot results from weight summary dfs
 
@@ -587,6 +458,206 @@ def _process_cluster_betas(model, X, y, alpha, cluster, n_bases, _metric_1, _met
             }
         )
     return results
+
+
+# %% CPD plotting functions
+
+
+def plot_CPD_timeseries(summary_df, axes=None, comparison="geodesic_vs_euclidean", group_days=3):
+    """ """
+    # remove CPD outliers
+    outlier_mask = summary_df[comparison].lt(-0.5).any(axis=1)
+    df = summary_df[~outlier_mask]
+    if group_days:
+        # update maze day label to group days together
+        df.loc[:, ("day_on_maze", "")] = (df.day_on_maze // group_days) * group_days
+    # process data
+    df = df.groupby(["subject_ID", "maze_name", "day_on_maze"])[comparison].mean()[comparison]
+    sub_grouped_df = df.groupby(["maze_name", "day_on_maze"])
+    mean_df = sub_grouped_df.mean()
+    sem_df = sub_grouped_df.sem()
+    # plotting
+    metric_1, metric_2 = comparison.split("_vs_")
+    mean_df = mean_df.mul(100)  # convert to %
+    sem_df = sem_df.mul(100)
+    if axes is None:
+        f, axes = plt.subplots(1, 3, figsize=(6, 2), sharey=True)
+    for ax in axes:
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.axhline(0, color="k", linestyle="--", alpha=0.5)
+    axes[0].set_ylabel("CPD (%)")
+
+    for maze_name, ax in zip(MAZE_DAY2DATE.keys(), axes):
+        for metric in [metric_1, metric_2]:
+            mean = mean_df.loc[maze_name][metric]
+            sem = sem_df.loc[maze_name][metric]
+            ax.plot(mean.index, mean.values, label=metric)
+            ax.fill_between(mean.index, mean - sem, mean + sem, alpha=0.2)
+            ax.set_xlabel("days on maze")
+        ax.set_title(maze_name)
+    axes[-1].legend(fontsize=8, loc="lower left")
+
+
+def plot_pairwise_CPD_cross_subject_comparisons(
+    summary_df,
+    distance_metrics=DISTANCE_METRICS,
+    maze_names=["maze_1", "maze_2"],
+    late_sessions=True,
+    outlier_threshold=-0.5,
+    axes=None,
+):
+    # set up figure
+    if axes is None:
+        f, axes = plt.subplots(len(distance_metrics), len(distance_metrics), figsize=(9, 15))
+    # plot cross subject comparison for each pair of metrics
+    metric2ind = {".".join(d): i for i, d in enumerate(distance_metrics)}
+    comparisons = [c for c in summary_df.columns.get_level_values(0).unique() if "_vs_" in c]
+    for c in comparisons:
+        metric_1, metric_2 = c.split("_vs_")
+        ax = axes[
+            metric2ind[metric_2],
+            metric2ind[metric_1],
+        ]
+        plot_cross_subject_CPD_comparison(
+            summary_df,
+            comparison=c,
+            maze_names=maze_names,
+            late_sessions=late_sessions,
+            outlier_threshold=outlier_threshold,
+            ignore_labels=True,
+            ax=ax,
+        )
+        ax.set_xticklabels([])
+        ax.set_xlabel("")
+        ax.set_ylabel("")
+    # further formatting
+    for ax, _dm in zip(axes[:, 0], distance_metrics):
+        ax.set_ylabel(f"{_dm[0]}\n{_dm[1]}")
+    for ax, _dm in zip(axes[-1, :], distance_metrics):
+        ax.set_xlabel(f"{_dm[0]}\n{_dm[1]}")
+    for i in range(len(distance_metrics)):
+        for j in range(len(distance_metrics)):
+            ax = axes[i, j]
+            if i > j:
+                ax.spines[["top", "right"]].set_visible(False)
+                ax.axhline(0, color="k", linestyle="--", alpha=0.5)
+                ax.set_xticks([0, 1])
+                ax.set_xticklabels(["x", "y"])
+            else:
+                ax.set_visible(False)
+
+
+def plot_cross_subject_CPD_comparison(
+    summary_df,
+    comparison="distance_to_goal.geodesic_vs_distance_to_goal.euclidean",
+    maze_names=["maze_1", "maze_2"],
+    late_sessions=True,
+    outlier_threshold=-0.5,
+    ignore_labels=False,
+    ax=None,
+):
+    """ """
+    # filter data
+    df = summary_df[summary_df.maze_name.isin(maze_names)].copy()
+    if late_sessions:
+        df = df[df.apply(_is_late_session, axis=1)]
+    df.drop(columns=[("maze_name", ""), ("day_on_maze", "")], inplace=True)
+    df.set_index("subject_ID", append=True, inplace=True)
+    df = df[comparison]
+    # filter for outliers where clusters were not fit well
+    outlier_mask = df.lt(outlier_threshold).any(axis=1)
+    df = df[~outlier_mask].copy()
+    df = df.dropna()
+    # process data
+    mean_cpd = df.groupby("subject_ID").mean().unstack().reset_index()
+    mean_cpd.columns = ["metric", "subject_ID", "CPD"]
+    # plot
+    mean_cpd["CPD"] = mean_cpd["CPD"].mul(100)  # convert to %
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(1.5, 3))
+
+    if not ignore_labels:
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.set_ylabel("CPD (%)")
+        ax.axhline(0, color="k", linestyle="--", alpha=0.5)
+    sns.pointplot(
+        data=mean_cpd,
+        x="metric",
+        y="CPD",
+        hue="subject_ID",
+        palette=sns.color_palette("hls", len(SUBJECT_IDS)),
+        errorbar=None,
+        dodge=False,
+        markers="o",
+        linestyles=None,
+        legend=False,
+        markersize=10,
+        linewidth=0,
+        alpha=0.5,
+        ax=ax,
+    )
+    sns.pointplot(
+        data=mean_cpd,
+        x="metric",
+        y="CPD",
+        errorbar="se",
+        linestyle="none",
+        marker="_",
+        markersize=20,
+        markeredgewidth=3,
+        err_kws={"linewidth": 3},
+        ax=ax,
+        color="k",
+    )
+
+
+def plot_pairwise_CPD_heatmap(
+    summary_df, late_sessions=True, maze_names=["maze_1", "maze_2"], outlier_thres=-0.5, ax=None
+):
+    """ """
+    # process summary data
+    df = summary_df[summary_df.maze_name.isin(maze_names)]
+    if late_sessions:
+        df = df[df.apply(_is_late_session, axis=1)]
+    dfs = []
+    for subject in SUBJECT_IDS:
+        subject_df = df[df.subject_ID == subject].copy()
+        subject_df.drop(columns=[("subject_ID", ""), ("maze_name", ""), ("day_on_maze", "")], inplace=True)
+        comparisons = subject_df.columns.get_level_values(0).unique()
+        cpd_df = pd.DataFrame(index=DISTANCE_METRICS, columns=DISTANCE_METRICS, dtype=float)
+        for c in comparisons:
+            _metric_1, _metric_2 = c.split("_vs_")
+            metric_1, metric_2 = tuple(_metric_1.split(".")), tuple(_metric_2.split("."))
+            cpds = subject_df[c]
+            if outlier_thres:
+                cpds = cpds[cpds.gt(outlier_thres).all(axis=1)]
+            mean_cpd = cpds.mean()
+            cpd_df.loc[[metric_1], [metric_2]] = mean_cpd.loc[_metric_1]
+            cpd_df.loc[[metric_2], [metric_1]] = mean_cpd.loc[_metric_2]
+        cpd_df.fillna(0, inplace=True)
+        dfs.append(cpd_df)
+    # average CPDs across subjects
+    subject_av_cpds = np.mean(np.stack([x.values for x in dfs]), axis=0)
+    output_df = pd.DataFrame(index=DISTANCE_METRICS, columns=DISTANCE_METRICS, data=subject_av_cpds)
+
+    # plot
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(2, 2), sharey=True)
+    output_df = output_df.mul(100)  # convert to %
+    for d in DISTANCE_METRICS:
+        output_df.loc[[d], [d]] = np.nan
+    cmap = sns.color_palette("Reds", as_cmap=True)
+    cmap.set_bad(color="lightgrey")
+    sns.heatmap(
+        output_df,
+        vmin=0,
+        cmap=cmap,
+        ax=ax,
+        square=True,
+        fmt=".1f",
+        cbar_kws={"shrink": 0.75, "label": f"CPD (%)"},
+    )
+    ax.tick_params(axis="x", which="both", top=True, bottom=False, labeltop=True, labelbottom=False, labelrotation=45)
 
 
 # %% CPD function
