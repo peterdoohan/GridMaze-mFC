@@ -6,6 +6,7 @@ Library for comparing distance to goal tuning metrics
 import json
 import random
 from re import M
+from distributed import progress
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -263,7 +264,9 @@ def get_weight_metrics_summary_df(verbose=False):
     return results_df
 
 
-def populate_weight_metric_summary_dfs(subject_ID="m2", verbose=True, max_jobs=10):
+def populate_weight_metric_summary_dfs(
+    subject_ID="m2", progress_mon_decr=False, verbose=True, max_jobs=10, subfolder=None
+):
     """ """
     subject_ID = [subject_ID] if subject_ID != "all" else subject_ID
     if verbose:
@@ -279,15 +282,22 @@ def populate_weight_metric_summary_dfs(subject_ID="m2", verbose=True, max_jobs=1
         if verbose:
             print(session.name)
         try:
-            run_pairwise_weight_metric_comparisons(session, max_jobs=max_jobs, verbose=verbose, save=True)
+            run_pairwise_weight_metric_comparisons(
+                session, progress_mon_decr=progress_mon_decr, max_jobs=max_jobs, verbose=verbose, save=True
+            )
         except Exception as e:
             if verbose:
                 print(f"Error processing {session.name}: \n {e}")
 
 
-def run_pairwise_weight_metric_comparisons(session, max_jobs=10, verbose=True, save=False):
+def run_pairwise_weight_metric_comparisons(
+    session, progress_mon_decr=False, max_jobs=10, verbose=True, save=False, subfolder=None
+):
     """ """
-    save_path = RESULTS_DIR / "weight_summaries" / f"{session.name}.csv"
+    if subfolder is None:
+        save_path = RESULTS_DIR / "weight_summaries" / f"{session.name}.csv"
+    else:
+        save_path = RESULTS_DIR / "weight_summaries" / subfolder / f"{session.name}.csv"
     if not save and save_path.exists():
         if verbose:
             print(f"Loading weight metric summaries df from {save_path}")
@@ -305,7 +315,13 @@ def run_pairwise_weight_metric_comparisons(session, max_jobs=10, verbose=True, s
         if verbose:
             print(_name)
         try:
-            weight_metrics_df = get_distance_metric_weight_summaries(session, metric_1, metric_2, max_jobs=max_jobs)
+            weight_metrics_df = get_distance_metric_weight_summaries(
+                session,
+                metric_1,
+                metric_2,
+                max_jobs=max_jobs,
+                progress_mon_decr=progress_mon_decr,
+            )
             weight_metrics_df.columns = pd.MultiIndex.from_product([[_name], weight_metrics_df.columns])
             dfs.append(weight_metrics_df)
         except Exception as e:
@@ -347,15 +363,21 @@ def get_distance_metric_weight_summaries(
     max_steps_to_goal=30,
     n_folds=5,
     mon_dec_tol=0.12,
+    progress_mon_decr=False,
     max_jobs=10,
 ):
     """
     Runs a Poission GLM predicting spikes from basis activations of two distance metrics.
     """
     _metric_1, _metric_2 = ".".join(metric_1), ".".join(metric_2)
-    if "progress_to_goal" in [metric_1[0], metric_2[0]]:
-        mon_dec_trial = True
-        max_steps_to_goal = None
+    if progress_mon_decr:
+        # if progress_mon_dec is True, only compare monotonically decreasing trials
+        # when progress to goal in under comparison
+        if "progress_to_goal" in [metric_1[0], metric_2[0]]:
+            mon_dec_trial = True
+            max_steps_to_goal = None
+        else:
+            mon_dec_trial = False
     else:
         mon_dec_trial = False
     # get input data
@@ -663,7 +685,7 @@ def plot_pairwise_CPD_heatmap(
 # %% CPD function
 
 
-def get_distance_metric_CPD_summary_df():
+def get_distance_metric_CPD_summary_df(subfolder=None):
     cpd_results_dir = RESULTS_DIR / "cpd_summaries"
     results_paths = list(cpd_results_dir.glob("*.csv"))
     dfs = []
@@ -675,7 +697,7 @@ def get_distance_metric_CPD_summary_df():
     return pd.concat(dfs, axis=0)
 
 
-def populate_CPD_summary_dfs(subject_ID="m2", verbose=True, max_jobs=10):
+def populate_CPD_summary_dfs(subject_ID="m2", progress_mon_decr=False, subfolder=None, verbose=True, max_jobs=10):
     """ """
     # option to do for single subjects
     if subject_ID != "all":
@@ -693,7 +715,14 @@ def populate_CPD_summary_dfs(subject_ID="m2", verbose=True, max_jobs=10):
         if verbose:
             print(session.name)
         try:
-            run_pairwise_CPD_comparisons(session, max_jobs=max_jobs, verbose=verbose, save=True)
+            run_pairwise_CPD_comparisons(
+                session,
+                progress_mon_decr=progress_mon_decr,
+                max_jobs=max_jobs,
+                verbose=verbose,
+                save=True,
+                subfolder=subfolder,
+            )
         except Exception as e:
             if verbose:
                 print(f"Error processing {session.name}: \n {e}")
@@ -701,12 +730,17 @@ def populate_CPD_summary_dfs(subject_ID="m2", verbose=True, max_jobs=10):
         print("Finished populating CPD summary dfs.")
 
 
-def run_pairwise_CPD_comparisons(session, max_jobs=10, verbose=True, save=False):
+def run_pairwise_CPD_comparisons(
+    session, progress_mon_decr=False, max_jobs=10, verbose=True, save=False, subfolder=None
+):
     """
     Note NaNs in comparison df are in cases where progress vs distance instances have fewer
     included clusters than
     """
-    save_path = RESULTS_DIR / "cpd_summaries" / f"{session.name}.csv"
+    if subfolder is None:
+        save_path = RESULTS_DIR / "cpd_summaries" / f"{session.name}.csv"
+    else:
+        save_path = RESULTS_DIR / "cpd_summaries" / subfolder / f"{session.name}.csv"
     if not save and save_path.exists():
         if verbose:
             print(f"Loading CPD summaries df from {save_path}")
@@ -716,7 +750,7 @@ def run_pairwise_CPD_comparisons(session, max_jobs=10, verbose=True, save=False)
             [c if "Unnamed" not in c[1] else (c[0], "") for c in comparisons_df.columns]
         )
         return comparisons_df
-    metric_pairs = list(combinations(DISTANCE_METRICS, 2))
+    metric_pairs = list(combinations(DISTANCE_METRICS, 2))[-2:]
     cpd_dfs = []
     for metric_1, metric_2 in metric_pairs:
         _metric_1, _metric_2 = ".".join(metric_1), ".".join(metric_2)
@@ -729,6 +763,7 @@ def run_pairwise_CPD_comparisons(session, max_jobs=10, verbose=True, save=False)
                 metric_1=metric_1,
                 metric_2=metric_2,
                 max_jobs=max_jobs,
+                progress_mon_decr=progress_mon_decr,
                 verbose=verbose,
             )
             cpd_df.columns = pd.MultiIndex.from_product([[_name], cpd_df.columns])
@@ -760,14 +795,20 @@ def get_distance_metric_CPDs(
     max_steps_to_goal=30,
     n_folds=5,
     mon_dec_tol=0.12,
+    progress_mon_decr=False,
     max_jobs=10,
     verbose=False,
 ):
     """ """
     _metric_1, _metric_2 = ".".join(metric_1), ".".join(metric_2)
-    if "progress_to_goal" in [metric_1[0], metric_2[0]]:
-        mon_dec_trial = True
-        max_steps_to_goal = None
+    if progress_mon_decr:
+        # if progress_mon_dec is True, only compare monotonically decreasing trials
+        # when progress to goal in under comparison
+        if "progress_to_goal" in [metric_1[0], metric_2[0]]:
+            mon_dec_trial = True
+            max_steps_to_goal = None
+        else:
+            mon_dec_trial = False
     else:
         mon_dec_trial = False
     # get input data
@@ -1000,8 +1041,6 @@ def get_input_data(
     """
     mon_dec refers to monotonically decreasing trials
     """
-    if "progress_to_goal" in [metric_1[0], metric_2[0]]:
-        assert mon_dec_trials, "Must set mon_dec_trials=True to use progress_to_goal metric"
     # load data
     navigation_df = session.navigation_df
     spike_counts_df = session.navigation_spike_counts_df.reset_index(drop=True)
