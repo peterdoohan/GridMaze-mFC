@@ -90,6 +90,13 @@ def _get_distance_bins(binning_method, n_distance_bins, distance_metrics, max_di
     return bins
 
 
+def _get_progress_bins(n_distance_bins):
+    """ """
+    edges = np.linspace(0, 1, n_distance_bins + 1)
+    bins = pd.IntervalIndex.from_breaks(edges, closed="left")
+    return bins
+
+
 def place_direction2onehot(pd_by_frame, simple_maze):
     all_place_direction_pairs = mr.get_maze_place_direction_pairs(simple_maze)
     all_place_direction_pairs = np.array(
