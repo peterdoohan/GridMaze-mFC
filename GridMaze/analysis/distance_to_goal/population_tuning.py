@@ -32,7 +32,9 @@ CURVE_FITS = ["gamma_4p", "gaussian_4p", "polynomial_4p"]
 
 def plot_distance_tunned_heatmap(
     population_tuning_df,
+    metric="distance_to_goal",
     sign="pos",
+    order_by="fit",
     smooth_SD=2,
     fit="gamma_4p",
     normalisation_method="zscore",
@@ -50,14 +52,20 @@ def plot_distance_tunned_heatmap(
     else:
         raise ValueError(f"Unknown sign: {sign}")
     df = df[sign_mask]
-    x = df.distance_to_goal.columns.values.astype(float)
+    x = df[metric].columns.values.astype(float)
     if sign == "pos":
-        df[("idx_max", "")] = df.apply(lambda row: get_idx_order(row, x, fit=fit, op="max"), axis=1)
+        if order_by == "fit":
+            df[("idx_max", "")] = df.apply(lambda row: get_idx_order(row, x, fit=fit, op="max"), axis=1)
+        elif order_by == "max":
+            df[("idx_max", "")] = df[metric].idxmax(axis=1)
         df = df.sort_values(by=[("idx_max", "")], ascending=True)
     elif sign == "neg":
-        df[("idx_min", "")] = df.apply(lambda row: get_idx_order(row, x, fit=fit, op="min"), axis=1)
+        if order_by == "fit":
+            df[("idx_min", "")] = df.apply(lambda row: get_idx_order(row, x, fit=fit, op="min"), axis=1)
+        elif order_by == "min":
+            df[("idx_min", "")] = df[metric].idxmin(axis=1)
         df = df.sort_values(by=[("idx_min", "")], ascending=True)
-    D = df.distance_to_goal.values
+    D = df[metric].values
     if smooth_SD:
         D = gaussian_filter1d(D, smooth_SD, axis=1)
     if normalisation_method == "max":
@@ -81,9 +89,11 @@ def plot_distance_tunned_heatmap(
     ax.set_yticks([y_tick])
     ax.set_yticklabels([f"{y_tick}"], rotation=90)
     ax.set_ylabel("Neurons", labelpad=-10)
-    ax.set_xlabel("Shortest-path \n Distance to Goal (m)")
-    ax.set_xticks(np.arange(0, len(x), 5))
-    ax.set_xticklabels(np.arange(0, max(x), 0.25), rotation=0)
+    unit = "m" if metric == "distance_to_goal" else "%"
+    ax.set_xlabel(f"{metric} \n (path-length) ({unit})")
+    # _xticks = np.arange(0, max(x), 0.25)
+    # ax.set_xticks(np.arange(0, len(x), len(_xticks) * 2))
+    # ax.set_xticklabels(_xticks, rotation=0)
 
 
 def get_idx_order(row, x, fit="gamma_4p", op="max"):
@@ -98,7 +108,9 @@ def get_idx_order(row, x, fit="gamma_4p", op="max"):
         NotImplementedError
 
 
-def get_population_tuning_df(late_sessions=True, min_split_half_corr=0.5, verbose=False):
+def get_population_tuning_df(
+    late_sessions=True, metrics=("distance_to_goal", "geodesic"), min_split_half_corr=0.5, verbose=False
+):
     """ """
     days_on_maze = "late" if late_sessions else "all"
     if verbose:
@@ -113,7 +125,7 @@ def get_population_tuning_df(late_sessions=True, min_split_half_corr=0.5, verbos
     for session in sessions:
         if verbose:
             print(session.name)
-        distance_tuning_df = _get_session_distance_tuning(session)
+        distance_tuning_df = _get_session_distance_tuning(session, metrics=metrics)
         distance_tuning_df = distance_tuning_df.reset_index()
         distance_tuning_df = distance_tuning_df.rename(columns={"index": "cluster_unique_ID"}, level=0)
         distance_metrics_df = session.cluster_distance_tuning_metrics
@@ -142,7 +154,9 @@ def _get_session_distance_tuning(
     metrics=("distance_to_goal", "geodesic"),
     bin_spacing=0.05,
     max_steps_to_goal=30,
+    progress_bins=30,  # if metrics[0] == "progress_to_goal"
     moving_only=False,
+    return_as="tuning_curves",
 ):
     """ """
     navigation_rates_df = session.get_navigation_activity_df(type="rates", cluster_kwargs={"single_units": True})
@@ -162,21 +176,26 @@ def _get_session_distance_tuning(
             distance_metrics=metrics,
             max_distance=max_distance,
         )
+    elif metrics[0] == "progress_to_goal":
+        bins = convert._get_progress_bins(progress_bins)
     else:
-        NotImplementedError()
+        raise NotImplementedError
     # bin distances
-    navigation_rates_df.loc[:, ("distance_bin", "")] = pd.cut(
+    navigation_rates_df.loc[:, ("distance_bin", "")] = pd.cut(  # called distance but could be progress
         navigation_rates_df[metrics], bins=bins, include_lowest=True
     ).to_numpy()
     # average over frames in each bin over trials
     trial_av_rates = navigation_rates_df.groupby(["trial", "distance_bin"], observed=True).firing_rate.mean()
-    distance_tuning_df = (
-        trial_av_rates.groupby(["distance_bin"]).mean().firing_rate.T
-    )  # cluster x distance_bins (average over trials)
-    distance_tuning_df.columns = pd.MultiIndex.from_product(
-        [["distance_to_goal"], [b.mid for b in distance_tuning_df.columns]]
-    )
-    return distance_tuning_df
+    if return_as == "trial_av_rates":
+        return trial_av_rates
+    else:  # return as tuning curves
+        distance_tuning_df = (
+            trial_av_rates.groupby(["distance_bin"]).mean().firing_rate.T
+        )  # cluster x distance_bins (average over trials)
+        distance_tuning_df.columns = pd.MultiIndex.from_product(
+            [[metrics[0]], [b.mid for b in distance_tuning_df.columns]]
+        )
+        return distance_tuning_df
 
 
 # %% Curve fit summary and plotting functions
