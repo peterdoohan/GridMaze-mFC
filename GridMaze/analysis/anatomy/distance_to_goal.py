@@ -72,6 +72,46 @@ def plot_anatomical_distance_tuning(anat_df, f=None, axes=None, jitter=2, colorm
     cbar.ax.tick_params(left=False, labelleft=False, right=False, labelright=False)
 
 
+def plot_axis_distance_tuning(
+    anat_df,
+    axes=None,
+    clip_distance_tuning=(0, 2),
+):
+    """ """
+    # set up fig
+    if axes is None:
+        f, axes = plt.subplots(1, 3, figsize=(3, 2), sharex=True)
+    for ax in axes:
+        ax.spines[["top", "right"]].set_visible(False)
+    # process data
+    df = anat_df.copy()
+    df = df[~df.distance_p50.isna()]
+    df = df[df.distance_p50.between(*clip_distance_tuning)]
+    for a, ax, label in zip(["x", "y", "z"], axes, ["P -> A", "V -> D", "L -> M"]):
+        axis_df = df[[("distance_p50", ""), ("voxel", a)]].droplevel(1, axis=1)
+        grouped_axis = axis_df.groupby(["voxel"])
+        mean = grouped_axis.mean()
+        sem = grouped_axis.std()
+        voxel_a = mean.index.values.astype(float)
+        _mean = mean.values.reshape(-1)
+        _sem = sem.values.reshape(-1)
+        ax.plot(_mean, voxel_a, linewidth=3, label=a, color="k")
+        ax.fill_betweenx(
+            voxel_a,
+            _mean - _sem,
+            _mean + _sem,
+            alpha=0.1,
+            color="k",
+        )
+        if a == "y":
+            ax.invert_yaxis()
+        ax.set_xlim(0, 2)
+        ax.set_ylabel(label)
+        ax.set_yticks([])
+        ax.set_yticklabels([])
+    return
+
+
 def get_population_anatomy_df(subject_IDs="all", verbose=False):
     """"""
     subject_IDs = SUBJECT_IDS if subject_IDs == "all" else subject_IDs
@@ -121,5 +161,6 @@ def get_session_anatomical_distance_tuning(session, min_split_half_corr=0.5):
         axis=1,
     )
     _output_df.index = output_df.index
+    _output_df[("subject_ID", "")] = session.subject_ID
     _output_df.columns = pd.MultiIndex.from_tuples(_output_df.columns)
     return _output_df

@@ -185,6 +185,7 @@ class Cluster:
                 "exclude_time_at_goal": False,
                 "goal_stratified": False,
                 "smooth_SD": 1,
+                "normalisation": None,
                 "color": "darkcyan",
             }
         elif feature == "distance_to_goal_theta":
@@ -494,6 +495,7 @@ class Cluster:
                 goal_stratified=feature_kwargs["goal_stratified"],
                 smooth_SD=feature_kwargs["smooth_SD"],
                 color=feature_kwargs["color"],
+                normalisation=feature_kwargs["normalisation"],
                 ax=ax,
             )
         elif feature == "distance_to_goal_theta":

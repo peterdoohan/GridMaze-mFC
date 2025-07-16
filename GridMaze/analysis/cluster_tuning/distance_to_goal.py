@@ -4,6 +4,7 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from torch import normal
 from GridMaze.analysis.distance_to_goal import distributions as dd
 from GridMaze.analysis.core import convert
 from GridMaze.maze import plotting as mp
@@ -72,7 +73,9 @@ def get_distance_to_goal_tuning_df(
     return tuning_df
 
 
-def plot_distance_tuning(distance_tuning_df, metrics, goal_stratified=False, smooth_SD=1, ax=None, color="darkcyan"):
+def plot_distance_tuning(
+    distance_tuning_df, metrics, goal_stratified=False, normalisation=None, smooth_SD=1, ax=None, color="darkcyan"
+):
     """"""
     # format axis
     if ax is None:
@@ -95,7 +98,7 @@ def plot_distance_tuning(distance_tuning_df, metrics, goal_stratified=False, smo
         if smooth_SD:
             mean = gaussian_filter1d(mean, smooth_SD)
             sem = gaussian_filter1d(sem, smooth_SD)
-        _plot_distance_tuning(mean, sem, distances, ax, color)
+        _plot_distance_tuning(mean, sem, distances, ax, color, normalisation=normalisation)
     else:
         goal2color = mp.get_goal2standard_color()
         for goal in distance_tuning_df.goal.unique():
@@ -111,10 +114,18 @@ def plot_distance_tuning(distance_tuning_df, metrics, goal_stratified=False, smo
     return
 
 
-def _plot_distance_tuning(mean, sem, distances, ax, color):
-    ax.plot(distances, mean, color=color)
-    ax.fill_between(distances, mean - sem, mean + sem, color=color, alpha=0.2)
-    return
+def _plot_distance_tuning(mean, sem, distances, ax, color, normalisation=None):
+    if normalisation == None:
+        ax.plot(distances, mean, color=color)
+        ax.fill_between(distances, mean - sem, mean + sem, color=color, alpha=0.2)
+    elif normalisation == "max":
+        lower = (mean - sem) / mean.max()
+        upper = (mean + sem) / mean.max()
+        _mean = mean / mean.max()
+        ax.plot(distances, _mean, color=color)
+        ax.fill_between(distances, lower, upper, color=color, alpha=0.2)
+    else:
+        raise ValueError(f"Unknown normalisation: {normalisation}")
 
 
 # %% theta mod distance tuning
