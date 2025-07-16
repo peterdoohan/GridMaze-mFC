@@ -184,7 +184,7 @@ class Cluster:
                 "moving_only": True,
                 "exclude_time_at_goal": False,
                 "goal_stratified": False,
-                "smooth_SD": 1,
+                "smooth_SD": 2,
                 "normalisation": None,
                 "color": "darkcyan",
             }
