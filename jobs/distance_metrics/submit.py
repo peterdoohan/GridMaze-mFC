@@ -18,17 +18,17 @@ ANALYSIS_TYPES = ["cpd", "weights"]
 # %% Functions
 
 
-def run_distance_metrics_analysis():
+def run_distance_metrics_analysis(subfolder="trials", progress_mon_decr=False):
     """ """
     for subject_ID in SUBJECT_IDS:
         for analysis_type in ANALYSIS_TYPES:
-            script_path = get_SLURM_script(subject_ID, analysis_type)
+            script_path = get_SLURM_script(subject_ID, analysis_type, subfolder, progress_mon_decr)
             print(f"Submitting job for {subject_ID} {analysis_type}")
             os.system(f"chmod +x {script_path}")
             os.system(f"sbatch {script_path}")
 
 
-def get_SLURM_script(subject_ID, analysis_type):
+def get_SLURM_script(subject_ID, analysis_type, subfolder, progress_mon_decr):
     job_name = f"{subject_ID}_{analysis_type}"
     script = f"""#!/bin/bash
 #SBATCH --job-name={job_name}
@@ -48,9 +48,9 @@ python <<EOF
 from GridMaze.analysis.distance_to_goal import distance_metrics as dm
 """
     if analysis_type == "cpd":
-        script += f"dm.populate_CPD_summary_dfs('{subject_ID}')\n"
+        script += f"dm.populate_CPD_summary_dfs('{subject_ID}', {progress_mon_decr}, '{subfolder}')\n"
     elif analysis_type == "weights":
-        script += f"dm.populate_weight_metric_summary_dfs('{subject_ID}')\n"
+        script += f"dm.populate_weight_metric_summary_dfs('{subject_ID}', {progress_mon_decr}, '{subfolder}')\n"
 
     script += "EOF\n"
 

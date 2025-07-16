@@ -283,7 +283,12 @@ def populate_weight_metric_summary_dfs(
             print(session.name)
         try:
             run_pairwise_weight_metric_comparisons(
-                session, progress_mon_decr=progress_mon_decr, max_jobs=max_jobs, verbose=verbose, save=True
+                session,
+                progress_mon_decr=progress_mon_decr,
+                max_jobs=max_jobs,
+                verbose=verbose,
+                save=True,
+                subfolder=subfolder,
             )
         except Exception as e:
             if verbose:
@@ -750,7 +755,7 @@ def run_pairwise_CPD_comparisons(
             [c if "Unnamed" not in c[1] else (c[0], "") for c in comparisons_df.columns]
         )
         return comparisons_df
-    metric_pairs = list(combinations(DISTANCE_METRICS, 2))[-2:]
+    metric_pairs = list(combinations(DISTANCE_METRICS, 2))
     cpd_dfs = []
     for metric_1, metric_2 in metric_pairs:
         _metric_1, _metric_2 = ".".join(metric_1), ".".join(metric_2)
