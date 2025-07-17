@@ -18,7 +18,7 @@ from GridMaze.analysis.cluster_tuning import distance_to_goal as dtg
 from GridMaze.analysis.distance_to_goal import distributions as dd
 from GridMaze.analysis.processing import get_distance_tuning_metrics_df as dtm
 from scipy.ndimage import gaussian_filter1d
-from scipy.stats import zscore
+from scipy.stats import zscore, ttest_rel
 
 # %% Global Variables
 from GridMaze.paths import EXPERIMENT_INFO_PATH
@@ -91,9 +91,9 @@ def plot_distance_tunned_heatmap(
     ax.set_ylabel("Neurons", labelpad=-10)
     unit = "m" if metric == "distance_to_goal" else "%"
     ax.set_xlabel(f"{metric} \n (path-length) ({unit})")
-    # _xticks = np.arange(0, max(x), 0.25)
-    # ax.set_xticks(np.arange(0, len(x), len(_xticks) * 2))
-    # ax.set_xticklabels(_xticks, rotation=0)
+    _xticks = np.arange(0, max(x), 0.25)
+    ax.set_xticks(np.arange(0, len(x), 5))
+    ax.set_xticklabels(_xticks, rotation=0)
 
 
 def get_idx_order(row, x, fit="gamma_4p", op="max"):
@@ -223,10 +223,8 @@ def plot_curve_fit_distributions(summary_df, curve_fits=CURVE_FITS, ax=None):
     ax.legend(loc="upper left")
 
 
-def plot_cross_subject_curve_fit_comparison(summary_df, curve_fits=CURVE_FITS, ax=None):
-    """
-    Make pretty later
-    """
+def plot_cross_subject_curve_fit_comparison(summary_df, curve_fits=CURVE_FITS, print_stats=True, ax=None):
+    """ """
     # process data
     df = summary_df.groupby("subject_ID")[curve_fits].mean().unstack().reset_index()
     df.columns = ["fit", "subject_ID", "r2"]
@@ -246,12 +244,35 @@ def plot_cross_subject_curve_fit_comparison(summary_df, curve_fits=CURVE_FITS, a
         errorbar=None,
         dodge=False,
         markers="o",
-        linestyles="-",
+        linestyles=None,
         legend=False,
         markersize=10,
-        linewidth=4,
+        linewidth=0,
+        alpha=0.5,
+        ax=ax,
+    )
+    sns.pointplot(
+        data=df,
+        x="fit",
+        y="r2",
+        errorbar="se",
+        linestyle="none",
+        marker="_",
+        markersize=20,
+        markeredgewidth=3,
+        err_kws={"linewidth": 3},
+        ax=ax,
+        color="k",
     )
     ax.tick_params(axis="x", which="both", top=False, bottom=True, labeltop=False, labelbottom=True, labelrotation=45)
+    if print_stats:
+        assert len(curve_fits) == 2, "Only implemented for two curve fits"
+        m1, m2 = curve_fits
+        t_stat, p_val = ttest_rel(
+            df[df["fit"] == m1]["r2"],
+            df[df["fit"] == m2]["r2"],
+        )
+        print(f"{m1} vs {m2}: \n t-stat: {t_stat:.3f}, p-value: {p_val:.3e}")
     return
 
 

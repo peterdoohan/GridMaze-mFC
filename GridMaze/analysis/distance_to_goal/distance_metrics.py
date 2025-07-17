@@ -4,9 +4,6 @@ Library for comparing distance to goal tuning metrics
 
 # %% Imports
 import json
-import random
-from re import M
-from distributed import progress
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -17,6 +14,7 @@ from joblib import Parallel, delayed
 from sklearn.linear_model import Ridge, PoissonRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_poisson_deviance
+from scipy.stats import ttest_rel
 
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import downsample as ds
@@ -581,6 +579,7 @@ def plot_cross_subject_CPD_comparison(
     late_sessions=True,
     outlier_threshold=-0.5,
     ignore_labels=False,
+    print_stats=True,
     ax=None,
 ):
     """ """
@@ -636,6 +635,13 @@ def plot_cross_subject_CPD_comparison(
         ax=ax,
         color="k",
     )
+    if print_stats:
+        m1, m2 = mean_cpd["metric"].unique()
+        t_stat, p_val = ttest_rel(
+            mean_cpd[mean_cpd["metric"] == m1]["CPD"],
+            mean_cpd[mean_cpd["metric"] == m2]["CPD"],
+        )
+        print(f"{comparison}: \n t-stat: {t_stat:.3f}, p-value: {p_val:.3e}")
 
 
 def plot_pairwise_CPD_heatmap(
@@ -691,7 +697,10 @@ def plot_pairwise_CPD_heatmap(
 
 
 def get_distance_metric_CPD_summary_df(subfolder=None):
-    cpd_results_dir = RESULTS_DIR / "cpd_summaries"
+    if subfolder is None:
+        cpd_results_dir = RESULTS_DIR / "cpd_summaries"
+    else:
+        cpd_results_dir = RESULTS_DIR / "cpd_summaries" / subfolder
     results_paths = list(cpd_results_dir.glob("*.csv"))
     dfs = []
     for p in results_paths:
