@@ -222,44 +222,22 @@ def _is_late_session(row):
 # %% populate weights pairwise comparisons and big summary df
 
 
-def get_weight_metrics_summary_df(verbose=False):
+def get_L1_ratio_summary_df(subfolder="all_trials"):
     """ """
-    save_path = RESULTS_DIR / "weight_metric_summary_df2.csv"
-    if save_path.exists():
-        if verbose:
-            print(f"Loading weight metric summaries df from {save_path}")
-        results_df = pd.read_csv(save_path, index_col=0, header=[0, 1])
-        # fix cols when loading from disk
-        results_df.columns = pd.MultiIndex.from_tuples(
-            [c if "Unnamed" not in c[1] else (c[0], "") for c in results_df.columns]
-        )
+    if subfolder is None:
+        results_dir = RESULTS_DIR / "weight_summaries"
     else:
-        if verbose:
-            print(f"loading sessions ...")
-        sessions = gs.get_maze_sessions(
-            subject_IDs="all",
-            maze_names="all",
-            days_on_maze="all",
-            with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
-            must_have_data=True,
-        )
-        dfs = []
-        for session in sessions:
-            if verbose:
-                print(session.name)
-            try:
-                comparisons_df = run_pairwise_weight_metric_comparisons(session, verbose=verbose)
-                dfs.append(comparisons_df)
-            except Exception as e:
-                if verbose:
-                    print(f"Error processing {session.name}: \n {e}")
-        results_df = pd.concat(dfs, axis=0)
-        # save
-        save_path.parent.mkdir(parents=True, exist_ok=True)
-        results_df.to_csv(save_path, index=True)
-        if verbose:
-            print(f"Saved weight metric summaries df to {save_path}")
-    return results_df
+        results_dir = RESULTS_DIR / "weight_summaries" / subfolder
+    if not results_dir.exists():
+        raise FileNotFoundError(f"Results directory {results_dir} does not exist.")
+    results_paths = list(results_dir.glob("*.csv"))
+    dfs = []
+    for path in results_paths:
+        df = pd.read_csv(path, index_col=0, header=[0, 1])
+        # fix cols when loading from disk
+        df.columns = pd.MultiIndex.from_tuples([c if "Unnamed" not in c[1] else (c[0], "") for c in df.columns])
+        dfs.append(df)
+    return pd.concat(dfs, axis=0)
 
 
 def populate_weight_metric_summary_dfs(
@@ -533,7 +511,7 @@ def plot_pairwise_CPD_cross_subject_comparisons(
 ):
     # set up figure
     if axes is None:
-        f, axes = plt.subplots(len(distance_metrics), len(distance_metrics), figsize=(9, 15))
+        f, axes = plt.subplots(len(distance_metrics), len(distance_metrics), figsize=(10, 15))
     # plot cross subject comparison for each pair of metrics
     metric2ind = {".".join(d): i for i, d in enumerate(distance_metrics)}
     comparisons = [c for c in summary_df.columns.get_level_values(0).unique() if "_vs_" in c]
@@ -641,7 +619,7 @@ def plot_cross_subject_CPD_comparison(
             mean_cpd[mean_cpd["metric"] == m1]["CPD"],
             mean_cpd[mean_cpd["metric"] == m2]["CPD"],
         )
-        print(f"{comparison}: \n t-stat: {t_stat:.3f}, p-value: {p_val:.3e}")
+        print(f"{comparison}: \n t-stat: {t_stat:.3f}, p-value: {p_val:.3f}")
 
 
 def plot_pairwise_CPD_heatmap(
