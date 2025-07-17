@@ -56,8 +56,8 @@ DISTANCE_METRICS = [
 
 def plot_weights_comparison_timeseries(
     summary_df,
-    comparison="geodesic_vs_euclidean",
-    plot_metric="geodesic",
+    comparison="distance_to_goal.geodesic_vs_distance_to_goal.euclidean",
+    plot_metric="distance_to_goal.geodesic",
     norm_metric="L1_ratio",
     group_days=3,
     axes=None,
@@ -109,9 +109,57 @@ def plot_weights_comparison_timeseries(
     axes[-1].legend(fontsize=8, loc="upper left")
 
 
-def plot_cross_subject_norm_comparison(
+def plot_all_cross_subject_weight_comparisons(
     summary_df,
-    comparison="geodesic_vs_euclidean",
+    distance_metrics=DISTANCE_METRICS,
+    norm_metric="L1_ratio",
+    maze_names=["maze_1", "maze_2"],
+    late_sessions=True,
+    axes=None,
+):
+    """ """
+    # set up figure
+    if axes is None:
+        f, axes = plt.subplots(len(distance_metrics), len(distance_metrics), figsize=(10, 15))
+    # plot cross subject comparison for each pair of metrics
+    metric2ind = {".".join(d): i for i, d in enumerate(distance_metrics)}
+    comparisons = [c for c in summary_df.columns.get_level_values(0).unique() if "_vs_" in c]
+    for c in comparisons:
+        metric_1, metric_2 = c.split("_vs_")
+        ax = axes[
+            metric2ind[metric_2],
+            metric2ind[metric_1],
+        ]
+        plot_cross_subject_weight_comparison(
+            summary_df,
+            comparison=c,
+            norm_metric=norm_metric,
+            maze_names=maze_names,
+            late_sessions=late_sessions,
+            ax=ax,
+        )
+        ax.set_xticklabels([])
+        ax.set_xlabel("")
+        ax.set_ylabel("")
+    # further formatting
+    for ax, _dm in zip(axes[:, 0], distance_metrics):
+        ax.set_ylabel(f"{_dm[0]}\n{_dm[1]}")
+    for ax, _dm in zip(axes[-1, :], distance_metrics):
+        ax.set_xlabel(f"{_dm[0]}\n{_dm[1]}")
+    for i in range(len(distance_metrics)):
+        for j in range(len(distance_metrics)):
+            ax = axes[i, j]
+            if i > j:
+                ax.spines[["top", "right"]].set_visible(False)
+                ax.set_xticks([0, 1])
+                ax.set_xticklabels(["x", "y"])
+            else:
+                ax.set_visible(False)
+
+
+def plot_cross_subject_weight_comparison(
+    summary_df,
+    comparison="distance_to_goal.geodesic_vs_distance_to_goal.euclidean",
     norm_metric="L1_ratio",
     late_sessions=True,
     maze_names=["maze_1", "maze_2"],
@@ -131,9 +179,8 @@ def plot_cross_subject_norm_comparison(
     mean_norms_df = comp_df.groupby(["subject_ID", "metric"])[norm_metric].mean().reset_index()
     # plot
     if ax is None:
-        f, ax = plt.subplots(1, 1, figsize=(2, 2))
+        f, ax = plt.subplots(1, 1, figsize=(1.5, 3))
     ax.spines[["top", "right"]].set_visible(False)
-    ax.set_ylim(0.45, 0.55)
     ax.set_ylabel(norm_metric)
     ax.axhline(0.5, color="k", linestyle="--", alpha=0.5)
     sns.pointplot(
@@ -145,19 +192,34 @@ def plot_cross_subject_norm_comparison(
         errorbar=None,
         dodge=False,
         markers="o",
-        linestyles="-",
+        linestyles=None,
         legend=False,
-        markersize=8,
-        linewidth=4,
+        markersize=10,
+        linewidth=0,
+        alpha=0.5,
+        ax=ax,
+    )
+    sns.pointplot(
+        data=mean_norms_df,
+        x="metric",
+        y=norm_metric,
+        errorbar="se",
+        linestyle="none",
+        marker="_",
+        markersize=20,
+        markeredgewidth=3,
+        err_kws={"linewidth": 3},
+        ax=ax,
+        color="k",
     )
     # do stats
     if print_stats:
         wide = mean_norms_df.pivot(index="subject_ID", columns="metric", values=norm_metric)
-        t_stat, t_p = ttest_rel(wide["euclidean"], wide["geodesic"])
-        print(f"{comparison}: {norm_metric} t-stat: {t_stat:.3f}, p-value: {t_p:.3e}")
+        t_stat, t_p = ttest_rel(wide[metric_1], wide[metric_2])
+        print(f"{comparison}: {norm_metric} t-stat: {t_stat:.3f}, p-value: {t_p:.3f}")
 
 
-def plot_all_pairwise_metric_norm_diffs(
+def plot_weight_metric_summary_heatmap(
     summary_df, norm_metric="L1_ratio", late_sessions=True, maze_names=["maze_1", "maze_2"], ax=None
 ):
     """
@@ -168,18 +230,17 @@ def plot_all_pairwise_metric_norm_diffs(
     Averge these matrics across subjects and plot for L1 and L2 separately.
     """
     # process data
+    _distance_metrics = [".".join(d) for d in DISTANCE_METRICS]
     df = summary_df[summary_df.maze_name.isin(maze_names)]
     if late_sessions:
         df = df[df.apply(_is_late_session, axis=1)].copy()
     dfs = []
     for subject in SUBJECT_IDS:
         subject_df = df[df.subject_ID == subject].copy()
-        # filter for "late" sessions
-        subject_df = subject_df[subject_df.apply(_is_late_session, axis=1)]
         # drop info columns
         subject_df.drop(columns=[("subject_ID", ""), ("maze_name", ""), ("day_on_maze", "")], inplace=True)
         comparisons = subject_df.columns.get_level_values(0).unique()
-        norm_diff_df = pd.DataFrame(index=DISTANCE_METRICS, columns=DISTANCE_METRICS)
+        norm_diff_df = pd.DataFrame(index=_distance_metrics, columns=_distance_metrics)
         for c in comparisons:
             metric_1, metric_2 = c.split("_vs_")
             comp_df = subject_df[c]
@@ -191,16 +252,16 @@ def plot_all_pairwise_metric_norm_diffs(
     arr = np.stack([df.values.astype(float) for df in dfs], axis=0)
     masked = np.ma.masked_invalid(arr)  # mask all NaNs
     mean_masked = masked.mean(axis=0)
-    df = pd.DataFrame(index=DISTANCE_METRICS, columns=DISTANCE_METRICS, data=mean_masked.filled(np.nan))
+    df = pd.DataFrame(index=_distance_metrics, columns=_distance_metrics, data=mean_masked.filled(np.nan))
     if ax is None:
         f, ax = plt.subplots(1, 1, figsize=(2, 2), sharey=True)
     df = df.mul(100)  # convert to % weight difference
-    for d in DISTANCE_METRICS:
+    for d in _distance_metrics:
         df.loc[d, d] = 0
     sns.heatmap(
         df,
-        vmin=-4,
-        vmax=4,
+        vmin=-10,
+        vmax=10,
         cmap="coolwarm",
         ax=ax,
         square=True,
@@ -466,10 +527,16 @@ def _process_cluster_betas(model, X, y, alpha, cluster, n_bases, _metric_1, _met
 # %% CPD plotting functions
 
 
-def plot_CPD_timeseries(summary_df, axes=None, comparison="geodesic_vs_euclidean", group_days=3):
+def plot_CPD_timeseries(
+    summary_df,
+    axes=None,
+    comparison="distance_to_goal.geodesic_vs_distance_to_goal.euclidean",
+    outlier_threshold=-0.5,
+    group_days=3,
+):
     """ """
     # remove CPD outliers
-    outlier_mask = summary_df[comparison].lt(-0.5).any(axis=1)
+    outlier_mask = summary_df[comparison].lt(outlier_threshold).any(axis=1)
     df = summary_df[~outlier_mask]
     if group_days:
         # update maze day label to group days together
