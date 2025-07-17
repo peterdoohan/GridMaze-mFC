@@ -39,6 +39,8 @@ def plot_population_theta_mod(population_theta_df, ax=None):
     """ """
     # average theta mod across subjects
     sub_mean_df = population_theta_df.groupby(level=0).mean()
+    # normalise and conver to % normalised firing rate
+    sub_mean_df = sub_mean_df.div(sub_mean_df.mean(axis=1), axis=0).mul(100)
     # plot mean and sem across subjects
     mean = sub_mean_df.mean()
     sem = sub_mean_df.sem()
@@ -46,8 +48,7 @@ def plot_population_theta_mod(population_theta_df, ax=None):
     # plotting
     if ax is None:
         f, ax = plt.subplots(1, 1, figsize=(3, 3))
-    _even_split = 1 / len(phases)
-    ax.axhline(_even_split, color="k", linestyle="--", alpha=0.5)
+    ax.axhline(100, color="k", linestyle="--", alpha=0.5)
     ax.spines[["top", "right"]].set_visible(False)
     ax.errorbar(
         phases,
@@ -60,9 +61,9 @@ def plot_population_theta_mod(population_theta_df, ax=None):
         capsize=None,
         elinewidth=2,
     )
+    ax.set_ylim(95, 105)
     ax.set_xlabel("theta phase")
-    ax.set_ylabel("Normalised firing rate")
-    ax.set_ylim(_even_split * 0.95, _even_split * 1.05)
+    ax.set_ylabel("Norm. firing rate (%)")
     ax.set_xticks(np.arange(-np.pi, np.pi + 0.1, np.pi / 2))
     ax.set_xticklabels(["-π", "-π/2", "0", "π/2", "π"])
 
@@ -179,7 +180,7 @@ def get_session_theta_mod(session, navigation_only=True, moving_only=True, max_s
 # %% get average theta aligend lfp
 
 
-def plot_theta_aligned_lfp(theta_aligned_df, ax=None):
+def plot_theta_aligned_lfp(theta_aligned_df, ax=None, color="crimson"):
     """ """
     # average signal across sessions for each subject
     subject_means = theta_aligned_df.T.groupby(level=0).mean()
@@ -195,14 +196,14 @@ def plot_theta_aligned_lfp(theta_aligned_df, ax=None):
     ax.plot(
         phases,
         mean.values,
-        color="k",
+        color=color,
         linewidth=2,
     )
     ax.fill_between(
         phases,
         mean.values - sem.values,
         mean.values + sem.values,
-        color="k",
+        color=color,
         alpha=0.3,
     )
     ax.set_xlabel("theta phase")

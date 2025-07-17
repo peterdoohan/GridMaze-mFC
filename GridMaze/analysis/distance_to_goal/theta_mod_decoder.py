@@ -102,6 +102,7 @@ def plot_decoding_theta_bias(
     maze_names=["maze_1", "maze_2", "rooms_maze"],
     distance_range=None,
     speed_range=None,
+    color="indigo",
     print_stats=True,
     ax=None,
 ):
@@ -132,7 +133,7 @@ def plot_decoding_theta_bias(
         mean.values,
         yerr=sem.values,
         fmt="o-",
-        color="midnightblue",
+        color=color,
         markersize=6,
         linewidth=2,
         capsize=None,
