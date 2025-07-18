@@ -95,7 +95,7 @@ def plot_axis_distance_tuning(
         voxel_a = mean.index.values.astype(float)
         _mean = mean.values.reshape(-1)
         _sem = sem.values.reshape(-1)
-        ax.plot(_mean, voxel_a, linewidth=3, label=a, color="k")
+        ax.plot(_mean, voxel_a, linewidth=1, label=a, color="k")
         ax.fill_betweenx(
             voxel_a,
             _mean - _sem,

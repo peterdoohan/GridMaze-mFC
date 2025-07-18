@@ -415,21 +415,21 @@ def plot_subject_theta_x_shifts(ax=None, print_stats=True):
     # set up fig
     if ax is None:
         f, ax = plt.subplots(1, 1, figsize=(3, 1))
-    ax.spines[["top", "left", "right"]].set_visible(False)
-    ax.axvline(0, color="black", linestyle="--", alpha=0.5)
-    ax.set_xlabel("opt. x-shift (cm) \n (theta peak - theta trough)")
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.axhline(0, color="black", linestyle="--", alpha=0.5)
+    ax.set_ylabel("opt. x-shift (cm) \n (theta peak - theta trough)")
 
     # load population x-shifts for each subject (dict)
     x_shifts = get_population_distance_tuning_theta_x_shifts()
     colors = sns.color_palette("hls", len(SUBJECT_IDS))
-    y_offset = 0.02
+    offset = 0.02
     for i, subject in enumerate(SUBJECT_IDS):
         color = colors[i]
         shift = x_shifts[subject] * 100  # convert to cm
-        ax.scatter(shift, y_offset * i, color=color, s=60)
-    ax.set_ylim(-0.1, 0.15)
-    ax.set_yticks([])
-    ax.set_xlim(-5, 1)
+        ax.scatter(offset * i, shift, color=color, s=60)
+    ax.set_xlim(-0.1, 0.15)
+    ax.set_xticks([])
+    ax.set_ylim(-5, 1)
 
     if print_stats:
         _shifts = np.array(list(x_shifts.values()))

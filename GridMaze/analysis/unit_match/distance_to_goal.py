@@ -99,7 +99,7 @@ def plot_matched_distance_tuning_heatmaps(
 
 
 def get_matched_distance_tuning_dfs(
-    min_split_half_corr=0.3,
+    min_split_half_corr=0.5,
     shuffle_matched_pairs=True,
     verbose=False,
 ):
