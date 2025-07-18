@@ -16,6 +16,7 @@ from GridMaze.analysis.core import convert
 
 from GridMaze.analysis.cluster_tuning import distance_to_goal as dtg
 from GridMaze.analysis.distance_to_goal import distributions as dd
+from GridMaze.analysis.distance_to_goal.theta_mod_tuning import _downsample_neurons
 from GridMaze.analysis.processing import get_distance_tuning_metrics_df as dtm
 from scipy.ndimage import gaussian_filter1d
 from scipy.stats import zscore, ttest_rel
@@ -29,10 +30,59 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 
 CURVE_FITS = ["gamma_4p", "gaussian_4p", "polynomial_4p"]
 
+# %%
+
+
+def plot_population_quantiles(
+    population_tuning_df,
+    metric="distance_to_goal",
+    cv_fit=True,
+    sign="pos",
+    order_by="fit",
+    smooth_SD=2,
+    fit="gamma_4p",
+    normalisation_method="max",
+    n_quantiles=6,
+    cmap="plasma_r",
+    ax=None,
+):
+    """ """
+    # set up fig
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(3, 3))
+    ax.spines[["top", "right"]].set_visible(False)
+    # process data
+    heatmap_df = _get_heatmap_df(
+        population_tuning_df,
+        metric=metric,
+        cv_fit=cv_fit,
+        sign=sign,
+        order_by=order_by,
+        smooth_SD=smooth_SD,
+        fit=fit,
+        normalisation_method=normalisation_method,
+    )
+    # chunk neurons into n groups and average
+    n_neurons = heatmap_df.shape[0]
+    neuron_group_size = n_neurons // n_quantiles
+    _n_groups = np.minimum(np.arange(n_neurons) // neuron_group_size, n_quantiles - 1)
+    quantile_df = heatmap_df.groupby(_n_groups)[metric].mean()[metric]
+    # plot
+    colors = sns.color_palette(cmap, n_colors=n_quantiles)
+    for i in range(n_quantiles):
+        q = quantile_df.iloc[i]
+        x = q.index.astype(float).values
+        y = q.values
+        ax.plot(x, y, label=i, color=colors[i], lw=2)
+    ax.legend(loc="upper right", bbox_to_anchor=(1.2, 1), fontsize=8)
+    ax.set_xlabel("Distance to goal (m)")
+    ax.set_ylabel("norm. firing rate")
+
 
 def plot_distance_tunned_heatmap(
     population_tuning_df,
     metric="distance_to_goal",
+    cv_fit=True,
     sign="pos",
     order_by="fit",
     smooth_SD=2,
@@ -43,37 +93,19 @@ def plot_distance_tunned_heatmap(
     ax=None,
 ):
     """ """
-    # include only "distance tuned" clusters (those with cv_r2 significanltly > 0)
-    df = population_tuning_df[population_tuning_df["gamma_4p_cv"].sig]
-    if sign == "pos":
-        sign_mask = df[fit]["size"].gt(0)
-    elif sign == "neg":
-        sign_mask = df[fit]["size"].lt(0)
-    else:
-        raise ValueError(f"Unknown sign: {sign}")
-    df = df[sign_mask]
-    x = df[metric].columns.values.astype(float)
-    if sign == "pos":
-        if order_by == "fit":
-            df[("idx_max", "")] = df.apply(lambda row: get_idx_order(row, x, fit=fit, op="max"), axis=1)
-        elif order_by == "max":
-            df[("idx_max", "")] = df[metric].idxmax(axis=1)
-        df = df.sort_values(by=[("idx_max", "")], ascending=True)
-    elif sign == "neg":
-        if order_by == "fit":
-            df[("idx_min", "")] = df.apply(lambda row: get_idx_order(row, x, fit=fit, op="min"), axis=1)
-        elif order_by == "min":
-            df[("idx_min", "")] = df[metric].idxmin(axis=1)
-        df = df.sort_values(by=[("idx_min", "")], ascending=True)
-    D = df[metric].values
-    if smooth_SD:
-        D = gaussian_filter1d(D, smooth_SD, axis=1)
-    if normalisation_method == "max":
-        D = D / np.max(D, axis=1)[:, None]
-    elif normalisation_method == "zscore":
-        D = zscore(D, axis=1)
-    else:
-        raise ValueError(f"Unknown normalisation method: {normalisation_method}")
+    heatmap_df = _get_heatmap_df(
+        population_tuning_df,
+        metric=metric,
+        cv_fit=cv_fit,
+        sign=sign,
+        order_by=order_by,
+        smooth_SD=smooth_SD,
+        fit=fit,
+        normalisation_method=normalisation_method,
+    )
+    D = heatmap_df[metric].values
+    x = heatmap_df[metric].columns.values.astype(float)
+
     # plot
     if ax is None:
         f, ax = plt.subplots(1, 1, figsize=(3, 5))
@@ -94,6 +126,51 @@ def plot_distance_tunned_heatmap(
     _xticks = np.arange(0, max(x), 0.25)
     ax.set_xticks(np.arange(0, len(x), 5))
     ax.set_xticklabels(_xticks, rotation=0)
+
+
+def _get_heatmap_df(
+    population_tuning_df,
+    metric="distance_to_goal",
+    cv_fit=True,
+    sign="pos",
+    order_by="fit",
+    smooth_SD=2,
+    fit="gamma_4p",
+    normalisation_method="zscore",
+):
+    """Filters, orders and normalises population tuning df"""
+    if cv_fit:
+        df = population_tuning_df[population_tuning_df["gamma_4p_cv"].sig]
+    else:
+        df = population_tuning_df.copy()
+    if sign == "pos":
+        sign_mask = df[fit]["size"].gt(0)
+    elif sign == "neg":
+        sign_mask = df[fit]["size"].lt(0)
+    else:
+        raise ValueError(f"Unknown sign: {sign}")
+    df = df[sign_mask]
+    x = df[metric].columns.values.astype(float)
+    if sign == "pos":
+        if order_by == "fit":
+            df[("idx_max", "")] = df.apply(lambda row: get_idx_order(row, x, fit=fit, op="max"), axis=1)
+        elif order_by == "max":
+            df[("idx_max", "")] = df[metric].idxmax(axis=1)
+        df = df.sort_values(by=[("idx_max", "")], ascending=True)
+    elif sign == "neg":
+        if order_by == "fit":
+            df[("idx_min", "")] = df.apply(lambda row: get_idx_order(row, x, fit=fit, op="min"), axis=1)
+        elif order_by == "min":
+            df[("idx_min", "")] = df[metric].idxmin(axis=1)
+        df = df.sort_values(by=[("idx_min", "")], ascending=True)
+    if smooth_SD:
+        df.loc[:, metric] = gaussian_filter1d(df[metric].values, smooth_SD, axis=1)
+    if normalisation_method == "max":
+        tmax = np.nanmax(np.hstack([df[metric].values]), axis=1)[:, None]
+        df.loc[:, metric] = df[metric].values / tmax
+    elif normalisation_method == "zscore":
+        df.loc[:, metric] = zscore(df[metric].values, axis=1)
+    return df
 
 
 def get_idx_order(row, x, fit="gamma_4p", op="max"):
