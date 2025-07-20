@@ -152,8 +152,6 @@ def get_population_egocentric_action_tuning(
     actions=["turn_left", "turn_right", "go_forward"],
     action_type="all",
     window=(-3, 3),
-    normalisation="zscore",
-    smooth_SD=8,
     min_split_half_corr=0.3,
     max_jobs=10,
     verbose=False,
@@ -182,8 +180,6 @@ def get_population_egocentric_action_tuning(
             action_type=action_type,
             min_split_half_corr=min_split_half_corr,
             window=window,
-            normalisation=normalisation,
-            smooth_SD=smooth_SD,
             verbose=verbose,
         )
         for session in sessions
@@ -200,8 +196,6 @@ def get_session_egocentric_action_tuning(
     action_type="all",
     min_split_half_corr=0.3,
     window=(-3, 3),
-    normalisation="zscore",
-    smooth_SD=5,
     verbose=False,
 ):
     """ """
