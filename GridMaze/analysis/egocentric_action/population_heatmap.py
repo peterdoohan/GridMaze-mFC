@@ -3,12 +3,10 @@ Library for visualising population tuning aligned to egocentric actions
 """
 
 # %% Imports
-from turtle import left, right
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 from matplotlib import pyplot as plt
-from polars import Time
 import seaborn as sns
 from scipy.stats import zscore
 from scipy.ndimage import gaussian_filter1d
@@ -149,7 +147,8 @@ def _get_max_action_diff(tuning_df):
 def get_population_egocentric_action_tuning(
     subject_IDs="all",
     maze_names="all",
-    late_sessions=True,
+    late_sessions=False,
+    sessions=None,
     actions=["turn_left", "turn_right", "go_forward"],
     action_type="all",
     window=(-3, 3),
@@ -161,20 +160,21 @@ def get_population_egocentric_action_tuning(
 ):
     """ """
     days_on_maze = "late" if late_sessions else "all"
-    if verbose:
-        print("Loading sessions ...")
-    sessions = gs.get_maze_sessions(
-        subject_IDs=subject_IDs,
-        maze_names=maze_names,
-        days_on_maze=days_on_maze,
-        with_data=[
-            "navigation_df",
-            "navigation_spike_rates_df",
-            "cluster_metrics",
-            "cluster_egocentric_action_tuning_metrics",
-        ],
-        must_have_data=True,
-    )
+    if sessions is None:
+        if verbose:
+            print("Loading sessions ...")
+        sessions = gs.get_maze_sessions(
+            subject_IDs=subject_IDs,
+            maze_names=maze_names,
+            days_on_maze=days_on_maze,
+            with_data=[
+                "navigation_df",
+                "navigation_spike_rates_df",
+                "cluster_metrics",
+                "cluster_egocentric_action_tuning_metrics",
+            ],
+            must_have_data=True,
+        )
     tc_dfs = Parallel(n_jobs=max_jobs)(
         delayed(get_session_egocentric_action_tuning)(
             session,
@@ -238,23 +238,4 @@ def get_session_egocentric_action_tuning(
     tuning_curves = action_aligned_rates.groupby(
         ["cluster_unique_ID", "basic_action"]
     ).action_aligned_rates.mean()  # [clusters x actions, timepoints]
-    # normalisation tuning curves for each cluster
-    if normalisation == "zscore":
-        # concat tuning curves [actions, clusters x timepoints]
-        long_tuning_curves = tuning_curves.action_aligned_rates.unstack().swaplevel(0, 1, axis=1).sort_index(axis=1)
-        # zscore each cluster
-        long_tuning_curves = long_tuning_curves.apply(zscore, axis=1)
-        # restack
-        tuning_curves = long_tuning_curves.stack(level=[0], future_stack=True)
-    else:
-        raise ValueError(f"Normalisation {normalisation} not recognised")
-    # smooth tuning curves if specified
-    if smooth_SD:
-        rates = tuning_curves.values
-        smoothed_rates = gaussian_filter1d(rates, smooth_SD, axis=1)
-        tuning_curves = pd.DataFrame(
-            smoothed_rates,
-            index=tuning_curves.index,
-            columns=tuning_curves.columns,
-        )
     return tuning_curves
