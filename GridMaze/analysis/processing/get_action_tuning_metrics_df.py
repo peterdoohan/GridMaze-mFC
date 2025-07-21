@@ -3,11 +3,9 @@ Library for visualising population tuning aligned to egocentric actions
 """
 
 # %% Imports
-from cv2 import mean
 import numpy as np
 import pandas as pd
-import scipy as sp
-from scipy.stats import ttest_1samp, spearmanr
+from scipy.stats import ttest_1samp, spearmanr, zscore
 
 
 from GridMaze.analysis.cluster_tuning import actions as act
@@ -21,7 +19,14 @@ FRAME_RATE = 60  # Hz
 # %% Functions
 
 
-def get_egocentric_action_tuning_metrics_df(processed_data_path, analysis_data_path, window=(-3, 3), step_size=0.25):
+def get_egocentric_action_tuning_metrics_df(
+    processed_data_path,
+    analysis_data_path,
+    actions=["turn_left", "go_forward", "turn_right"],
+    action_types=["all", "free", "forced"],
+    window=(-3, 3),
+    step_size=0.25,
+):
     """
     note only loads actions during navigation
 
@@ -39,9 +44,7 @@ def get_egocentric_action_tuning_metrics_df(processed_data_path, analysis_data_p
     single_units = cluster_metrics[cluster_metrics.single_unit].cluster_ID.values
     single_units = convert.cluster_IDs2scluster_unique_IDs(session_info, single_units)
     # get action aligned rates
-    action_tuning_df = act._get_basic_action_tuning(
-        navigation_rates_df, actions=["turn_left", "go_forward", "turn_right", "go_back"], window=window
-    )
+    action_tuning_df = act._get_basic_action_tuning(navigation_rates_df, actions=actions, window=window)
     if step_size:  # average rates within each downsampled step
         aligned_rates = action_tuning_df.action_aligned_rates  # sampled at frame rate
         combine_frames = int(FRAME_RATE * step_size)
@@ -55,10 +58,13 @@ def get_egocentric_action_tuning_metrics_df(processed_data_path, analysis_data_p
         )
     cluster_unique_IDs = action_tuning_df.cluster_unique_ID.unique()
     # metrics df
-    conds = ["all_action", "free_action", "forced_action", "free_vs_forced"]
+    _action_types = [f"{a}_action" for a in actions]
+    conds = _action_types + ["free_vs_forced"]
     metrics = ["value", "p_value", "sig"]
     cols = pd.MultiIndex.from_tuples(
-        [("single_unit", "", "")] + [("split_half_corr", cond, x) for cond in conds for x in metrics]
+        [("single_unit", "", "")]
+        + [("split_half_corr", cond, x) for cond in conds for x in metrics]
+        + [("pref_action", at, x) for at in _action_types for x in ["name", "frac", "t_max", "factor"]]
     )
     metrics_df = pd.DataFrame(index=cluster_unique_IDs, columns=cols, data=np.nan)
     # fix boolian dtype columns
@@ -70,8 +76,19 @@ def get_egocentric_action_tuning_metrics_df(processed_data_path, analysis_data_p
             continue
         cluster_df = action_tuning_df[action_tuning_df.cluster_unique_ID == cluster]
         metrics_df.loc[cluster, ("single_unit", "", "")] = True
+        # get cells preferred action
+        for action_type in action_types:
+            label = f"{action_type}_action"
+
+            pref_action, pre_action_frac, t_max, pref_action_factor = get_pref_action(
+                cluster_df, actions=actions, action_type=action_type, normalise="zscore", n=50
+            )
+            metrics_df.loc[cluster, ("pref_action", label, "name")] = pref_action
+            metrics_df.loc[cluster, ("pref_action", label, "frac")] = pre_action_frac
+            metrics_df.loc[cluster, ("pref_action", label, "t_max")] = t_max
+            metrics_df.loc[cluster, ("pref_action", label, "factor")] = pref_action_factor
         # free/forced action split half correlation
-        for action_type in ["all", "free", "forced"]:
+        for action_type in action_types:
             if session_info["maze_name"] == "rooms_maze" and action_type == "forced":
                 continue  # not forced actions in rooms maze
             label = f"{action_type}_action"
@@ -94,8 +111,65 @@ def get_egocentric_action_tuning_metrics_df(processed_data_path, analysis_data_p
     return metrics_df.sort_index(axis=1)
 
 
+# %% action preference metrics
+
+
+def get_pref_action(
+    cluster_df,
+    actions=["turn_left", "go_forward", "turn_right"],
+    action_type="all",
+    normalise="zscore",
+    n=50,
+):
+    """
+    Estimates the perfered egocentric action over random trial splits, as well as the t_max of that prefered action and
+    the factor by which the cell fires for that action over the average of the other actions.
+    """
+    # filter for action types
+    if action_type == "all":
+        pass
+    elif action_type == "free":
+        cluster_df = cluster_df[cluster_df.choice_degree.gt(2)]
+    elif action_type == "forced":
+        cluster_df = cluster_df[cluster_df.choice_degree.le(2)]
+    trials = cluster_df.trial.unique()
+    n_trials = len(trials)
+    # get pref action over random trial splits
+    pref_action_df = pd.DataFrame(index=range(n), columns=["pref_action", "pref_action_factor", "t_max"])
+    for i in range(n):
+        # get random split of trials
+        shuffle_trials = trials.copy()
+        np.random.shuffle(shuffle_trials)
+        rs_trials = shuffle_trials[: n_trials // 2]  # random split
+        df = cluster_df[cluster_df.trial.isin(rs_trials)]
+        action_aligned_rates = df.groupby("basic_action").action_aligned_rates.mean().action_aligned_rates
+        if normalise == "zscore":
+            tcs = action_aligned_rates.values
+            action_aligned_rates = pd.DataFrame(
+                zscore(tcs, axis=1), index=action_aligned_rates.index, columns=action_aligned_rates.columns
+            )
+        idxmax = action_aligned_rates.stack().idxmax()
+        pref_action, t_max = idxmax[0], idxmax[1]
+        # get pref action factor
+        pref = action_aligned_rates.loc[pref_action]
+        other = action_aligned_rates.loc[[a for a in actions if a != pref_action]].mean()
+        pref_action_factor = (pref - other).max()
+        pref_action_df.loc[i] = [pref_action, pref_action_factor, t_max]
+    # summarise outcmes over splits
+    pref_action_counts = pref_action_df.pref_action.value_counts(normalize=True)
+    pref_action = pref_action_counts.idxmax()
+    pre_action_frac = pref_action_counts.max()
+    _pref_action_df = pref_action_df[pref_action_df.pref_action == pref_action]
+    t_max = pref_action_df.t_max.median()
+    pref_action_factor = _pref_action_df.pref_action_factor.mean()
+    return pref_action, pre_action_frac, t_max, pref_action_factor
+
+
+# %% split half metrics
 def get_action_split_half_corr(cluster_df, action_type="free", n=50, alpha=0.01):
-    """ """
+    """
+    check random splits of trials not actions
+    """
     if action_type == "free":
         df = cluster_df[cluster_df.choice_degree.gt(2)]
     elif action_type == "forced":

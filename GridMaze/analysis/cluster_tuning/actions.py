@@ -133,6 +133,7 @@ def _get_basic_action_tuning(
     all_action_aligned_rates_dfs = []
     for action in actions:
         action_rates_df = navigation_rates_df[navigation_rates_df.action.basic == action]
+        trial_at_action = action_rates_df.trial.values
         action_inds = action_rates_df.index.to_numpy()
         choice_degrees = action_rates_df.action.choice_degree.to_numpy()
         aligned_timepoints = np.arange(window[0], window[1], 1 / FRAME_RATE)
@@ -143,6 +144,7 @@ def _get_basic_action_tuning(
             ("basic_action", ""),
             ("action_number", ""),
             ("choice_degree", ""),
+            ("trial", ""),
         ]
         columns += [("action_aligned_rates", t) for t in aligned_timepoints]
         init_action_aligned_rates_df = pd.DataFrame(columns=pd.MultiIndex.from_tuples(columns))
@@ -161,6 +163,7 @@ def _get_basic_action_tuning(
                 action_aligned_rates_df[("basic_action", "")] = action
                 action_aligned_rates_df[("action_number", "")] = i + 1
                 action_aligned_rates_df[("choice_degree", "")] = choice_degrees[i]
+                action_aligned_rates_df[("trial", "")] = trial_at_action[i]
                 action_aligned_rates_df.action_aligned_rates = cluster_action_aligned_rates
                 action_aligend_rates_dfs.append(action_aligned_rates_df)
         all_action_aligned_rates_dfs.append(pd.concat(action_aligend_rates_dfs, axis=0))
