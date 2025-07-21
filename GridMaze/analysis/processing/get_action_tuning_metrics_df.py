@@ -58,7 +58,7 @@ def get_egocentric_action_tuning_metrics_df(
         )
     cluster_unique_IDs = action_tuning_df.cluster_unique_ID.unique()
     # metrics df
-    _action_types = [f"{a}_action" for a in actions]
+    _action_types = [f"{a}_action" for a in action_types]
     conds = _action_types + ["free_vs_forced"]
     metrics = ["value", "p_value", "sig"]
     cols = pd.MultiIndex.from_tuples(
@@ -71,6 +71,9 @@ def get_egocentric_action_tuning_metrics_df(
     metrics_df[("single_unit", "", "")] = False
     for cond in conds:
         metrics_df[("split_half_corr", cond, "sig")] = False
+    # fix string type columns
+    for at in _action_types:
+        metrics_df[("pref_action", at, "name")] = ""
     for cluster in cluster_unique_IDs:
         if cluster not in single_units:
             continue
@@ -81,7 +84,7 @@ def get_egocentric_action_tuning_metrics_df(
             label = f"{action_type}_action"
 
             pref_action, pre_action_frac, t_max, pref_action_factor = get_pref_action(
-                cluster_df, actions=actions, action_type=action_type, normalise="zscore", n=50
+                cluster_df, action_type=action_type, normalise="zscore", n=50
             )
             metrics_df.loc[cluster, ("pref_action", label, "name")] = pref_action
             metrics_df.loc[cluster, ("pref_action", label, "frac")] = pre_action_frac
@@ -116,7 +119,6 @@ def get_egocentric_action_tuning_metrics_df(
 
 def get_pref_action(
     cluster_df,
-    actions=["turn_left", "go_forward", "turn_right"],
     action_type="all",
     normalise="zscore",
     n=50,
@@ -148,15 +150,24 @@ def get_pref_action(
             action_aligned_rates = pd.DataFrame(
                 zscore(tcs, axis=1), index=action_aligned_rates.index, columns=action_aligned_rates.columns
             )
-        idxmax = action_aligned_rates.stack().idxmax()
-        pref_action, t_max = idxmax[0], idxmax[1]
-        # get pref action factor
-        pref = action_aligned_rates.loc[pref_action]
-        other = action_aligned_rates.loc[[a for a in actions if a != pref_action]].mean()
-        pref_action_factor = (pref - other).max()
+        try:
+            idxmax = action_aligned_rates.stack().idxmax()
+            pref_action = idxmax[0]
+            # get pref action factor
+            _all_actions = action_aligned_rates.index.values
+            pref = action_aligned_rates.loc[pref_action]
+            _other_actions = [a for a in _all_actions if a != pref_action]
+            other = action_aligned_rates.loc[_other_actions].mean()
+            diff = pref - other
+            pref_action_factor = diff.max()
+            t_max = diff.idxmax()
+        except ValueError:
+            pref_action, pref_action_factor, t_max = np.nan, np.nan, np.nan
         pref_action_df.loc[i] = [pref_action, pref_action_factor, t_max]
     # summarise outcmes over splits
     pref_action_counts = pref_action_df.pref_action.value_counts(normalize=True)
+    if pref_action_counts.isna().all():
+        return np.nan, np.nan, np.nan, np.nan
     pref_action = pref_action_counts.idxmax()
     pre_action_frac = pref_action_counts.max()
     _pref_action_df = pref_action_df[pref_action_df.pref_action == pref_action]
