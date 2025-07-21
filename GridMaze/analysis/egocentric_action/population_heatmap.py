@@ -13,6 +13,7 @@ import seaborn as sns
 from scipy.stats import zscore
 from scipy.ndimage import gaussian_filter1d
 from sklearn.cluster import KMeans
+from torch import normal
 
 
 from GridMaze.analysis.cluster_tuning import actions as act
@@ -24,126 +25,66 @@ from GridMaze.analysis.core import get_clusters as gc
 # %% Functions
 
 
-def plot_KMeans_cluster_centroids(tuning_df, n_clusters=6, min_action_diff=3, axes=None):
-    """ """
-    # process data
-    timepoints = tuning_df.columns.values.astype(float)
-    n_timepoints = len(timepoints)
-    actions = ["turn_left", "go_forward", "turn_right"]
-    wide_df = tuning_df.unstack().swaplevel(0, 1, axis=1).sort_index(axis=1)  # neurons, actions x timepoints
-    wide_df = wide_df.reindex(columns=actions, level=0)  # top level order: left, forward, right
-    # further filter neurons for diff between left and right tuning
-    if min_action_diff:
-        max_diff = _get_max_action_diff(tuning_df)
-        wide_df = wide_df[max_diff >= min_action_diff]  # keep neurons with sufficient left-right diff
-    kmeans = KMeans(n_clusters=n_clusters, random_state=0)
-    kmeans.fit(wide_df.values)
-    centroids = kmeans.cluster_centers_
-    # determine preferred action for each centroid for plotting
-    centroid2pref_action = {}
-    centroid2argmax = {}
-    for i, ct in enumerate(centroids):
-        centroid_tuning = ct.reshape(len(actions), n_timepoints)
-        pref_action_ind = np.argmax(np.max(centroid_tuning, axis=1))
-        pref_action_argmax = np.argmax(centroid_tuning[pref_action_ind])
-        centroid2argmax[i] = pref_action_argmax
-        centroid2pref_action[i] = actions[pref_action_ind]
-    # order cluster by their prefered action and their max tuning (time)
-    left_prefering = [c for c, a in centroid2pref_action.items() if a == "turn_left"]
-    left_order = sorted(left_prefering, key=lambda x: centroid2argmax[x])
-    right_prefering = [c for c, a in centroid2pref_action.items() if a == "turn_right"]
-    right_order = sorted(right_prefering, key=lambda x: centroid2argmax[x])
-    print(left_order, right_order)
-    # plotting
-    if axes is None:
-        f, axes = plt.subplots(n_clusters // 2, 2, figsize=(3, 1.5 * (n_clusters // 2)), sharey=True, sharex=True)
-    # plot left tuning clusters
-    for i, clust_order in enumerate([left_order, right_order]):
-        for j, ax in enumerate(axes[:, i]):
-            ax.spines[["top", "right"]].set_visible(False)
-            cluster_id = clust_order[j]
-            tuning = centroids[cluster_id].reshape(len(actions), n_timepoints)
-            ax.plot(timepoints, tuning[0], label="turn_left", color="darkorchid", lw=2)
-            ax.plot(timepoints, tuning[1], label="go_forward", color="grey", lw=2)
-            ax.plot(timepoints, tuning[2], label="turn_right", color="steelblue", lw=2)
-            if i == 0 and j == 2:
-                ax.set_ylabel("Activity (z-scored)")
-                ax.set_xlabel("Time (s)")
-                ax.legend()
-            ax.axvline(0, color="k", linestyle="--", alpha=0.5)
-
-
-def plot_egocentric_action_tuning_heatmap(
-    tuning_df, cluster_method="KMeans", n_clusters=6, min_action_diff=3, axes=None
+def plot_heatmap_quantiles(
+    tuning_df,
+    metrics_df,
+    pref_action="turn_left",
+    min_pref_action_factor=2,
+    min_pref_action_frac=0.65,
+    normalise="zscore",
+    smooth_SD=12,
+    order_by="CV_pref_max",
+    crop_window=(-1, 1),
+    n_quantiles=4,
+    axes=None,
 ):
-    # process data
-    timepoints = tuning_df.columns.values.astype(float)
-    n_timepoints = len(timepoints)
-    actions = ["turn_left", "go_forward", "turn_right"]
-    wide_df = tuning_df.unstack().swaplevel(0, 1, axis=1).sort_index(axis=1)  # neurons, actions x timepoints
-    wide_df = wide_df.reindex(columns=actions, level=0)  # top level order: left, forward, right
-    # further filter neurons for diff between left and right tuning
-    if min_action_diff:
-        max_diff = _get_max_action_diff(tuning_df)
-        wide_df = wide_df[max_diff >= min_action_diff]  # keep neurons with sufficient left-right diff
-    # group neurons by KMeans cluster and plot in clustees together
-    if cluster_method == "KMeans":
-        kmeans = KMeans(n_clusters=n_clusters, random_state=0)
-        labels = kmeans.fit_predict(wide_df.values)  # fit and predict clusters
-        centroids = kmeans.cluster_centers_
-    else:
-        raise ValueError(f"Clustering method {cluster_method} not recognised")
-    wide_df[("KMeans_cluster", "id")] = labels
-    # order clusters by their perfered action
-    centroid2pref_action = {}
-    centroid2argmax = {}
-    for i, ct in enumerate(centroids):
-        centroid_tuning = ct.reshape(len(actions), n_timepoints)
-        pref_action_ind = np.argmax(np.max(centroid_tuning, axis=1))
-        pref_action_argmax = np.argmax(centroid_tuning[pref_action_ind])
-        centroid2argmax[i] = pref_action_argmax
-        centroid2pref_action[i] = pref_action_ind
-    wide_df[("KMeans_cluster", "prefered_action")] = wide_df[("KMeans_cluster", "id")].map(centroid2pref_action)
-    wide_df[("KMeans_cluster", "argmax")] = wide_df[("KMeans_cluster", "id")].map(centroid2argmax)
-    # order cluster by av cluster argmax
-    wide_df.sort_values(by=[("KMeans_cluster", "prefered_action"), ("KMeans_cluster", "argmax")], inplace=True)
-    # plotting
+    """ """
     if axes is None:
-        f, axes = plt.subplots(1, len(actions), figsize=(3 * len(actions), 6), sharey=True, width_ratios=[1, 1, 1.2])
-    for ax, action in zip(axes, actions):
-        action_tuning = wide_df[action]
-        cbar = True if action == "turn_right" else False
-        sns.heatmap(data=action_tuning, ax=ax, cmap="bwr", cbar=cbar, vmin=-1.5, vmax=3)
-        y_tick = round(len(wide_df), -2)
-        ax.set_yticks([y_tick])
-        ax.set_yticklabels([f"{y_tick}"], rotation=90)
-        ax.set_xlabel("Time (s)")
-        ax.set_xticks(np.linspace(0, n_timepoints, 7))
-        ax.set_xticklabels(np.arange(min(timepoints), max(timepoints) + 1, 1), rotation=0)
-        ax.axvline(n_timepoints // 2, color="k", linestyle="--", alpha=0.5)
-        ax.set_title(action)
-        if action == "turn_left":
-            ax.set_ylabel("Neurons", labelpad=-10)
-        else:
-            ax.set_ylabel("")
-
-
-def _get_max_action_diff(tuning_df):
-    left_right_diff = tuning_df.xs("turn_left", axis=0, level=1) - tuning_df.xs("turn_right", axis=0, level=1)
-    left_forward_diff = tuning_df.xs("turn_left", axis=0, level=1) - tuning_df.xs("go_forward", axis=0, level=1)
-    right_forward_diff = tuning_df.xs("turn_right", axis=0, level=1) - tuning_df.xs("go_forward", axis=0, level=1)
-    max_diff = np.max(
-        [
-            left_right_diff.abs().max(axis=1),
-            left_forward_diff.abs().max(axis=1),
-            right_forward_diff.abs().max(axis=1),
-        ],
-        axis=0,
+        f, axes = plt.subplots(2, 1, figsize=(3, 3), height_ratios=[1, 0.75], sharex=False)
+    axes[0].spines[["top", "right", "bottom"]].set_visible(False)
+    axes[0].set_xticks([])
+    axes[1].spines[["top", "right"]].set_visible(False)
+    for ax in axes:
+        ax.axvline(0, color="k", linestyle="--", alpha=0.5)
+    # get heatmap
+    heatmap_df = _get_heatmap_df(
+        tuning_df,
+        metrics_df,
+        pref_action,
+        min_pref_action_factor,
+        min_pref_action_frac,
+        normalise,
+        smooth_SD,
+        order_by,
+        crop_window,
     )
-    return max_diff
+    n_neurons = heatmap_df.shape[0]
+    neuron_group_size = n_neurons // n_quantiles
+    _n_groups = np.minimum(np.arange(n_neurons) // neuron_group_size, n_quantiles - 1)
+    quantile_df = heatmap_df.groupby(_n_groups).mean()
+    # plot
+    # for action, cmap in zip(["turn_left", "go_forward", "turn_right"], ["Purples", "Greys", "Blues"]):
+    if pref_action == "turn_left":
+        action_order = ["turn_left", "turn_right"]
+        cmaps = ["Purples", "Blues"]
+    elif pref_action == "turn_right":
+        action_order = ["turn_right", "turn_left"]
+        cmaps = ["Blues", "Purples"]
+    else:
+        raise ValueError("pref_action must be either 'turn_left' or 'turn_right'")
 
-
-# %%
+    for action, cmap, ax in zip(action_order, cmaps, axes):
+        aq_df = quantile_df[action]
+        colors = sns.color_palette(cmap, n_colors=n_quantiles)
+        for i in range(n_quantiles):
+            q = aq_df.loc[i]
+            x = q.index.astype(float).values
+            y = q.values
+            ax.plot(x, y, label=f"{action}: Q{i}", color=colors[i], lw=2)
+    # ax.legend(loc="upper right", bbox_to_anchor=(1.2, 1), fontsize=8)
+    ax.set_xlabel("time (s)")
+    ax.set_ylabel("firing rate (z-scored)")
+    return heatmap_df
 
 
 def plot_egocentric_action_tuning_heatmap(
@@ -212,11 +153,11 @@ def _get_heatmap_df(
     keep_clusters = metrics.index.values
     tuning = tuning_df.iloc[tuning_df.index.get_level_values(0).isin(keep_clusters)]
     # normalise tuning curves
-    if normalise == "zscore":
-        tcs = zscore(tuning.values, axis=1)
-        tuning = pd.DataFrame(tcs, index=tuning.index, columns=tuning.columns)
-    else:
-        raise NotImplementedError
+    # if normalise == "zscore":
+    #     tcs = zscore(tuning.values, axis=1)
+    #     tuning = pd.DataFrame(tcs, index=tuning.index, columns=tuning.columns)
+    # else:
+    #     raise NotImplementedError
     # smooth tuning curves
     if smooth_SD:
         tcs = gaussian_filter1d(tuning.values, smooth_SD, axis=1)
@@ -226,6 +167,11 @@ def _get_heatmap_df(
         tuning.unstack(level=1).swaplevel(1, 2, axis=1).sort_index(axis=1).action_aligned_rates
     )  # n_neurons, n_actions x n_timepoints
     wide_df = wide_df[["turn_left", "go_forward", "turn_right"]]  # reorder
+    if normalise == "zscore":
+        tcs = zscore(wide_df.values, axis=1)
+        wide_df = pd.DataFrame(tcs, index=wide_df.index, columns=wide_df.columns)
+    else:
+        raise NotImplementedError
     # order clusters by CV t_max (precomputed in metrics_df)
     if order_by == "CV_pref_max":
         wide_df[("t_max", "")] = wide_df.index.map(metrics.pref_action.all_action.t_max.to_dict()).values
