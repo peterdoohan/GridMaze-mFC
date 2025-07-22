@@ -44,6 +44,8 @@ def get_permuted_cross_maze_matches(
     true_matches = get_cross_maze_matches(
         subject_ID, maze_pair, single_units, tuning_metric, min_split_half_corr, return_as="cluster_unique_ID"
     )
+    if true_matches is None:
+        return None
     # count number of matches per session pair to match sampling stats in permutations
     session_pair2count = _session_pair2n_matches(true_matches)
     # get all availble with same filtering criteria for true matches

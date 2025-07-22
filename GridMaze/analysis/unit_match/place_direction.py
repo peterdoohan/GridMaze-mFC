@@ -130,7 +130,7 @@ def get_matched_heatmaps_df(
 # %% true vs permuted place-direction tuning correlation across mazes
 
 
-def plot_cross_maze_corrs_summary(results, print_stats=True, ax=None):
+def plot_cross_maze_corrs_summary(results, print_stats=True, min_matches=10, ax=None):
     """ """
     # setup fig
     if ax is None:
@@ -141,6 +141,8 @@ def plot_cross_maze_corrs_summary(results, print_stats=True, ax=None):
     offset = 0.05
     for i, (subject_ID, data) in enumerate(results.items()):
         true = data["true_corrs"]  # 1
+        if len(true) < min_matches:
+            continue
         true_mean = np.mean(true)
         true_sem = np.std(true) / np.sqrt(len(true))
         permuted_means = np.nanmean(data["permuted_corrs"], axis=1)  # n_permutations

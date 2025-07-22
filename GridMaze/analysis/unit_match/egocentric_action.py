@@ -7,6 +7,7 @@ import h5py
 import json
 import numpy as np
 import pandas as pd
+from matplotlib import pyplot as plt
 
 
 from GridMaze.analysis.core import get_sessions as gs
@@ -31,10 +32,17 @@ MAZE_PAIRS = [("maze_1", "maze_2"), ("maze_2", "rooms_maze")]
 # %% Summary function
 
 
+def plot_cross_maze_corrs_summary(results, print_stats=True, min_matches=10, ax=None):
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(2, 3))
+    um_pd.plot_cross_maze_corrs_summary(results, print_stats, min_matches, ax)
+    ax.set_ylabel("egocentric-action \n tuning corr.")
+
+
 def get_cross_maze_corr_summary(
     maze_pair=("maze_1", "maze_2"),
     min_split_half_corr=0.3,
-    n_permutations=1_000,
+    n_permutations=1_0,
     save=False,
     verbose=False,
 ):
@@ -60,6 +68,8 @@ def get_cross_maze_corr_summary(
             n_permutations=n_permutations,
             verbose=verbose,
         )
+        if true_corrs is None:
+            continue  # no matches found for this subject
         results[subject_ID] = {
             "true_corrs": true_corrs,
             "permuted_corrs": permuted_corrs,
@@ -93,6 +103,10 @@ def get_cross_maze_egocentric_action_tuning_corrs(
         return_as="cluster_unique_ID",
         verbose=verbose,
     )
+    if true_matches is None:
+        if verbose:
+            print(f"No matches found for {subject_ID} on {maze_pair[0]} and {maze_pair[1]}")
+        return None, None
     true_matches = np.array(true_matches)
     # get permuted matches
     permuted_matches = mm.get_permuted_cross_maze_matches(
@@ -181,3 +195,37 @@ def get_tuning_curves(
         tuning_dfs.append(wide_df)
         metric_dfs.append(metrics_df)
     return pd.concat(tuning_dfs, axis=0), pd.concat(metric_dfs, axis=0)
+
+
+# %% Misc
+
+
+def plot_all_subject_matched_clusters(subject="m2", maze_pair=("maze_1", "maze_2")):
+    """
+    Search through matches to find some nice pairs!
+    """
+    colors = ["royalblue", "darkviolet"]
+    matched_clusters = mm.get_cross_maze_matches(
+        subject,
+        maze_pair,
+        single_units=True,
+        tuning_metric="distance_to_goal",
+        min_split_half_corr=0.3,
+        return_as="cluster_objects",
+        verbose=True,
+    )
+    for i, pair in enumerate(matched_clusters):
+        f, axes = plt.subplots(1, 2, figsize=(6, 3))
+        for Clust, ax in zip(pair, axes):
+            Clust.plot_tuning(
+                feature="actions",
+                feature_kwargs={
+                    "concise": True,
+                    "action_type": "all",
+                    "smooth_SD": 14,
+                    "colors": ["darkviolet", "royalblue", "grey"],
+                },
+                ax=ax,
+            )
+            ax.set_title(Clust.cluster_unique_ID)
+        plt.show()
