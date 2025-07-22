@@ -179,7 +179,7 @@ def _get_available_units(
                     avail_units = df[df.split_half_corr.value.gt(min_split_half_corr)].index
                 elif tuning_metric == "egocentric_action":
                     df = session.cluster_egocentric_action_tuning_metrics
-                    avail_units = df[df.split_half_corr.value.gt(min_split_half_corr)].cluster_unique_ID
+                    avail_units = df[df.split_half_corr.all_action.value.gt(min_split_half_corr)].cluster_unique_ID
                 # single unit by default when filtering for tuning
             session_name2single_units[session.name] = list(avail_units)
     if return_as == "dict":
