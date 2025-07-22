@@ -63,7 +63,9 @@ def plot_action_tuning(action_aligned_rates, axes=None, smooth_SD=5):
     return
 
 
-def plot_action_tunning_concise(action_aligned_rates, ax=None, smooth_SD=5, action_type="all"):
+def plot_action_tunning_concise(
+    action_aligned_rates, ax=None, smooth_SD=5, action_type="all", colors=["darkred", "royalblue", "grey"]
+):
     """
     Plot only forced actions on one axes
     """
@@ -83,7 +85,7 @@ def plot_action_tunning_concise(action_aligned_rates, ax=None, smooth_SD=5, acti
     sem_action_rates = grouped_action_rates.sem()
     # do some plotting
     actions = ["turn_left", "turn_right", "go_forward"]
-    for action, color in zip(actions, ["darkred", "royalblue", "grey"]):
+    for action, color in zip(actions, colors):
         # only plot tuning to forced actions
         if action_type == "forced":
             select_action_mean = mean_action_rates.loc[action, True].action_aligned_rates

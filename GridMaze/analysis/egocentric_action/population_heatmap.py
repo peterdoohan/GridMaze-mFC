@@ -3,8 +3,6 @@ Library for visualising population tuning aligned to egocentric actions
 """
 
 # %% Imports
-from ast import Not
-from itertools import groupby
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
@@ -12,13 +10,10 @@ from matplotlib import pyplot as plt
 import seaborn as sns
 from scipy.stats import zscore
 from scipy.ndimage import gaussian_filter1d
-from sklearn.cluster import KMeans
-from torch import normal
 
 
 from GridMaze.analysis.cluster_tuning import actions as act
 from GridMaze.analysis.core import get_sessions as gs
-from GridMaze.analysis.core import get_clusters as gc
 
 # %% Global Variables
 
@@ -30,22 +25,23 @@ def plot_heatmap_quantiles(
     metrics_df,
     pref_action="turn_left",
     min_pref_action_factor=2,
-    min_pref_action_frac=0.65,
+    min_pref_action_frac=0.5,
     normalise="zscore",
     smooth_SD=12,
     order_by="CV_pref_max",
     crop_window=(-1, 1),
-    n_quantiles=4,
+    n_quantiles=3,
     axes=None,
 ):
     """ """
     if axes is None:
-        f, axes = plt.subplots(2, 1, figsize=(3, 3), height_ratios=[1, 0.75], sharex=False)
+        f, axes = plt.subplots(2, 1, figsize=(3, 3), height_ratios=[1, 0.5], sharex=False)
     axes[0].spines[["top", "right", "bottom"]].set_visible(False)
     axes[0].set_xticks([])
     axes[1].spines[["top", "right"]].set_visible(False)
     for ax in axes:
         ax.axvline(0, color="k", linestyle="--", alpha=0.5)
+    ax.set_title(pref_action, fontsize=10)
     # get heatmap
     heatmap_df = _get_heatmap_df(
         tuning_df,
@@ -63,7 +59,6 @@ def plot_heatmap_quantiles(
     _n_groups = np.minimum(np.arange(n_neurons) // neuron_group_size, n_quantiles - 1)
     quantile_df = heatmap_df.groupby(_n_groups).mean()
     # plot
-    # for action, cmap in zip(["turn_left", "go_forward", "turn_right"], ["Purples", "Greys", "Blues"]):
     if pref_action == "turn_left":
         action_order = ["turn_left", "turn_right"]
         cmaps = ["Purples", "Blues"]
@@ -81,32 +76,30 @@ def plot_heatmap_quantiles(
             x = q.index.astype(float).values
             y = q.values
             ax.plot(x, y, label=f"{action}: Q{i}", color=colors[i], lw=2)
-    # ax.legend(loc="upper right", bbox_to_anchor=(1.2, 1), fontsize=8)
+        ax.legend(loc="upper right", bbox_to_anchor=(1.2, 1), fontsize=8)
     ax.set_xlabel("time (s)")
     ax.set_ylabel("firing rate (z-scored)")
-    return heatmap_df
 
 
 def plot_egocentric_action_tuning_heatmap(
     tuning_df,
     metrics_df,
     min_pref_action_factor=2,
-    min_pref_action_frac=0.65,
+    min_pref_action_frac=0.5,
     normalise="zscore",
-    smooth_SD=12,
+    smooth_SD=14,
     order_by="pref_max",
     crop_window=False,
     cmap="coolwarm",
-    v_range=(-1.5, 2.5),
+    v_range=(-1, 3.5),
     axes=None,
+    f=None,
 ):
     """ """
-    if axes is None:
-        f, axes = plt.subplots(3, 3, figsize=(4, 4), height_ratios=[0.8, 0.3, 1])
+    if axes is None or f is None:
+        f, axes = plt.subplots(3, 3, figsize=(4, 4), height_ratios=[1, 0.4, 1], sharex=True)
     f.subplots_adjust(wspace=0.05, hspace=0.05)
-    for ax in axes.flatten():
-        ax.axis("off")
-
+    neuron_count = 0
     for i, ego_action in enumerate(["turn_left", "go_forward", "turn_right"]):
         heatmap_df = _get_heatmap_df(
             tuning_df,
@@ -122,14 +115,28 @@ def plot_egocentric_action_tuning_heatmap(
         for j, _ego_action in enumerate(["turn_left", "go_forward", "turn_right"]):
             ax = axes[i, j]
             T = heatmap_df[_ego_action].values
-            sns.heatmap(
-                T,
-                ax=ax,
-                cmap=cmap,
-                cbar=False,
-                vmin=v_range[0],
-                vmax=v_range[1],
-            )
+            sns.heatmap(T, ax=ax, cmap=cmap, cbar=False, vmin=v_range[0], vmax=v_range[1], rasterized=True)
+            if j == 0:
+                n_neurons = heatmap_df.shape[0]
+                ax.set_yticks([n_neurons])
+                neuron_count += n_neurons
+                ax.set_yticklabels([neuron_count])
+            else:
+                ax.set_yticks([])
+    # formatting
+    timepoints = tuning_df.action_aligned_rates.columns.astype(float).values
+    n_xtick = 5
+    xticks = np.linspace(0, len(timepoints), n_xtick)
+    xticklabels = [f"{x:.1f}" for x in np.linspace(timepoints[0], timepoints[-1], n_xtick)]
+    midpoint = len(timepoints) // 2
+    for ax in axes.flatten():
+        ax.axvline(midpoint, color="snow", linestyle="--", alpha=0.5)
+        ax.set_xticks(xticks)
+        ax.set_xticklabels(xticklabels)
+        ax.set_xlabel("time (s)")
+    axes[0, 0].set_ylabel("neurons")
+    for ax, act in zip(axes[0, :], ["left", "forward", "right"]):
+        ax.set_title(act, fontsize=10)
 
 
 def _get_heatmap_df(
@@ -152,12 +159,6 @@ def _get_heatmap_df(
         metrics = metrics[metrics.pref_action.all_action.frac.gt(min_pref_action_frac)]
     keep_clusters = metrics.index.values
     tuning = tuning_df.iloc[tuning_df.index.get_level_values(0).isin(keep_clusters)]
-    # normalise tuning curves
-    # if normalise == "zscore":
-    #     tcs = zscore(tuning.values, axis=1)
-    #     tuning = pd.DataFrame(tcs, index=tuning.index, columns=tuning.columns)
-    # else:
-    #     raise NotImplementedError
     # smooth tuning curves
     if smooth_SD:
         tcs = gaussian_filter1d(tuning.values, smooth_SD, axis=1)
@@ -196,8 +197,8 @@ def get_population_egocentric_action_tuning(
     sessions=None,
     actions=["turn_left", "turn_right", "go_forward"],
     include_action_type=False,
-    window=(-3, 3),
-    min_split_half_corr=0.4,
+    window=(-2, 2),
+    min_split_half_corr=0.3,
     max_jobs=10,
     with_metrics=True,
     verbose=False,

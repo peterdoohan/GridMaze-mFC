@@ -166,6 +166,7 @@ class Cluster:
                 "smooth_SD": 5,
                 "concise": False,
                 "action_type": "all",
+                "colors": ["darkred", "royalblue", "grey"],
             }
 
         elif feature == "angle_to_goal":
@@ -467,7 +468,11 @@ class Cluster:
         if feature == "actions":
             if feature_kwargs["concise"]:
                 actions.plot_action_tunning_concise(
-                    tuning_data, ax=ax, smooth_SD=feature_kwargs["smooth_SD"], action_type=feature_kwargs["action_type"]
+                    tuning_data,
+                    ax=ax,
+                    smooth_SD=feature_kwargs["smooth_SD"],
+                    action_type=feature_kwargs["action_type"],
+                    colors=feature_kwargs["colors"],
                 )
             else:
                 actions.plot_action_tuning(
