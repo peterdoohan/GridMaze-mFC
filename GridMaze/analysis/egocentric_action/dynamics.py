@@ -17,7 +17,7 @@ from GridMaze.analysis.egocentric_action import population_tuning as pt
 # %% Functions
 
 
-def test(
+def get_population_tuning_df(
     subject_IDs="all",
     maze_names=["maze_1", "maze_2"],  # frew forced choice on rooms_maze
     late_sessions=False,
@@ -88,7 +88,10 @@ def PC_plot(
 ):
     # set up fig
     if ax is None or f is None:
-        f, ax = _init_3D_plot(PCs)
+        if len(PCs) == 3:
+            f, ax = _init_3D_plot(PCs)
+        else:
+            f, ax = _init_2D_plot(PCs)
 
     # filter clusters going into PCA
     keep_clusters = _filter_clusters(
@@ -117,15 +120,34 @@ def PC_plot(
         for action, color in zip(actions, colors):
             action_activity = choice_type_activity[action]
             A = action_activity.values  # n_neurons, timepoints
-            traj_x = A.T @ pc_components[PCs[0], :]
-            traj_y = A.T @ pc_components[PCs[1], :]
-            traj_z = A.T @ pc_components[PCs[2], :]
-            ax.plot(traj_x, traj_y, traj_z, color=color, linestyle=ls, label=f"{choice_type} {action}", lw=2)
-            # add markers for the start and end of each trajectory
-            facecolor = "none" if choice_type == "forced" else color
-            ax.scatter(traj_x[0], traj_y[0], traj_z[0], color=color, marker="o", facecolor=facecolor, s=50)
-            ax.scatter(traj_x[-1], traj_y[-1], traj_z[-1], color=color, marker="*", facecolor=facecolor, s=50)
-    ax.legend(fontsize=8)
+            if len(PCs) == 3:
+                _3d_plot(A, pc_components, PCs, ax, color, ls, choice_type, action)
+            elif len(PCs) == 2:
+                _2d_plot(A, pc_components, PCs, ax, color, ls, choice_type, action)
+            else:
+                raise NotImplementedError(f"PCs must be 2 or 3, got {len(PCs)}")
+    ax.legend(fontsize=8, loc="center left", bbox_to_anchor=(1, 0.5))
+
+
+def _3d_plot(A, pc_components, PCs, ax, color, ls, choice_type, action):
+    traj_x = A.T @ pc_components[PCs[0], :]
+    traj_y = A.T @ pc_components[PCs[1], :]
+    traj_z = A.T @ pc_components[PCs[2], :]
+    ax.plot(traj_x, traj_y, traj_z, color=color, linestyle=ls, label=f"{choice_type} {action}", lw=2)
+    # add markers for the start and end of each trajectory
+    facecolor = "none" if choice_type == "forced" else color
+    ax.scatter(traj_x[0], traj_y[0], traj_z[0], color=color, marker="o", facecolor=facecolor, s=50)
+    ax.scatter(traj_x[-1], traj_y[-1], traj_z[-1], color=color, marker="*", facecolor=facecolor, s=50)
+
+
+def _2d_plot(A, pc_components, PCs, ax, color, ls, choice_type, action):
+    traj_x = A.T @ pc_components[PCs[0], :]
+    traj_y = A.T @ pc_components[PCs[1], :]
+    ax.plot(traj_x, traj_y, color=color, linestyle=ls, label=f"{choice_type} {action}", lw=2)
+    # add markers for the start and end of each trajectory
+    facecolor = "none" if choice_type == "forced" else color
+    ax.scatter(traj_x[0], traj_y[0], color=color, marker="o", facecolor=facecolor, s=50)
+    ax.scatter(traj_x[-1], traj_y[-1], color=color, marker="*", facecolor=facecolor, s=50)
 
 
 def _filter_clusters(
@@ -147,8 +169,8 @@ def _filter_clusters(
     return keep_clusters
 
 
-def _init_3D_plot(PCs):
-    f = plt.figure(figsize=(5, 5))
+def _init_3D_plot(PCs, figsize=(5, 5)):
+    f = plt.figure(figsize=figsize)
     ax = f.add_subplot(111, projection="3d")
     # make the panes transparent
     ax.xaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
@@ -164,4 +186,14 @@ def _init_3D_plot(PCs):
     ax.set_xlabel(f"PC{PCs[0]}")
     ax.set_ylabel(f"PC{PCs[1]}")
     ax.set_zlabel(f"PC{PCs[2]}")
+    return f, ax
+
+
+def _init_2D_plot(PCs, figsize=(2, 2)):
+    f, ax = plt.subplots(figsize=figsize)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_xlabel(f"PC{PCs[0]}")
+    ax.set_ylabel(f"PC{PCs[1]}")
+    ax.set_xticks([])
+    ax.set_yticks([])
     return f, ax
