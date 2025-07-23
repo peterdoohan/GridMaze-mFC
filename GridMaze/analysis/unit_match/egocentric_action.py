@@ -8,6 +8,8 @@ import json
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
+from scipy.ndimage import gaussian_filter1d
+from scipy.stats import zscore
 
 
 from GridMaze.analysis.core import get_sessions as gs
@@ -27,6 +29,110 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as f:
 RESULTS_DIR = RESULTS_PATH / "unit_match" / "egocentric_action"
 
 MAZE_PAIRS = [("maze_1", "maze_2"), ("maze_2", "rooms_maze")]
+
+
+# %% Matched cell tuning heatmaps
+
+
+def plot_matched_egocentric_action_tuning_heatmap(
+    A,
+    B,
+    smooth_SD=14,
+    normalise="zscore",
+    order_by="CV_pref_max",
+    crop_window=False,
+    actions=["turn_left", "turn_right", "go_forward"],
+    fig=None,
+    axes=None,
+):
+    """ """
+    if axes is None or fig is None:
+        f, axes = plt.subplots(3, 6, figsize=(10, 5))
+    # unroll input
+    (tc_A, metrics_A), (tc_B, metrics_B) = A, B
+    # smooth
+    if smooth_SD:
+        tc_A = pd.DataFrame(gaussian_filter1d(tc_A.values, smooth_SD, axis=1), index=tc_A.index, columns=tc_A.columns)
+        tc_B = pd.DataFrame(gaussian_filter1d(tc_B.values, smooth_SD, axis=1), index=tc_B.index, columns=tc_B.columns)
+    # reshape to wide format (Fix below, dup entries means unstack won't work need to use .xs and concat)
+    wide_A, wide_B = [
+        tuning.unstack(level=1).swaplevel(1, 2, axis=1).sort_index(axis=1).action_aligned_rates
+        for tuning in (tc_A, tc_B)
+    ]
+    # normalise
+    if normalise == "zscore":
+        wide_A = pd.DataFrame(zscore(wide_A, axis=1), index=wide_A.index, columns=wide_A.columns)
+        wide_B = pd.DataFrame(zscore(wide_B, axis=1), index=wide_B.index, columns=wide_B.columns)
+    else:
+        raise NotImplementedError
+    # order and plot each action separately
+    for action in actions:
+        action_A
+
+    return
+
+
+def get_matched_egocentric_action_tuning_df(
+    min_split_half_corr=0.3,
+    min_pref_action_factor=2,
+    min_pref_action_frac=0.5,
+    shuffle_matched_pairs=True,
+    window=(-2, 2),
+    actions=["turn_left", "turn_right", "go_forward"],
+    verbose=True,
+):
+    """ """
+    # get all matched clusters that past input criteria for acion tuning
+    all_matches = []
+    for maze_pair in MAZE_PAIRS:
+        for subject_ID in SUBJECT_IDS:
+            matches = mm.get_cross_maze_matches(
+                subject_ID,
+                maze_pair,
+                single_units=True,
+                tuning_metric="egocentric_action",
+                tuning_metric_kwargs={
+                    "pref_action_factor": min_pref_action_factor,
+                    "pref_action_frac": min_pref_action_frac,
+                },
+                min_split_half_corr=min_split_half_corr,
+                return_as="cluster_unique_ID",
+                verbose=verbose,
+            )
+            if matches is None:
+                continue
+            else:
+                all_matches.extend(matches)
+    all_matches = np.array(all_matches)
+
+    if shuffle_matched_pairs:
+        shuffled = all_matches.copy()
+        for i in range(shuffled.shape[0]):
+            np.random.shuffle(shuffled[i])
+        all_matches = shuffled
+
+    # get all distance tuning curves
+    all_tuning_curves, all_metrics_dfs = [], []
+    for maze_pair in MAZE_PAIRS:
+        tuning_df, metrics_df = get_tuning_curves(
+            subject_ID="all",
+            maze_pair=maze_pair,
+            actions=actions,
+            window=window,
+            min_split_half_corr=min_split_half_corr,
+            wide_format=False,
+            verbose=verbose,
+        )
+        all_tuning_curves.append(tuning_df)
+        all_metrics_dfs.append(metrics_df)
+    all_tuning_curves = pd.concat(all_tuning_curves, axis=0)
+    all_metrics_dfs = pd.concat(all_metrics_dfs, axis=0)
+    # index tuning curves
+    tc_A = all_tuning_curves.loc[all_matches[:, 0]]
+    tc_B = all_tuning_curves.loc[all_matches[:, 1]]
+    metrics_A = all_metrics_dfs.loc[all_matches[:, 0]]
+    metrics_B = all_metrics_dfs.loc[all_matches[:, 1]]
+    return (tc_A, metrics_A), (tc_B, metrics_B)
 
 
 # %% Summary function
@@ -120,7 +226,7 @@ def get_cross_maze_egocentric_action_tuning_corrs(
     # get tuning curves
     if verbose:
         print("Loading ego-action tuning curves ...")
-    tuning_curves, metrics_df = get_tuning_curves(subject_ID=subject_ID, maze_pair=maze_pair, verbose=verbose)
+    tuning_curves, _ = get_tuning_curves(subject_ID=subject_ID, maze_pair=maze_pair, wide_format=True, verbose=verbose)
     # get true match corrs
     if verbose:
         print("Calculating true cross-maze correlations ...")
@@ -158,6 +264,7 @@ def get_tuning_curves(
     actions=["turn_left", "turn_right", "go_forward"],
     window=(-2, 2),
     min_split_half_corr=0.3,
+    wide_format=True,
     verbose=True,
 ):
     """
@@ -191,8 +298,11 @@ def get_tuning_curves(
             with_metrics=True,
             verbose=verbose,
         )
-        wide_df = tuning_df.unstack().swaplevel(1, 2, axis=1).sort_index(axis=1)
-        tuning_dfs.append(wide_df)
+        if wide_format:
+            wide_df = tuning_df.unstack().swaplevel(1, 2, axis=1).sort_index(axis=1)
+            tuning_dfs.append(wide_df)
+        else:
+            tuning_dfs.append(tuning_df)
         metric_dfs.append(metrics_df)
     return pd.concat(tuning_dfs, axis=0), pd.concat(metric_dfs, axis=0)
 

@@ -6,6 +6,7 @@ Library for matching cells across mazes & saving out all matches for future anal
 import json
 import copy
 import random
+import numpy as np
 from collections import Counter
 
 from GridMaze.analysis.core import unit_matching as um
@@ -81,6 +82,7 @@ def get_cross_maze_matches(
     maze_pair,
     single_units=True,
     tuning_metric=None,
+    tuning_metric_kwargs=None,
     min_split_half_corr=None,
     return_as="cluster_unique_ID",
     verbose=False,
@@ -101,7 +103,7 @@ def get_cross_maze_matches(
     all_matches = subject2cross_maze_matches[subject_ID][_maze_pair]
     # get valid units for the given single_units, tuning_metric, split_half_corr inputs
     valid_units = _get_available_units(
-        subject_ID, maze_pair, single_units, tuning_metric, min_split_half_corr, return_as="list"
+        subject_ID, maze_pair, single_units, tuning_metric, tuning_metric_kwargs, min_split_half_corr, return_as="list"
     )
     # check that each pair of matches are valid
     matches = []
@@ -131,6 +133,7 @@ def _get_available_units(
     maze_pair,
     single_units=True,
     tuning_metric=None,
+    tuning_metric_kwargs=None,
     min_split_half_corr=None,
     return_as="dict",
 ):
@@ -178,10 +181,22 @@ def _get_available_units(
 
                 elif tuning_metric == "place_direction":
                     df = session.cluster_place_direction_tuning_metrics
+
                     avail_units = df[df.split_half_corr.value.gt(min_split_half_corr)].index
                 elif tuning_metric == "egocentric_action":
                     df = session.cluster_egocentric_action_tuning_metrics
-                    avail_units = df[df.split_half_corr.all_action.value.gt(min_split_half_corr)].cluster_unique_ID
+                    masks = [df.single_unit]
+                    if min_split_half_corr is not None:
+                        masks.append(df.split_half_corr.all_action.value.gt(min_split_half_corr))
+                    if tuning_metric_kwargs is not None:
+                        pref_action_factor = tuning_metric_kwargs["pref_action_factor"]
+                        pref_action_frac = tuning_metric_kwargs["pref_action_frac"]
+                        if pref_action_factor is not None:
+                            masks.append(df.pref_action.all_action.factor.gt(pref_action_factor))
+                        if pref_action_frac is not None:
+                            masks.append(df.pref_action.all_action.frac.gt(pref_action_frac))
+                    filt_df = df[np.logical_and.reduce(masks)]
+                    avail_units = filt_df.cluster_unique_ID
                 # single unit by default when filtering for tuning
             session_name2single_units[session.name] = list(avail_units)
     if return_as == "dict":
