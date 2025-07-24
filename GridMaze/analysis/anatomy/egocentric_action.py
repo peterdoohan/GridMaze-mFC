@@ -48,23 +48,9 @@ def get_session_egoaction_anat_df(
     """ """
     # load data
     ego_metrics_df = session.cluster_egocentric_action_tuning_metrics
+    ego_metrics_df = ego_metrics_df[ego_metrics_df.single_unit]
     cluster_metrics = session.cluster_metrics
-    # filter for egocentric action tuned clusters based on input params
-    mask = [ego_metrics_df.single_unit]
-    # filter for neurons with prefered action
-    mask.append(ego_metrics_df.pref_action.all_action.name.isin(actions))
-    if min_split_half_corr is not None:
-        # filter for neurons with split-half correlation above threshold
-        mask.append(ego_metrics_df.split_half_corr.all_action.value.gt(min_split_half_corr))
-    if min_pref_action_factor is not None:
-        # filter for neurons that fire more for the prefered action than the other actions
-        mask.append(ego_metrics_df.pref_action.all_action.factor.gt(min_pref_action_factor))
-    if min_pref_action_frac is not None:
-        # filter for neurons that fire consistently for the prefered action
-        mask.append(ego_metrics_df.pref_action.all_action.frac.gt(min_pref_action_frac))
-    mask = np.logical_and.reduce(mask)
-    ego_metrics_df = ego_metrics_df.loc[mask]
-    cluster_metrics = cluster_metrics.loc[mask]
+    cluster_metrics = cluster_metrics[cluster_metrics.single_unit]
     # combine ant and tuning info
     _output_df = pd.concat(
         [
