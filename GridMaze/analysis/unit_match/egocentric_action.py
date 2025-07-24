@@ -10,6 +10,7 @@ import pandas as pd
 from matplotlib import pyplot as plt
 from scipy.ndimage import gaussian_filter1d
 from scipy.stats import zscore
+import seaborn as sns
 
 
 from GridMaze.analysis.core import get_sessions as gs
@@ -34,20 +35,29 @@ MAZE_PAIRS = [("maze_1", "maze_2"), ("maze_2", "rooms_maze")]
 # %% Matched cell tuning heatmaps
 
 
+def plot_matched_heatmap_quartiles():
+    """ """
+    return
+
+
 def plot_matched_egocentric_action_tuning_heatmap(
     A,
     B,
     smooth_SD=14,
     normalise="zscore",
-    order_by="CV_pref_max",
+    order_by="pref_max",
     crop_window=False,
-    actions=["turn_left", "turn_right", "go_forward"],
+    actions=["turn_left", "go_forward", "turn_right"],
+    cmap="coolwarm",
+    v_range=(-1, 3),
     fig=None,
     axes=None,
 ):
     """ """
+    n_actions = len(actions)
     if axes is None or fig is None:
-        f, axes = plt.subplots(3, 6, figsize=(10, 5))
+        f, axes = plt.subplots(n_actions, 6, figsize=(4, 4), height_ratios=[1, 0.2, 1], sharex=True)
+    f.subplots_adjust(wspace=0.05, hspace=0.05)
     # unroll input
     (tc_A, metrics_A), (tc_B, metrics_B) = A, B
     # smooth
@@ -55,10 +65,7 @@ def plot_matched_egocentric_action_tuning_heatmap(
         tc_A = pd.DataFrame(gaussian_filter1d(tc_A.values, smooth_SD, axis=1), index=tc_A.index, columns=tc_A.columns)
         tc_B = pd.DataFrame(gaussian_filter1d(tc_B.values, smooth_SD, axis=1), index=tc_B.index, columns=tc_B.columns)
     # reshape to wide format (Fix below, dup entries means unstack won't work need to use .xs and concat)
-    wide_A, wide_B = [
-        tuning.unstack(level=1).swaplevel(1, 2, axis=1).sort_index(axis=1).action_aligned_rates
-        for tuning in (tc_A, tc_B)
-    ]
+    wide_A, wide_B = [_get_wide_df(tc) for tc in (tc_A, tc_B)]
     # normalise
     if normalise == "zscore":
         wide_A = pd.DataFrame(zscore(wide_A, axis=1), index=wide_A.index, columns=wide_A.columns)
@@ -66,10 +73,124 @@ def plot_matched_egocentric_action_tuning_heatmap(
     else:
         raise NotImplementedError
     # order and plot each action separately
-    for action in actions:
-        action_A
+    neuron_count = 0
+    for i, action in enumerate(actions):
+        # filter clusters for pref action only from heatmap A
+        A_action_clusters = metrics_A[metrics_A.pref_action.all_action.name == action].index.values
+        action_pref_mask = wide_A.index.isin(A_action_clusters)
+        actions_A = wide_A.loc[action_pref_mask].action_aligned_rates
+        actions_B = wide_B.loc[action_pref_mask].action_aligned_rates
+        # always order by heatmap A (t_max of pref action, CV or non CV)
+        if order_by == "CV_pref_max":
+            t_max = actions_A.index.map(metrics_A.pref_action.all_action.t_max.to_dict())
+        elif order_by == "pref_max":
+            t_max = actions_A[action].idxmax(axis=1).values.astype(float)
+        else:
+            NotImplementedError
+        # reorder
+        actions_A[("t_max", "")] = t_max
+        actions_A.sort_values(by=("t_max", ""), inplace=True)
+        actions_A.drop(columns=("t_max", ""), inplace=True)
+        actions_B[("t_max", "")] = t_max
+        actions_B.sort_values(by=("t_max", ""), inplace=True)
+        actions_B.drop(columns=("t_max", ""), inplace=True)
+        if crop_window:
+            timepoints = actions_A.columns.get_level_values(1).astype(float)
+            crop_mask = (timepoints >= crop_window[0]) & (timepoints <= crop_window[1])
+            actions_A = actions_A.loc[:, crop_mask]
+            actions_B = actions_B.loc[:, crop_mask]
+        # plot
+        for j, _action in enumerate(actions):
+            ax_A = axes[i, j]
+            ax_B = axes[i, j + n_actions]
+            t_A = actions_A[_action].values
+            t_B = actions_B[_action].values
+            sns.heatmap(t_A, ax=ax_A, cmap=cmap, vmin=v_range[0], vmax=v_range[1], cbar=False, rasterized=True)
+            sns.heatmap(t_B, ax=ax_B, cmap=cmap, vmin=v_range[0], vmax=v_range[1], cbar=False, rasterized=True)
+            if j == 0:
+                n_neurons = actions_A.shape[0]
+                ax_A.set_yticks([n_neurons])
+                neuron_count += n_neurons
+                ax_A.set_yticklabels([neuron_count])
+            else:
+                ax_A.set_yticks([])
+            ax_B.set_yticks([])
+    # formatting
+    timepoints = actions_A["go_forward"].columns.astype(float).values
+    n_xtick = 5
+    xticks = np.linspace(0, len(timepoints), n_xtick)
+    xticklabels = [f"{x:.1f}" for x in np.linspace(timepoints[0], timepoints[-1], n_xtick)]
+    midpoint = len(timepoints) // 2
+    for ax in axes.flatten():
+        ax.axvline(midpoint, color="snow", linestyle="--", alpha=0.5)
+        ax.set_xticks(xticks)
+        ax.set_xticklabels(xticklabels)
+        ax.set_xlabel("time (s)")
+    axes[0, 0].set_ylabel("neurons")
+    for ax, act in zip(axes[0, :], ["left", "forward", "right"]):
+        ax.set_title(act, fontsize=10)
 
-    return
+
+def _get_matched_heatmaps(
+    tc_A,
+    tc_B,
+    metrics_A,
+    pref_action,
+    order_by="pref_max",
+    smooth_SD=14,
+    normalise="zscore",
+    crop_window=False,
+):
+    """ """
+    # smooth
+    if smooth_SD:
+        tc_A = pd.DataFrame(gaussian_filter1d(tc_A.values, smooth_SD, axis=1), index=tc_A.index, columns=tc_A.columns)
+        tc_B = pd.DataFrame(gaussian_filter1d(tc_B.values, smooth_SD, axis=1), index=tc_B.index, columns=tc_B.columns)
+    # reshape to wide format (Fix below, dup entries means unstack won't work need to use .xs and concat)
+    wide_A, wide_B = [_get_wide_df(tc) for tc in (tc_A, tc_B)]
+    # normalise
+    if normalise == "zscore":
+        wide_A = pd.DataFrame(zscore(wide_A, axis=1), index=wide_A.index, columns=wide_A.columns)
+        wide_B = pd.DataFrame(zscore(wide_B, axis=1), index=wide_B.index, columns=wide_B.columns)
+    else:
+        raise NotImplementedError
+    # order and plot each action separately
+    # filter clusters for pref action only from heatmap A
+    A_action_clusters = metrics_A[metrics_A.pref_action.all_action.name == pref_action].index.values
+    action_pref_mask = wide_A.index.isin(A_action_clusters)
+    actions_A = wide_A.loc[action_pref_mask].action_aligned_rates
+    actions_B = wide_B.loc[action_pref_mask].action_aligned_rates
+    # always order by heatmap A (t_max of pref action, CV or non CV)
+    if order_by == "CV_pref_max":
+        t_max = actions_A.index.map(metrics_A.pref_action.all_action.t_max.to_dict())
+    elif order_by == "pref_max":
+        t_max = actions_A[pref_action].idxmax(axis=1).values.astype(float)
+    else:
+        NotImplementedError
+    # reorder
+    actions_A[("t_max", "")] = t_max
+    actions_A.sort_values(by=("t_max", ""), inplace=True)
+    actions_A.drop(columns=("t_max", ""), inplace=True)
+    actions_B[("t_max", "")] = t_max
+    actions_B.sort_values(by=("t_max", ""), inplace=True)
+    actions_B.drop(columns=("t_max", ""), inplace=True)
+    if crop_window:
+        timepoints = actions_A.columns.get_level_values(1).astype(float)
+        crop_mask = (timepoints >= crop_window[0]) & (timepoints <= crop_window[1])
+        actions_A = actions_A.loc[:, crop_mask]
+        actions_B = actions_B.loc[:, crop_mask]
+    return actions_A, actions_B
+
+
+def _get_wide_df(tuning_df):
+    """get wide version of tuning df in instance of non-unique rows"""
+    actions = tuning_df.index.get_level_values(1).unique()
+    dfs = []
+    for act in actions:
+        _df = tuning_df.xs(act, level=1, axis=0)
+        _df.columns = pd.MultiIndex.from_tuples([(col[0], act, col[1]) for col in _df.columns])
+        dfs.append(_df)
+    return pd.concat(dfs, axis=1)
 
 
 def get_matched_egocentric_action_tuning_df(
