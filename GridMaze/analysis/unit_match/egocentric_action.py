@@ -3,6 +3,7 @@ Library for anlysing egocentric-action single cell tuning patterns across mazes.
 """
 
 # %% Imports
+import cmap
 import h5py
 import json
 import numpy as np
@@ -35,9 +36,57 @@ MAZE_PAIRS = [("maze_1", "maze_2"), ("maze_2", "rooms_maze")]
 # %% Matched cell tuning heatmaps
 
 
-def plot_matched_heatmap_quartiles():
+def plot_matched_heatmap_quantiles(
+    A,
+    B,
+    actions=["turn_left", "turn_right"],
+    order_by="pref_max",
+    smooth_SD=14,
+    normalise="zscore",
+    crop_window=(-1, 1),
+    n_quantiles=2,
+    cmaps=[("Purples", "Blues"), ("Oranges", "Greens")],  # a1, a2 (A), b1, b2 (B)
+    axes=None,
+):
     """ """
-    return
+    if axes is None:
+        f, axes = plt.subplots(2, 2, figsize=(4, 4), sharex=False, sharey=True)
+    for ax in axes.flatten():
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.set_xlabel("time (s)")
+        ax.set_ylabel("norm. firing rate")
+    (tc_A, metrics_A), (tc_B, metrics_B) = A, B
+    for i, pref_action in enumerate(actions):
+        heatmap_A, heatmap_B = _get_matched_heatmaps(
+            tc_A,
+            tc_B,
+            metrics_A,
+            pref_action,
+            order_by=order_by,
+            smooth_SD=smooth_SD,
+            normalise=normalise,
+            crop_window=crop_window,
+        )
+        n_neurons = heatmap_A.shape[0]
+        neuron_group_size = n_neurons // n_quantiles
+        _n_groups = np.minimum(np.arange(n_neurons) // neuron_group_size, n_quantiles - 1)
+        A_quantiles = heatmap_A.groupby(_n_groups).mean()
+        B_quantiles = heatmap_B.groupby(_n_groups).mean()
+        colors_A = sns.color_palette(cmaps[i][0], n_colors=n_quantiles)
+        colors_B = sns.color_palette(cmaps[i][1], n_colors=n_quantiles)
+        for j, _action in enumerate(actions):
+            ax = axes[i, j]
+            A_qs = A_quantiles[_action]
+            B_qs = B_quantiles[_action]
+            for k in range(n_quantiles):
+                Aq = A_qs.loc[k]
+                Bq = B_qs.loc[k]
+                x = Aq.index.astype(float).values
+                A_y = Aq.values
+                B_y = Bq.values
+                ax.plot(x, A_y, color=colors_A[k], label=f"A: {_action} - Q{k}", alpha=0.5)
+                ax.plot(x, B_y, color=colors_B[k], label=f"B: {_action} - Q{k}", alpha=0.5)
+                ax.legend(loc="upper right", bbox_to_anchor=(1.2, 1), fontsize=6)
 
 
 def plot_matched_egocentric_action_tuning_heatmap(
@@ -60,45 +109,19 @@ def plot_matched_egocentric_action_tuning_heatmap(
     f.subplots_adjust(wspace=0.05, hspace=0.05)
     # unroll input
     (tc_A, metrics_A), (tc_B, metrics_B) = A, B
-    # smooth
-    if smooth_SD:
-        tc_A = pd.DataFrame(gaussian_filter1d(tc_A.values, smooth_SD, axis=1), index=tc_A.index, columns=tc_A.columns)
-        tc_B = pd.DataFrame(gaussian_filter1d(tc_B.values, smooth_SD, axis=1), index=tc_B.index, columns=tc_B.columns)
-    # reshape to wide format (Fix below, dup entries means unstack won't work need to use .xs and concat)
-    wide_A, wide_B = [_get_wide_df(tc) for tc in (tc_A, tc_B)]
-    # normalise
-    if normalise == "zscore":
-        wide_A = pd.DataFrame(zscore(wide_A, axis=1), index=wide_A.index, columns=wide_A.columns)
-        wide_B = pd.DataFrame(zscore(wide_B, axis=1), index=wide_B.index, columns=wide_B.columns)
-    else:
-        raise NotImplementedError
     # order and plot each action separately
     neuron_count = 0
     for i, action in enumerate(actions):
-        # filter clusters for pref action only from heatmap A
-        A_action_clusters = metrics_A[metrics_A.pref_action.all_action.name == action].index.values
-        action_pref_mask = wide_A.index.isin(A_action_clusters)
-        actions_A = wide_A.loc[action_pref_mask].action_aligned_rates
-        actions_B = wide_B.loc[action_pref_mask].action_aligned_rates
-        # always order by heatmap A (t_max of pref action, CV or non CV)
-        if order_by == "CV_pref_max":
-            t_max = actions_A.index.map(metrics_A.pref_action.all_action.t_max.to_dict())
-        elif order_by == "pref_max":
-            t_max = actions_A[action].idxmax(axis=1).values.astype(float)
-        else:
-            NotImplementedError
-        # reorder
-        actions_A[("t_max", "")] = t_max
-        actions_A.sort_values(by=("t_max", ""), inplace=True)
-        actions_A.drop(columns=("t_max", ""), inplace=True)
-        actions_B[("t_max", "")] = t_max
-        actions_B.sort_values(by=("t_max", ""), inplace=True)
-        actions_B.drop(columns=("t_max", ""), inplace=True)
-        if crop_window:
-            timepoints = actions_A.columns.get_level_values(1).astype(float)
-            crop_mask = (timepoints >= crop_window[0]) & (timepoints <= crop_window[1])
-            actions_A = actions_A.loc[:, crop_mask]
-            actions_B = actions_B.loc[:, crop_mask]
+        actions_A, actions_B = _get_matched_heatmaps(
+            tc_A,
+            tc_B,
+            metrics_A,
+            action,
+            order_by=order_by,
+            smooth_SD=smooth_SD,
+            normalise=normalise,
+            crop_window=crop_window,
+        )
         # plot
         for j, _action in enumerate(actions):
             ax_A = axes[i, j]
