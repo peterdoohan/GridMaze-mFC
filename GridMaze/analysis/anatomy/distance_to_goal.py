@@ -59,7 +59,6 @@ def plot_anatomical_distance_tuning(anat_df, f=None, axes=None, jitter=2, colorm
         vmin, vmax = dist_p50.min(), 1.5
         cmap = cm.get_cmap(colormap)
         norm = Normalize(vmin=vmin, vmax=vmax, clip=True)
-        # colors = cmap(norm(dist_p50))
         if x == "z":
             sc = ax.scatter(_x, _y, c=dist_p50, cmap=cmap, norm=norm, s=0.5, alpha=0.3)
         else:
