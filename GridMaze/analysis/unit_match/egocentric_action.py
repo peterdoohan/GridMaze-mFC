@@ -55,6 +55,7 @@ def plot_matched_heatmap_quantiles(
         ax.spines[["top", "right"]].set_visible(False)
         ax.set_xlabel("time (s)")
         ax.set_ylabel("norm. firing rate")
+        ax.axvline(0, color="k", linestyle=":", alpha=0.5)
     (tc_A, metrics_A), (tc_B, metrics_B) = A, B
     for i, pref_action in enumerate(actions):
         heatmap_A, heatmap_B = _get_matched_heatmaps(
