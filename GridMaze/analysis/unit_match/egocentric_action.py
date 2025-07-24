@@ -44,8 +44,8 @@ def plot_matched_heatmap_quantiles(
     smooth_SD=14,
     normalise="zscore",
     crop_window=(-1, 1),
-    n_quantiles=2,
-    cmaps=[("Purples", "Blues"), ("Oranges", "Greens")],  # a1, a2 (A), b1, b2 (B)
+    n_quantiles=3,
+    cmaps=["Purples", "Blues"],
     axes=None,
 ):
     """ """
@@ -72,21 +72,21 @@ def plot_matched_heatmap_quantiles(
         _n_groups = np.minimum(np.arange(n_neurons) // neuron_group_size, n_quantiles - 1)
         A_quantiles = heatmap_A.groupby(_n_groups).mean()
         B_quantiles = heatmap_B.groupby(_n_groups).mean()
-        colors_A = sns.color_palette(cmaps[i][0], n_colors=n_quantiles)
-        colors_B = sns.color_palette(cmaps[i][1], n_colors=n_quantiles)
         for j, _action in enumerate(actions):
             ax = axes[i, j]
             A_qs = A_quantiles[_action]
             B_qs = B_quantiles[_action]
+            colors = sns.color_palette(cmaps[j], n_colors=n_quantiles)
             for k in range(n_quantiles):
                 Aq = A_qs.loc[k]
                 Bq = B_qs.loc[k]
                 x = Aq.index.astype(float).values
                 A_y = Aq.values
                 B_y = Bq.values
-                ax.plot(x, A_y, color=colors_A[k], label=f"A: {_action} - Q{k}", alpha=0.5)
-                ax.plot(x, B_y, color=colors_B[k], label=f"B: {_action} - Q{k}", alpha=0.5)
-                ax.legend(loc="upper right", bbox_to_anchor=(1.2, 1), fontsize=6)
+                ax.plot(x, A_y, color=colors[k], ls="-", label=f"A: {_action} - Q{k}", alpha=0.5)
+                ax.plot(x, B_y, color=colors[k], ls="--", label=f"B: {_action} - Q{k}", alpha=0.5)
+                if i == 1:
+                    ax.legend(loc="upper right", bbox_to_anchor=(1.2, 1), fontsize=6)
 
 
 def plot_matched_egocentric_action_tuning_heatmap(
@@ -124,8 +124,8 @@ def plot_matched_egocentric_action_tuning_heatmap(
         )
         # plot
         for j, _action in enumerate(actions):
-            ax_A = axes[i, j]
-            ax_B = axes[i, j + n_actions]
+            ax_A = axes[i, 2 * j]
+            ax_B = axes[i, 2 * j + 1]
             t_A = actions_A[_action].values
             t_B = actions_B[_action].values
             sns.heatmap(t_A, ax=ax_A, cmap=cmap, vmin=v_range[0], vmax=v_range[1], cbar=False, rasterized=True)
@@ -289,10 +289,33 @@ def plot_cross_maze_corrs_summary(results, print_stats=True, min_matches=10, ax=
     ax.set_ylabel("egocentric-action \n tuning corr.")
 
 
+def get_all_cross_maze_corrs():
+    results = []
+    for maze_pair in MAZE_PAIRS:
+        results.append(get_cross_maze_corr_summary(maze_pair))
+    # combine results into single dict
+    all_results = {}
+    for subject_ID in SUBJECT_IDS:
+        true = []
+        permuted = []
+        for r in results:
+            if subject_ID not in r.keys():
+                continue
+            t_array = r[subject_ID]["true_corrs"]
+            p_array = r[subject_ID]["permuted_corrs"]
+            true.append(t_array)
+            permuted.append(p_array)
+        all_results[subject_ID] = {
+            "true_corrs": np.hstack(true),  # n_matches
+            "permuted_corrs": np.hstack(permuted),  # n_maches by n_permutations
+        }
+    return all_results
+
+
 def get_cross_maze_corr_summary(
     maze_pair=("maze_1", "maze_2"),
     min_split_half_corr=0.3,
-    n_permutations=1_0,
+    n_permutations=1_000,
     save=False,
     verbose=False,
 ):

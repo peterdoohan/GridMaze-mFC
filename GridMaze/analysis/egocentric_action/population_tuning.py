@@ -23,7 +23,8 @@ from GridMaze.analysis.core import get_sessions as gs
 def plot_heatmap_quantiles(
     tuning_df,
     metrics_df,
-    pref_action="turn_left",
+    actions=["turn_left", "turn_right"],
+    cmaps=["Purples", "Blues"],
     min_pref_action_factor=2,
     min_pref_action_frac=0.5,
     normalise="zscore",
@@ -35,50 +36,43 @@ def plot_heatmap_quantiles(
 ):
     """ """
     if axes is None:
-        f, axes = plt.subplots(2, 1, figsize=(3, 3), height_ratios=[1, 0.5], sharex=False)
-    axes[0].spines[["top", "right", "bottom"]].set_visible(False)
-    axes[0].set_xticks([])
-    axes[1].spines[["top", "right"]].set_visible(False)
-    for ax in axes:
+        f, axes = plt.subplots(2, 2, figsize=(4, 4), sharex=True, sharey=True)
+    for ax in axes.flatten():
+        ax.spines[["top", "right"]].set_visible(False)
         ax.axvline(0, color="k", linestyle="--", alpha=0.5)
-    ax.set_title(pref_action, fontsize=10)
     # get heatmap
-    heatmap_df = _get_heatmap_df(
-        tuning_df,
-        metrics_df,
-        pref_action,
-        min_pref_action_factor,
-        min_pref_action_frac,
-        normalise,
-        smooth_SD,
-        order_by,
-        crop_window,
-    )
-    n_neurons = heatmap_df.shape[0]
-    neuron_group_size = n_neurons // n_quantiles
-    _n_groups = np.minimum(np.arange(n_neurons) // neuron_group_size, n_quantiles - 1)
-    quantile_df = heatmap_df.groupby(_n_groups).mean()
-    # plot
-    if pref_action == "turn_left":
-        action_order = ["turn_left", "turn_right"]
-        cmaps = ["Purples", "Blues"]
-    elif pref_action == "turn_right":
-        action_order = ["turn_right", "turn_left"]
-        cmaps = ["Blues", "Purples"]
-    else:
-        raise ValueError("pref_action must be either 'turn_left' or 'turn_right'")
-
-    for action, cmap, ax in zip(action_order, cmaps, axes):
-        aq_df = quantile_df[action]
-        colors = sns.color_palette(cmap, n_colors=n_quantiles)
-        for i in range(n_quantiles):
-            q = aq_df.loc[i]
-            x = q.index.astype(float).values
-            y = q.values
-            ax.plot(x, y, label=f"{action}: Q{i}", color=colors[i], lw=2)
-        ax.legend(loc="upper right", bbox_to_anchor=(1.2, 1), fontsize=8)
-    ax.set_xlabel("time (s)")
-    ax.set_ylabel("firing rate (z-scored)")
+    for i, action in enumerate(actions):
+        heatmap_df = _get_heatmap_df(
+            tuning_df,
+            metrics_df,
+            action,
+            min_pref_action_factor,
+            min_pref_action_frac,
+            normalise,
+            smooth_SD,
+            order_by,
+            crop_window,
+        )
+        n_neurons = heatmap_df.shape[0]
+        neuron_group_size = n_neurons // n_quantiles
+        _n_groups = np.minimum(np.arange(n_neurons) // neuron_group_size, n_quantiles - 1)
+        quantile_df = heatmap_df.groupby(_n_groups).mean()
+        # plot
+        for j, _action in enumerate(actions):
+            ax = axes[i, j]
+            colors = sns.color_palette(cmaps[j], n_colors=n_quantiles)
+            aq_df = quantile_df[_action]
+            for k in range(n_quantiles):
+                q = aq_df.loc[k]
+                x = q.index.astype(float).values
+                y = q.values
+                ax.plot(x, y, label=f"{_action}: Q{k}", color=colors[k], lw=2)
+            if i == 1:
+                ax.legend(loc="upper right", bbox_to_anchor=(1.2, 1), fontsize=8)
+        for ax in axes[1, :]:
+            ax.set_xlabel("time (s)")
+        for ax in axes[:, 0]:
+            ax.set_ylabel("firing rate (z-scored)")
 
 
 def plot_egocentric_action_tuning_heatmap(

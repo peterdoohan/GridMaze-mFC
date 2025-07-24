@@ -34,7 +34,13 @@ MAZE_PAIR2VALID_DAYS = {
 
 
 def get_permuted_cross_maze_matches(
-    subject_ID, maze_pair, n_permutations=1000, single_units=True, tuning_metric=None, min_split_half_corr=None
+    subject_ID,
+    maze_pair,
+    n_permutations=1000,
+    single_units=True,
+    tuning_metric=None,
+    tuning_metric_kwargs=None,
+    min_split_half_corr=None,
 ):
     """
     Generates random matches between paired sessions for true unit matching aross mazes for a given subject.
@@ -43,7 +49,13 @@ def get_permuted_cross_maze_matches(
     """
     # get true matches
     true_matches = get_cross_maze_matches(
-        subject_ID, maze_pair, single_units, tuning_metric, min_split_half_corr, return_as="cluster_unique_ID"
+        subject_ID,
+        maze_pair,
+        single_units,
+        tuning_metric,
+        tuning_metric_kwargs,
+        min_split_half_corr,
+        return_as="cluster_unique_ID",
     )
     if true_matches is None:
         return None
@@ -51,7 +63,7 @@ def get_permuted_cross_maze_matches(
     session_pair2count = _session_pair2n_matches(true_matches)
     # get all availble with same filtering criteria for true matches
     session_name2avail_units = _get_available_units(
-        subject_ID, maze_pair, single_units, tuning_metric, min_split_half_corr, return_as="dict"
+        subject_ID, maze_pair, single_units, tuning_metric, tuning_metric_kwargs, min_split_half_corr, return_as="dict"
     )
     # get permuted matches
     permuted_matches = []
