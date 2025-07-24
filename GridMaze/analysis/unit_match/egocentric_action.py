@@ -105,8 +105,8 @@ def plot_matched_egocentric_action_tuning_heatmap(
     """ """
     n_actions = len(actions)
     if axes is None or fig is None:
-        f, axes = plt.subplots(n_actions, 6, figsize=(4, 4), height_ratios=[1, 0.2, 1], sharex=True)
-    f.subplots_adjust(wspace=0.05, hspace=0.05)
+        fig, axes = plt.subplots(n_actions, 6, figsize=(4, 4), height_ratios=[1, 0.2, 1], sharex=True)
+    fig.subplots_adjust(wspace=0.05, hspace=0.05)
     # unroll input
     (tc_A, metrics_A), (tc_B, metrics_B) = A, B
     # order and plot each action separately
