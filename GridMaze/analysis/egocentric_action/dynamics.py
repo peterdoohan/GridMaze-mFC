@@ -4,6 +4,7 @@ Visualise population dynamics around egocentric actions
 """
 
 # %% Imports
+from cv2 import subtract
 import pandas as pd
 from scipy.ndimage import gaussian_filter1d
 from scipy.stats import zscore
@@ -81,7 +82,8 @@ def PC_plot(
     min_spit_half_corr=False,
     min_pref_action_factor=False,
     min_pref_action_frac=False,
-    crop_window=(-1.5, 1.5),
+    crop_window=False,
+    subtract_action_mean=False,
     PCs=(0, 1, 2),
     f=None,
     ax=None,
@@ -104,9 +106,16 @@ def PC_plot(
 
     # clip window around action to going into PCA
     if crop_window:
-        timepoints = wide_df.columns.get_level_values(2).astype(float)
+        timepoints = df.columns.get_level_values(2).astype(float)
         crop_mask = (timepoints >= crop_window[0]) & (timepoints <= crop_window[1])
-        wide_df = wide_df.loc[:, crop_mask]
+        df = df.loc[:, crop_mask]
+
+    # subtract the mean across action types
+    if subtract_action_mean:
+        tuning_df = df.stack(level=[0, 1], future_stack=True)
+        action_type_mean_df = tuning_df.groupby(level=0).mean()
+        norm_tuning_df = tuning_df - action_type_mean_df
+        df = norm_tuning_df.unstack(level=[2, 1]).swaplevel(0, 2, axis=1).sort_index(axis=1)
 
     # do PCA
     X = df.values  # n_neurons, n_tuning curves (2 (free/forced) x n_actions x timepoints)

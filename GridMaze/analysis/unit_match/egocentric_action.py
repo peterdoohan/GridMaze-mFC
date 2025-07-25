@@ -84,8 +84,8 @@ def plot_matched_heatmap_quantiles(
                 x = Aq.index.astype(float).values
                 A_y = Aq.values
                 B_y = Bq.values
-                ax.plot(x, A_y, color=colors[k], ls="-", label=f"A: {_action} - Q{k}", alpha=0.5)
-                ax.plot(x, B_y, color=colors[k], ls="--", label=f"B: {_action} - Q{k}", alpha=0.5)
+                ax.plot(x, A_y, color=colors[k], ls="-", label=f"A: {_action} - Q{k}")
+                ax.plot(x, B_y, color=colors[k], ls="--", label=f"B: {_action} - Q{k}")
                 if i == 1:
                     ax.legend(loc="upper right", bbox_to_anchor=(1.2, 1), fontsize=6)
 
