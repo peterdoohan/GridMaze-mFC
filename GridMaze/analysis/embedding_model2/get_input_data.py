@@ -18,6 +18,8 @@ from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.distance_to_goal import bases as db
 from GridMaze.analysis.distance_to_goal import distributions as dd
 
+from GridMaze.analysis.lfp import extract_lfp_phase as elp
+
 
 # %% Global Variables
 
@@ -82,7 +84,13 @@ def get_session_input_data(
     # load data (single units only)
     df = session.get_navigation_activity_df(type="spikes", cluster_kwargs={"single_units": True, "multi_units": False})
     # update ego-action definitions of high-frame rate data
-    df = _conditional_ffill(df, [("action", "basic"), ("action", "choice_degree")], ("maze_position", "simple"))
+    if "egocentric_action" in input_features:
+        df = _conditional_ffill(df, [("action", "basic"), ("action", "choice_degree")], ("maze_position", "simple"))
+    # add theta phase
+    if "theta_phase" in input_features:
+        df[("theta_phase", "")] = elp.get_nearest_theta_phase(
+            session, df.time.values, signal_type="LFP", return_binned=False
+        )
     # downsample data
     df = ds.downsample_navigation_activity_df(df, resolution=resolution)
     # filter navigation data
@@ -101,7 +109,6 @@ def get_session_input_data(
         if verbose:
             print("No neurons meet min spike count threshold")
         return None
-
     # gather feature data
     X, X_type_inds, ind = [], [], 0
     for _input in input_features:
@@ -149,39 +156,38 @@ def _conditional_ffill(df, column_to_fill, condition_column):
 def get_input_features(df, input_feature, input_kwargs):
     # main variables of interest
     if input_feature == "distance_to_goal":
-        raise NotImplementedError
+        x = _get_distance_to_goal_regressors(df, **(input_kwargs or {}))
     elif input_feature == "place_direction":
-        raise NotImplementedError
+        x = _get_place_direction_regressors(df, regressor="place_direction")
     elif input_feature == "egocentric_action":
-        raise NotImplementedError
+        x = _get_egocentric_action_regressors(df, **(input_kwargs or {}))
 
-    # derivate variables
+    # derivative variables
     elif input_feature == "place_direction_distance_to_goal_egocentric_action":
         raise NotImplementedError
     elif input_feature == "place":
-        raise NotImplementedError
+        x = _get_place_direction_regressors(df, regressor="place")
     elif input_feature == "direction":
-        raise NotImplementedError
+        x = _get_place_direction_regressors(df, regressor="direction")
 
-    # other cognitive varaibles
+    # other cognitive variables
     elif input_feature == "goal":
-        raise NotImplementedError
+        x = _get_goal_regressors(df)
     elif input_feature == "egocentric_angle_to_goal":
-        raise NotImplementedError
+        x = _get_angle_to_goal_regressors(df, metric="egocentric")
     elif input_feature == "allocentric_angle_to_goal":
-        raise NotImplementedError
+        x = _get_angle_to_goal_regressors(df, metric="allocentric")
 
     # low level variables
     elif input_feature == "speed":
-        raise NotImplementedError
+        x = _get_speed_regressors(df)
     elif input_feature == "acceleration":
         raise NotImplementedError
     elif input_feature == "head_direction":
-        raise NotImplementedError
+        x = _get_head_direction_regressors(df)
     elif input_feature == "theta":
-        raise NotImplementedError
-
-    return
+        x = _get_theta_regressors(df)
+    return x
 
 
 def _get_distance_to_goal_regressors(
@@ -214,8 +220,7 @@ def _get_distance_to_goal_regressors(
                 basis=basis_type,
                 btype="progress",
             )
-        basis_activations = basis_fn(_df[metric].values)  # n_samples x n_bases
-        return basis_activations
+        regressors = basis_fn(_df[metric].values)  # n_samples x n_bases
     elif method == "onehot":
         if metric[0] == "distance_to_goal":
             if bin_method == "uniform":
@@ -230,39 +235,82 @@ def _get_distance_to_goal_regressors(
         )
         binned_distances = pd.cut(_df[metric], bins=bins, include_lowest=True).to_numpy()
         # convert to one-hot encoding
-        onehot = convert.dist_bin2onehot(binned_distances, _max, n_bins, metric, "uniform")
-        return onehot  # n_samples x n_bins
+        regressors = convert.dist_bin2onehot(binned_distances, _max, n_bins, metric, "uniform")  # n_samples x n_bins
     else:
         raise ValueError(f"Unknown method {method} for building distance to goal regressors")
+    return regressors
 
 
-def _get_place_direction_regressors():
-    return
+def _get_place_direction_regressors(df, maze_name, regressor="place_direction"):
+    """ """
+    _df = df.copy()
+    maze_name = df.maze_name.unique()[0]
+    simple_maze = mr.get_simple_maze(maze_name)
+    if regressor == "place_direction":
+        pd_by_frame = (  # convert to unique string eg, "A1_N", expected by onehot encoder
+            _df[("maze_position", "simple")] + "_" + _df[("cardinal_movement_direction", "")]
+        )
+        regressors = convert.place_direction2onehot(pd_by_frame.values, simple_maze)  # n_samples x n_place_directions
+    elif regressor == "place":
+        regressors = convert.place2onehot(_df.maze_position.simple.values, simple_maze)
+    elif regressor == "direction":
+        regressors = convert.direction2onehot(_df.cardinal_movement_direction.values)
+    else:
+        raise ValueError(f"Unknown regressor {regressor} for building place_/_direction regressors")
+    return regressors
 
 
-def _get_egocentric_action_regressors():
-    return
+def _get_egocentric_action_regressors(
+    df,
+    components=["action", "free_forced", "tower_bridge"],
+    actions=["turn_left", "turn_right", "go_forward", "go_back"],
+):
+    """ """
+    _df = df.copy()
+    X = []
+    if "action" in components:
+        a = _df[("action", "basic")].values
+        X.append(convert.action2onehot(a, actions=actions))  # n_samples x n_actions
+    if "free_forced" in components:
+        ff = _df[("action", "choice_degree")].map({1: "forced", 2: "forced", 3: "free", 4: "free"}).values
+        X.append(convert.free_forced2onehot(ff))  # n_samples x 2
+    if "tower_bridge" in components:
+        tb = _df.maze_position.simple
+        X.append(convert.place2tower_bridge_onehot(tb))  # n_samples x 2
+    if len(components) > 1:
+        return np.hstack(X)
+    else:
+        return X[0]
 
 
-def _get_goal_regressors():
-    return
+def _get_goal_regressors(df):
+    _df = df.copy()
+    return convert.goal2onehot(_df.goal.values)
 
 
-def _get_angle_to_goal_regressors():
-    return
+def _get_angle_to_goal_regressors(df, metric="egocentric"):
+    angles_deg = df.angle_to_goal[metric].values  # angles in degrees
+    angles_rad = np.deg2rad(angles_deg)  # convert to radians
+    regressors = np.column_stack([np.sin(angles_rad), np.cos(angles_rad)])  # n_samples x 2
+    return regressors
 
 
-def _get_speed_regressors():
-    return
+def _get_speed_regressors(df):
+    return df.speed.values
 
 
 def _get_acceleration_regressors():
     return
 
 
-def _get_head_direction_regressors():
-    return
+def _get_head_direction_regressors(df):
+    angle_deg = df.head_direction.value
+    angle_rad = np.deg2rad(angle_deg)  # convert to radians
+    regressors = np.column_stack([np.sin(angle_rad), np.cos(angle_rad)])
+    return regressors
 
 
-def _get_theta_regressors():
-    return
+def _get_theta_regressors(df):
+    angle_rad = df.theta_phase.values  # angles in radians
+    regressors = np.column_stack([np.sin(angle_rad), np.cos(angle_rad)])
+    return regressors

@@ -20,7 +20,7 @@ _4HZ_RANGE = (2, 5)  # 4Hz oscillation range
 
 def get_nearest_theta_phase(
     session,
-    new_times,
+    times,
     signal_type="LFP",
     return_binned=False,
     n_bins=8,
@@ -36,15 +36,15 @@ def get_nearest_theta_phase(
         freq_range=THETA_RANGE,
         N=4,
     )
-    times = session.lfp_times
-    idx = np.searchsorted(times, new_times, side="left")  # find insertion points
-    idx[idx == len(times)] = len(times) - 1  # clip any out-of-bounds to the valid range
+    lfp_times = session.lfp_times
+    idx = np.searchsorted(lfp_times, times, side="left")  # find insertion points
+    idx[idx == len(lfp_times)] = len(lfp_times) - 1  # clip any out-of-bounds to the valid range
     idx_lo = np.maximum(idx - 1, 0)  # also consider the point just before each insertion point
     idx_hi = idx
     dist_lo = np.abs(
-        new_times - times[idx_lo]
+        times - lfp_times[idx_lo]
     )  # pick whichever of times[idx_lo] or times[idx_hi] is closer to each new_times
-    dist_hi = np.abs(times[idx_hi] - new_times)
+    dist_hi = np.abs(lfp_times[idx_hi] - times)
     take_hi = dist_hi < dist_lo  # where hi is closer than lo, take hi, else lo
     nearest_idx = np.where(take_hi, idx_hi, idx_lo)
 

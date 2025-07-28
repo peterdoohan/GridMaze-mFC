@@ -97,6 +97,18 @@ def _get_progress_bins(n_distance_bins):
     return bins
 
 
+def action2onehot(a, actions=["turn_left", "turn_right", "go_forward", "go_back"]):
+    enc = OneHotEncoder(categories=[actions], sparse_output=False, handle_unknown="ignore")
+    onehot = enc.fit_transform(a.reshape(-1, 1))
+    return onehot
+
+
+def free_forced2onehot(ff, actions=["forced", "free"]):
+    enc = OneHotEncoder(categories=[actions], sparse_output=False, handle_unknown="ignore")
+    onehot = enc.fit_transform(ff.reshape(-1, 1))
+    return onehot
+
+
 def place_direction2onehot(pd_by_frame, simple_maze):
     all_place_direction_pairs = mr.get_maze_place_direction_pairs(simple_maze)
     all_place_direction_pairs = np.array(
