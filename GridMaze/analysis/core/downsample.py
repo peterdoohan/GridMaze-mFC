@@ -4,12 +4,16 @@ Eg, you want to downsample navigating input data from FRAME RATe (native) to 0.5
 """
 
 # %% Imports
+import json
 import numpy as np
 import pandas as pd
-from scipy.ndimage import gaussian_filter1d
-from scipy.stats import circmean
 
 # %% Global Variables
+from GridMaze.paths import ANALYSIS_INFO_PATH
+
+with open(ANALYSIS_INFO_PATH / "movement_threshold.json", "r") as infile:
+    MOVEMENT_THRESHOLD = json.load(infile)
+
 FRAME_RATE = 60  # Hz
 
 # %% Functions
@@ -54,7 +58,7 @@ def downsample_nav_spikes_data(
     return nav_info, ds_spike_counts_df
 
 
-def downsample_navigation_activity_df(df, resolution):
+def downsample_navigation_activity_df(df, resolution=0.2):
     """
     similar to downsample_nav_spikes_data but carefully downsamples all navigation variables
     """
@@ -80,8 +84,7 @@ def downsample_navigation_activity_df(df, resolution):
     ]
     cat_cols = [c for c in navigation_df.columns if c not in polar_cols and c not in cont_cols]
 
-    # define downsample window
-    combine_n_frames = int(FRAME_RATE * resolution)
+    # define downsample windows
     ds_frames = int(FRAME_RATE * resolution)
     if ds_frames < 1:
         raise ValueError("resolution must be >= 1/FRAME_RATE seconds")
@@ -98,37 +101,27 @@ def downsample_navigation_activity_df(df, resolution):
     # downsample categorical data by taking values in mid window
     mid_window_inds = window_groups.unique() * ds_frames + (ds_frames // 2)
     mid_window_inds = mid_window_inds[mid_window_inds < len(navigation_df)]
-    ds_cat_df = navigation_df.iloc[mid_window_inds].reset_index(drop=True)
+    ds_cat_df = navigation_df[cat_cols].iloc[mid_window_inds].reset_index(drop=True)
 
     # downsample continous data by taking mean of values in window
     ds_cont_df = navigation_df[cont_cols].groupby(window_groups).mean().reset_index(drop=True)
 
     # downsample polar variables by taking the circular mean
-    ds_polar_df = navigation_df[polar_cols].groupby(window_groups).agg(lambda x: circmean(x, low=0, high=360))
+    ds_polar_df = _polar_downsample(navigation_df, polar_cols, window_groups)
 
-    # 2) pull out the polar data & convert to radians
-    rad = np.deg2rad(navigation_df[polar_cols].values)
-
-    # 3) vectorized sin/cos
-    sin_vals = np.sin(rad)
-    cos_vals = np.cos(rad)
-
-    # 4) group & mean (fast!)
-    _polar_cols = pd.MultiIndex.from_tuples(polar_cols)
-    sin_mean = pd.DataFrame(sin_vals, columns=_polar_cols).groupby(window_groups).mean()
-    cos_mean = pd.DataFrame(cos_vals, columns=_polar_cols).groupby(window_groups).mean()
-
-    # 5) back to angles in [0,360)
-    ds_polar_df2 = np.rad2deg(np.arctan2(sin_mean, cos_mean)).mod(360)  # gives [-180,180]  # wrap to [0,360)
-
-    return
+    # recombine
+    ds_df = pd.concat([ds_cat_df, ds_cont_df, ds_polar_df, ds_spikes_df], axis=1)
+    return ds_df
 
 
 def _polar_downsample(navigation_df, polar_cols, window_groups):
+    """
+    vectorized circ mean downsample for polar variables
+    """
     rad = np.deg2rad(navigation_df[polar_cols].values)
     sin_vals = np.sin(rad)
     cos_vals = np.cos(rad)
     _polar_cols = pd.MultiIndex.from_tuples(polar_cols)
     sin_mean = pd.DataFrame(sin_vals, columns=_polar_cols).groupby(window_groups).mean()
     cos_mean = pd.DataFrame(cos_vals, columns=_polar_cols).groupby(window_groups).mean()
-    return np.rad2deg(np.arctan2(sin_mean, cos_mean)).mod(360)  # gives [-180,180]  # wrap to [0,360)
+    return np.rad2deg(np.arctan2(sin_mean, cos_mean)).mod(360)
