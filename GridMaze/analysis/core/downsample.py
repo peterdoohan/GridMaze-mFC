@@ -82,6 +82,8 @@ def downsample_navigation_activity_df(df, resolution=0.2):
         ]
         for c in navigation_df.xs(i, level=0, axis=1, drop_level=False).columns.to_list()
     ]
+    if ("acceleration", "") in navigation_df.columns:
+        cont_cols.append(("acceleration", ""))
     cat_cols = [c for c in navigation_df.columns if c not in polar_cols and c not in cont_cols]
 
     # define downsample windows

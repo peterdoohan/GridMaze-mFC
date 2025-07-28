@@ -133,6 +133,11 @@ def place_direction_distance2onehot(
     return onehot
 
 
+def place_direction_distance_egocentric_action2onehot():
+    """ """
+    return
+
+
 def route_id2onehot(r, n_routes=10):
     """ """
     route_ids = ["non_route"] + [f"route_{i}" for i in range(n_routes)]
