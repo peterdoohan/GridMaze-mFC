@@ -7,6 +7,8 @@ import json
 import torch
 import numpy as np
 import pandas as pd
+from sklearn.preprocessing import OneHotEncoder
+from scipy.ndimage import gaussian_filter1d
 
 from GridMaze.maze import representations as mr
 
@@ -74,23 +76,17 @@ def get_session_input_data(
     max_steps_to_goal=30,
     moving_only=False,
     min_spike_count=300,
-    input_features=["distance_to_goal", "place_direction", "egocentric_action"],
+    input_features=["distance_to_goal", "place_direction", "egocentric_action", "acceleration"],
     input_feature_kwargs={"distance_to_goal": None, "place_direction": None, "egocentric_action": None},
     verbose=False,
 ):
     """
     only loads navigation data
     """
-    # load data (single units only)
-    df = session.get_navigation_activity_df(type="spikes", cluster_kwargs={"single_units": True, "multi_units": False})
-    # update ego-action definitions of high-frame rate data
-    if "egocentric_action" in input_features:
-        df = _conditional_ffill(df, [("action", "basic"), ("action", "choice_degree")], ("maze_position", "simple"))
-    # add theta phase
-    if "theta_phase" in input_features:
-        df[("theta_phase", "")] = elp.get_nearest_theta_phase(
-            session, df.time.values, signal_type="LFP", return_binned=False
-        )
+    input_kwargs = locals()
+    input_kwargs.pop("session", None)
+    # load data and update navigation variables
+    df = init_navigation_spikes_df(session, input_features)
     # downsample data
     df = ds.downsample_navigation_activity_df(df, resolution=resolution)
     # filter navigation data
@@ -116,16 +112,14 @@ def get_session_input_data(
         x = get_input_features(df, _input, kwargs)
         X.append(x)
         Nin = x.shape[1]
-        X_type_inds.append(list(np.arange(ind, ind + Nin)))
+        X_type_inds.append(list(range(ind, ind + Nin)))
         ind += Nin
     X = torch.from_numpy(np.concatenate(X, axis=1).T).to(torch.float32)
     # gather spike data
-    spikes = torch.from_numpy(df.spike_counts.values.T).to(torch.float32)
+    spikes = torch.from_numpy(df.spike_count.values.T).to(torch.float32)
     # collect kwarg data
-    input_kwargs = locals()
-    input_kwargs.pop("session", None)
-    session_info = {k: getattr(session, k) for k in ["name", "subject_ID", "maze_name", "days_on_maze"]}
-    session_info["cluster_unique_IDs"] = df.spike_counts.columns.get_level_values(1).to_list()
+    session_info = {k: getattr(session, k) for k in ["name", "subject_ID", "maze_name", "day_on_maze"]}
+    session_info["cluster_unique_IDs"] = df.spike_count.columns.to_list()
     return {
         "X": X,  # input features
         "spikes": spikes,  # spike data
@@ -133,6 +127,27 @@ def get_session_input_data(
         "input_kwargs": input_kwargs,
         "session_info": session_info,
     }
+
+
+def init_navigation_spikes_df(session, input_features):
+    # load data (single units only)
+    df = session.get_navigation_activity_df(type="spikes", cluster_kwargs={"single_units": True, "multi_units": False})
+    # get cleaned up speed and acceleration
+    if "speed" in input_features or "acceleration" in input_features:
+        _speed, _acceleration = _get_smoothed_speed_and_acceleration(df, position_smoothing_ms=1000 * 1 / FRAME_RATE)
+        df[("speed", "")] = _speed
+        df[("acceleration", "")] = _acceleration
+        df[("moving", "")] = df.speed.ge(ds.MOVEMENT_THRESHOLD)
+
+    # update ego-action definitions of high-frame rate data
+    if "egocentric_action" in input_features:
+        df = _conditional_ffill(df, [("action", "basic"), ("action", "choice_degree")], ("maze_position", "simple"))
+    # add theta phase
+    if "theta_phase" in input_features:
+        df[("theta_phase", "")] = elp.get_nearest_theta_phase(
+            session, df.time.values, signal_type="LFP", return_binned=False
+        )
+    return df
 
 
 def _conditional_ffill(df, column_to_fill, condition_column):
@@ -150,6 +165,21 @@ def _conditional_ffill(df, column_to_fill, condition_column):
     return _df
 
 
+def _get_smoothed_speed_and_acceleration(df, position_smoothing_ms=1000 * 1 / FRAME_RATE):
+    _df = df.copy()
+    positions = _df.centroid_position.values
+    smoothed_positions = gaussian_filter1d(positions, position_smoothing_ms / 1000 * FRAME_RATE, axis=0)
+    velocities = np.gradient(smoothed_positions, axis=0) * FRAME_RATE
+    accelerations = np.gradient(velocities, axis=0) * FRAME_RATE
+    speeds = np.linalg.norm(velocities, axis=1)
+    ## Calculate tangential acceleration via finite differences on smoothed speed.
+    # Compute tangential acceleration
+    vel_minus_acc = velocities - accelerations
+    angles = np.arctan2(vel_minus_acc[:, 1], vel_minus_acc[:, 0])
+    tangential_acc = np.sin(np.pi / 2 - angles) * np.linalg.norm(accelerations, axis=1)
+    return speeds, tangential_acc
+
+
 # %% regressor level funcs
 
 
@@ -164,7 +194,7 @@ def get_input_features(df, input_feature, input_kwargs):
 
     # derivative variables
     elif input_feature == "place_direction_distance_to_goal_egocentric_action":
-        raise NotImplementedError
+        x = _get_place_direction_distance_to_goal_egocentric_action_regressors(df, **(input_kwargs or {}))
     elif input_feature == "place":
         x = _get_place_direction_regressors(df, regressor="place")
     elif input_feature == "direction":
@@ -182,7 +212,7 @@ def get_input_features(df, input_feature, input_kwargs):
     elif input_feature == "speed":
         x = _get_speed_regressors(df)
     elif input_feature == "acceleration":
-        raise NotImplementedError
+        x = _get_acceleration_regressor(df)
     elif input_feature == "head_direction":
         x = _get_head_direction_regressors(df)
     elif input_feature == "theta":
@@ -241,7 +271,7 @@ def _get_distance_to_goal_regressors(
     return regressors
 
 
-def _get_place_direction_regressors(df, maze_name, regressor="place_direction"):
+def _get_place_direction_regressors(df, regressor="place_direction"):
     """ """
     _df = df.copy()
     maze_name = df.maze_name.unique()[0]
@@ -296,11 +326,12 @@ def _get_angle_to_goal_regressors(df, metric="egocentric"):
 
 
 def _get_speed_regressors(df):
-    return df.speed.values
+    return df.speed.values.reshape(-1, 1)
 
 
-def _get_acceleration_regressors():
-    return
+def _get_acceleration_regressor(df):
+    _df = df.copy()
+    return _df.acceleration.values.reshape(-1, 1)  # n_samples x 1
 
 
 def _get_head_direction_regressors(df):
@@ -314,3 +345,65 @@ def _get_theta_regressors(df):
     angle_rad = df.theta_phase.values  # angles in radians
     regressors = np.column_stack([np.sin(angle_rad), np.cos(angle_rad)])
     return regressors
+
+
+def _get_place_direction_distance_to_goal_egocentric_action_regressors(
+    df,
+    actions=["turn_left", "turn_right", "go_forward", "go_back"],
+    distance_metric=("distance_to_goal", "geodesic"),
+    max_distance=None,
+    bin_method="uniform",
+    bin_spacing=0.05,
+    n_log_bins=30,
+):
+    """onehot encoding over place_direction, distance_to_goal, and egocentric_action"""
+    maze_name = df.maze_name.unique()[0]
+    _df = df.copy()
+    _df[("free_forced", "")] = (
+        _df[("action", "choice_degree")].map({1: "forced", 2: "forced", 3: "free", 4: "free"}).values
+    )
+    if max_distance is None:
+        _max = dd.get_distance_percentile(distance_metric, 0.9)
+    if distance_metric[0] == "distance_to_goal":
+        if bin_method == "uniform":
+            n_bins = int(_max / bin_spacing)
+        elif bin_method == "log":
+            n_bins = n_log_bins
+        bins = convert._get_distance_bins(
+            binning_method=bin_method,
+            n_distance_bins=n_bins,
+            distance_metrics=distance_metric,
+            max_distance=_max,
+        )
+        bin2bin_id = {v: k for k, v in enumerate(bins)}
+        bin2bin_id[np.nan] = 0
+        binned_distances = pd.cut(_df[distance_metric], bins=bins, include_lowest=True)
+        bin_ids = binned_distances.map(bin2bin_id).values.astype(int)  # n_samples x 1
+
+    labels = (
+        _df.maze_position.simple
+        + "."
+        + _df.cardinal_movement_direction
+        + "."
+        + bin_ids.astype(str)
+        + "."
+        + _df.action.basic.astype(str)
+        + "."
+        + _df.free_forced.astype(str)
+    )
+
+    # convert to one-hot encoding
+    simple_maze = mr.get_simple_maze(maze_name)
+    all_place_direction_pairs = mr.get_maze_place_direction_pairs(simple_maze)
+    cats = []
+    for _pd in all_place_direction_pairs:
+        for distance_bin_id in bin2bin_id.values():
+            for action in actions:
+                for ff in ["forced", "free"]:
+                    cats.append(f"{_pd[0]}.{_pd[1]}.{distance_bin_id}.{action}.{ff}")
+            cats.append(f"{_pd[0]}.{_pd[1]}.{distance_bin_id}.nan.nan")
+    cats = list(np.unique(cats))  # ensure unique categories
+    enc = OneHotEncoder(categories=[cats], sparse_output=False, handle_unknown="ignore")
+
+    onehot = enc.fit_transform(labels.values.reshape(-1, 1))
+    return onehot  # n_samples x n_place_directions * n_distance_bins * n_actions * n_free_forced
