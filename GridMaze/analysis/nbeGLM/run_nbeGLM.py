@@ -33,7 +33,7 @@ RESULTS_DIR = RESULTS_PATH / "nbeGLM"
 DEFAULT_INPUT_DATA_KWARGS = {
     "subject_IDs": ["m2"],
     "maze_name": "maze_1",
-    "days_on_maze": "all",
+    "days_on_maze": "late",
     "sessions": None,
     "input_features": ["place_direction", "distance_to_goal", "egocentric_action"],
     "input_feature_kwargs": {},
@@ -44,6 +44,7 @@ DEFAULT_INPUT_DATA_KWARGS = {
 }
 
 DEFAULT_MODEL_INIT_KWARGS = {
+    "with_embedding": True,
     "latent_inputs": None,
     "latent_nonlin": None,
     "partition": None,
@@ -61,6 +62,7 @@ DEFAULT_MODEL_TRAIN_KWARGS = {
     "lr": 5e-4,
     "nepochs": 101,
     "test_freq": 100,
+    "eval_alpha": 1e-3,
 }
 
 DEFAULT_MODEL_EVAL_KWARGS = {
@@ -72,18 +74,11 @@ DEFAULT_MODEL_EVAL_KWARGS = {
 # %% Imports
 
 
-def run_nbeGLM_set():
-    """ """
-    return
-
-
 def run_cv_nbeGLM(
     input_data_kwargs=DEFAULT_INPUT_DATA_KWARGS,
     model_init_kwargs=DEFAULT_MODEL_INIT_KWARGS,
     model_train_kwargs=DEFAULT_MODEL_TRAIN_KWARGS,
     model_eval_kwargs=DEFAULT_MODEL_EVAL_KWARGS,
-    model_name=None,
-    model_set_name=None,
     save_path=None,
     verbose=True,
     seed=0,
@@ -104,11 +99,6 @@ def run_cv_nbeGLM(
     model_params["model_init_kwargs"]["input_stream_names"] = input_data_kwargs["input_features"]
     model_params["model_init_kwargs"]["Nout"] = sum(s["spikes"].shape[0] for s in input_data)
 
-    # save model params
-    if save_path is not None:
-        with open(save_path / "model_params.json", "w") as f:
-            json.dump(model_params, f, indent=4)
-
     # get cv var explained by input features for all neurons
     learning_curve_dfs, cluster_cv_scores = [], []
     n_sessions = len(input_data)
@@ -121,22 +111,24 @@ def run_cv_nbeGLM(
 
         if verbose:
             print("     learning embedding ...")
+        assert model_init_kwargs["with_embedding"], "nbeGLM requires with_embedding=True"
         model, train_losses, test_perfs, train_perfs = train_model(
             nbeGLM,
             train_data,
             test_data,
             DEVICE,
-            eval_alpha=model_eval_kwargs["crossval_alpha"],
             **model_train_kwargs,
         )
         # output learning curves for each model training
         learning_curve_dfs.append(
-            _get_learning_curve_df(test_data["session_info"], train_losses, test_perfs, train_perfs, model_params)
+            _get_learning_curve_df(
+                train_losses, test_perfs, train_perfs, model_params, test_session_info=test_data["session_info"]
+            )
         )
 
         if verbose:
             print("     testing performance on held-out session ...")
-        test_perf, valid_cluster_mask = nbeGLM.eval_representation(
+        test_perf, valid_cluster_mask = model.eval_representation(
             test_data["X"].to(DEVICE),
             test_data["spikes"].to(DEVICE),
             cv=model_eval_kwargs["crossval_folds"],
@@ -145,25 +137,33 @@ def run_cv_nbeGLM(
             return_keep=True,
             trials=test_data["trial_ids"],
         )
-        return test_perf, test_data, model_params, valid_cluster_mask
-        # cluster_crossval_perfs.append(
-        #     _get_cluster_cross_val_df(test_perf, test_data, session, exp_kwargs, valid_cluster_mask)
-        # )
+        cluster_cv_scores.append(
+            _get_cluster_cross_val_df(
+                test_perf, test_data["session_info"], test_data["cluster_unique_IDs"], model_params, valid_cluster_mask
+            )
+        )
 
-    return
+    training_df = pd.concat(learning_curve_dfs, axis=0).reset_index(drop=True)
+    cv_scores_df = pd.concat(cluster_cv_scores, axis=0).reset_index(drop=True)
+
+    if save_path is not None:
+        if verbose:
+            print(f"Saving outputs to: {save_path}")
+        # save model params
+        with open(save_path / "model_params.json", "w") as f:
+            json.dump(model_params, f, indent=4)
+        # save model training data
+        training_df.to_csv(save_path / "training.csv", index=False)
+        cv_scores_df.to_csv(save_path / "cv_scores.csv", index=False)
+
+    return cv_scores_df
 
 
 def run_cv_GLM(
     input_data_kwargs=DEFAULT_MODEL_INIT_KWARGS,
-    model_init_kwargs={
-        "beta_weight": 1e-1,
-        "inv_link": "exp",
-        "noise_function": "Poisson",
-        "sqrt_counts": False,
-        "combine_frs": False,
-    },
 ):
-    """run regular GLM without learned neural-behavioural embedding"""
+    """run regular GLM *without* learned neural-behavioural embedding"""
+    # TODO: build separate class for running GLM on single sessions without embedding
     return
 
 
@@ -171,33 +171,85 @@ def train_nbeGLM(
     input_data_kwargs=DEFAULT_INPUT_DATA_KWARGS,
     model_init_kwargs=DEFAULT_MODEL_INIT_KWARGS,
     model_train_kwargs=DEFAULT_MODEL_TRAIN_KWARGS,
+    save_path=None,
+    seed=0,
+    verbose=True,
 ):
     """
-    non-cv training embedding model on all input data. Useful for interigating latents
+    non-cv training embedding model on all input data. Useful for looking at latents
     """
-    return
+    # set seed
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    # def model params
+    model_params = copy.deepcopy(locals())
+
+    # get input data
+    if verbose:
+        print("Loading input data ...")
+    input_data = get_input_data(**input_data_kwargs)
+
+    # update model params
+    model_params["model_init_kwargs"]["input_streams"] = input_data[0]["X_type_inds"]
+    model_params["model_init_kwargs"]["input_stream_names"] = input_data_kwargs["input_features"]
+    model_params["model_init_kwargs"]["Nout"] = sum(s["spikes"].shape[0] for s in input_data)
+
+    # fit model
+    nbeGLM = Encoder(**model_init_kwargs)
+    if verbose:
+        print("     training model on all input data ...")
+    nbeGLM, train_losses, test_perfs, train_perfs = train_model(
+        nbeGLM,
+        train_sessions=input_data,
+        test_session=None,
+        device=DEVICE,
+        **model_train_kwargs,
+    )
+
+    # save outputs
+    if save_path is not None:
+        if verbose:
+            print(f"     saving outputs to: {save_path}")
+        # save model params
+        with open(save_path / "model_params.json", "w") as f:
+            json.dump(model_params, f, indent=4)
+        # save model training data
+        learning_curve_df = _get_learning_curve_df(train_losses, test_perfs, train_perfs, model_params)
+        learning_curve_df.to_csv(save_path / "training.csv", index=False)
+        # save model w/ weights
+        with open(save_path / "model.pkl", "wb") as f:
+            pickle.dump(nbeGLM, f)
+
+    return nbeGLM
 
 
-# %%
-def _get_learning_curve_df(test_session_info, train_losses, test_perfs, train_perfs, model_params):
+# %% helper functions
+
+
+def _get_learning_curve_df(train_losses, test_perfs, train_perfs, model_params, test_session_info=None):
     """ """
     nepochs = model_params["model_train_kwargs"]["nepochs"]
     test_freq = model_params["model_train_kwargs"]["test_freq"]
     test_epochs = np.arange(0, nepochs, test_freq)
-    return pd.DataFrame(
-        {
-            "subject_ID": test_session_info["subject_ID"],
-            "maze_name": test_session_info["maze_name"],
-            "day_on_maze": test_session_info["day_on_maze"],
-            "epoch": test_epochs,
-            "train_loss": train_losses,
-            "train_embedding_perf": train_perfs,
-            "test_embedding_perf": test_perfs,
-        }
-    )
+    results = {
+        "epoch": test_epochs,
+        "train_loss": train_losses,
+        "train_embedding_perf": train_perfs,
+        "test_embedding_perf": test_perfs,
+    }
+    if test_session_info is not None:
+        results.update(
+            {
+                "subject_ID": test_session_info["subject_ID"],
+                "maze_name": test_session_info["maze_name"],
+                "day_on_maze": test_session_info["day_on_maze"],
+            }
+        )
+    return pd.DataFrame(results)
 
 
-def _get_cluster_cross_val_df(test_perf, test_session_info, model_params, valid_cluster_mask):
+def _get_cluster_cross_val_df(test_perf, test_session_info, cluster_unique_IDs, model_params, valid_cluster_mask):
     """ """
     # if test session is eval session, not in training data
     dfs = []
@@ -209,9 +261,9 @@ def _get_cluster_cross_val_df(test_perf, test_session_info, model_params, valid_
                     "subject_ID": test_session_info["subject_ID"],
                     "maze_name": test_session_info["maze_name"],
                     "day_on_maze": test_session_info["day_on_maze"],
-                    "cluster_unique_ID": test_session_info["cluster_unique_IDs"][valid_cluster_mask],
+                    "cluster_unique_ID": np.array(cluster_unique_IDs)[valid_cluster_mask],
                     "fold": fold,
-                    "cv_performance": test_perf[:, fold],
+                    "cv_score": test_perf[:, fold],
                 }
             )
         )
