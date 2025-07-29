@@ -4,44 +4,58 @@
 
 
 # %% Global Variables
+from regex import D
+from GridMaze.paths import RESULTS_PATH
+
+RESULTS_DIR = RESULTS_PATH / "nbeGLM"
+
+# %% Default Parameters
+
+DEFAULT_INPUT_DATA_KWARGS = {
+    "subject_IDs": "all",
+    "maze_name": "maze_1",
+    "days_on_maze": "all",
+    "input_features": ["place-direction", "distance_to_goal", "egocentric_action"],
+    "input_feature_kwargs": {},
+    "resolution": 0.1,
+    "max_steps_to_goal": 30,
+    "min_spike_count": 300,
+    "moving_only": False,
+}
+
+DEFAULT_MODEL_INIT_KWARGS = {
+    "with_embedding": True,
+    "latent_inputs": None,
+    "latent_nonlin": None,
+    "partition": None,
+    "Nhid": [100, 50],
+    "Nlat": 20,
+    "beta_act": 1e-1,
+    "beta_weight": 1e-1,
+    "inv_link": "exp",
+    "noise_function": "Poisson",
+    "sqrt_counts": False,
+    "combine_frs": False,
+}
+
+DEFAULT_MODEL_TRAIN_KWARGS = {
+    "lr": 5e-4,
+    "nepochs": 3001,
+    "test_freq": 1000,
+    "eval_alpha": 1e-3,
+}
+
+DEFAULT_MODEL_EVAL_KWARGS = {
+    "crossval_folds": 5,
+    "crossval_alpha": 1e-3,
+    "crossval_train_sessions": False,
+}
 
 DEFAULT_CV_NBEGLM_PARAMS = {
-    "input_data_kwargs": {
-        "subject_IDs": "all",
-        "maze_name": "maze_1",
-        "days_on_maze": "all",
-        "input_features": ["place-direction", "distance_to_goal", "egocentric_action"],
-        "input_feature_kwargs": {},
-        "resolution": 0.1,
-        "max_steps_to_goal": 30,
-        "min_spike_count": 300,
-        "moving_only": False,
-    },
-    "model_init_kwargs": {
-        "with_embedding": True,
-        "latent_inputs": None,
-        "latent_nonlin": None,
-        "partition": None,
-        "Nhid": [100, 50],
-        "Nlat": 20,
-        "beta_act": 1e-1,
-        "beta_weight": 1e-1,
-        "inv_link": "exp",
-        "noise_function": "Poisson",
-        "sqrt_counts": False,
-        "combine_frs": False,
-    },
-    "model_train_kwargs": {
-        "lr": 5e-4,
-        "nepochs": 3001,
-        "test_freq": 1000,
-        "eval_alpha": 1e-3,
-    },
-    "model_eval_kwargs": {
-        "crossval_folds": 5,
-        "crossval_alpha": 1e-3,
-        "crossval_train_sessions": False,
-    },
+    "input_data_kwargs": DEFAULT_INPUT_DATA_KWARGS,
+    "model_init_kwargs": DEFAULT_MODEL_INIT_KWARGS,
+    "model_train_kwargs": DEFAULT_MODEL_TRAIN_KWARGS,
+    "model_eval_kwargs": DEFAULT_MODEL_EVAL_KWARGS,
     "seed": 0,
     "overwrite": True,
     "verbose": True,
@@ -51,6 +65,7 @@ DEFAULT_CV_NBEGLM_PARAMS = {
 
 
 def get_SLURM_script(exp_name, subfolder, model_params, run_fn="run_cv_nbeGLM"):
+    # check subfolder and exp_name folder exist in jobs/nbeGLM and results/nbeGLM
     script = f"""#!/bin/bash
 #SBATCH --job-name=nbeGLM_{exp_name}
 #SBATCH --output=jobs/nbeGLM/{subfolder}/out/{exp_name}.out

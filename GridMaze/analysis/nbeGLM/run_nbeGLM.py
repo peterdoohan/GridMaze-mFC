@@ -25,51 +25,17 @@ from GridMaze.analysis.nbeGLM.get_input_data import get_input_data
 # %% Global Variables
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")  # run on GPU if possible
 
-
 from GridMaze.paths import RESULTS_PATH
 
 RESULTS_DIR = RESULTS_PATH / "nbeGLM"
 
-DEFAULT_INPUT_DATA_KWARGS = {
-    "subject_IDs": ["m2"],
-    "maze_name": "maze_1",
-    "days_on_maze": "late",
-    "sessions": None,
-    "input_features": ["place_direction", "distance_to_goal", "egocentric_action"],
-    "input_feature_kwargs": {},
-    "resolution": 0.1,
-    "max_steps_to_goal": 30,
-    "min_spike_count": 300,
-    "moving_only": False,
-}
+from jobs.nbeGLM.utils import (
+    DEFAULT_INPUT_DATA_KWARGS,
+    DEFAULT_MODEL_INIT_KWARGS,
+    DEFAULT_MODEL_TRAIN_KWARGS,
+    DEFAULT_MODEL_EVAL_KWARGS,
+)
 
-DEFAULT_MODEL_INIT_KWARGS = {
-    "with_embedding": True,
-    "latent_inputs": None,
-    "latent_nonlin": None,
-    "partition": None,
-    "Nhid": [100, 50],
-    "Nlat": 10,
-    "beta_act": 1e-1,
-    "beta_weight": 1e-1,
-    "inv_link": "exp",
-    "noise_function": "Poisson",
-    "sqrt_counts": False,
-    "combine_frs": False,
-}
-
-DEFAULT_MODEL_TRAIN_KWARGS = {
-    "lr": 5e-4,
-    "nepochs": 101,
-    "test_freq": 100,
-    "eval_alpha": 1e-3,
-}
-
-DEFAULT_MODEL_EVAL_KWARGS = {
-    "crossval_folds": 5,
-    "crossval_alpha": 1e-3,
-    "crossval_train_sessions": False,
-}
 
 # %% Imports
 
