@@ -17,7 +17,7 @@ from GridMaze.analysis.core import convert
 from GridMaze.analysis.core import downsample as ds
 from GridMaze.analysis.core import folds
 from GridMaze.analysis.core import get_sessions as gs
-from GridMaze.analysis.distance_to_goal import extract_lfp_phase as elp
+from experiment.code.GridMaze.analysis.lfp import extract_lfp_phase as elp
 from GridMaze.analysis.distance_to_goal import population_tuning as pt
 from GridMaze.analysis.distance_to_goal import distributions as dd
 from GridMaze.analysis.processing import get_distance_tuning_metrics_df as dtm
