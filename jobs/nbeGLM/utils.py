@@ -1,13 +1,14 @@
 """ """
 
 # %% Imports
-
+from pathlib import Path
 
 # %% Global Variables
-from regex import D
 from GridMaze.paths import RESULTS_PATH
 
 RESULTS_DIR = RESULTS_PATH / "nbeGLM"
+
+JOBS_PATH = Path("../jobs/nbeGLM")
 
 # %% Default Parameters
 
@@ -65,7 +66,20 @@ DEFAULT_CV_NBEGLM_PARAMS = {
 
 
 def get_SLURM_script(exp_name, subfolder, model_params, run_fn="run_cv_nbeGLM"):
+    """Create SLURM script for running nbeGLM experiment."""
     # check subfolder and exp_name folder exist in jobs/nbeGLM and results/nbeGLM
+    for base_dir in [RESULTS_DIR, JOBS_PATH]:
+        output_path = base_dir / subfolder
+        if not output_path.exists():
+            output_path.mkdir(parents=True, exist_ok=True)
+
+    # make sure jobs folder structure is in place
+    for folder in ["out", "err", "slurm"]:
+        output_path = JOBS_PATH / subfolder / "jobs" / f"{folder}"
+        if not output_path.exists():
+            output_path.mkdir(parents=True, exist_ok=True)
+
+    # create SLURM script
     script = f"""#!/bin/bash
 #SBATCH --job-name=nbeGLM_{exp_name}
 #SBATCH --output=jobs/nbeGLM/{subfolder}/out/{exp_name}.out
