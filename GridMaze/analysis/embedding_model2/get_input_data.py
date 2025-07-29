@@ -7,8 +7,8 @@ import json
 import torch
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import OneHotEncoder
 from scipy.ndimage import gaussian_filter1d
+from sklearn.preprocessing import OneHotEncoder
 
 from GridMaze.maze import representations as mr
 
@@ -36,7 +36,7 @@ FRAME_RATE = 60  # Hz
 
 
 def get_input_data(
-    subject_IDs=["m2"],
+    subject_IDs="all",
     maze_name="maze_1",
     days_on_maze="all",
     sessions=None,
@@ -49,22 +49,44 @@ def get_input_data(
     verbose=False,
 ):
     # load session objects
+
     if sessions is None:
         if verbose:
             print("Loading session objects ...")
+        with_data = ["navigation_df", "navigation_spike_counts_df", "cluster_metrics"]
+        if "theta_phase" in input_features:  # note if loading lfp data for all sessions >128GB RAM req
+            with_data.extend(["lfp_signal", "lfp_times", "lfp_metrics"])
         sessions = gs.get_maze_sessions(
             subject_IDs=subject_IDs,
             maze_names=[maze_name],
             days_on_maze=days_on_maze,
-            with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics"],
+            with_data=with_data,
             must_have_data=True,
         )
-
-    # convert to embedding model input format
-    session_ind = 0
+    input_data, cluster_ind = [], 0
     for session in sessions:
-        pass
-    return
+        if verbose:
+            print(session.name)
+        session_data = get_session_input_data(
+            session,
+            resolution,
+            max_steps_to_goal,
+            moving_only,
+            min_spike_count,
+            input_features,
+            input_feature_kwargs,
+            verbose,
+        )
+        if session_data is not None:
+            # index neurons
+            n_clusters = len(session_data["session_info"]["cluster_unique_IDs"])
+            session_data["cluster_inds"] = torch.from_numpy(np.arange(cluster_ind, cluster_ind + n_clusters)).to(
+                torch.int32
+            )
+            cluster_ind += n_clusters
+            # add session data
+            input_data.append(session_data)
+    return input_data
 
 
 # %% session level funcs
@@ -215,8 +237,10 @@ def get_input_features(df, input_feature, input_kwargs):
         x = _get_acceleration_regressor(df)
     elif input_feature == "head_direction":
         x = _get_head_direction_regressors(df)
-    elif input_feature == "theta":
+    elif input_feature == "theta_phase":
         x = _get_theta_regressors(df)
+    else:
+        raise ValueError(f"Unknown input feature: {input_feature}")
     return x
 
 
@@ -355,6 +379,7 @@ def _get_place_direction_distance_to_goal_egocentric_action_regressors(
     bin_method="uniform",
     bin_spacing=0.05,
     n_log_bins=30,
+    keep_only_visited=False,
 ):
     """onehot encoding over place_direction, distance_to_goal, and egocentric_action"""
     maze_name = df.maze_name.unique()[0]
@@ -391,18 +416,20 @@ def _get_place_direction_distance_to_goal_egocentric_action_regressors(
         + "."
         + _df.free_forced.astype(str)
     )
-
+    if keep_only_visited:
+        cats = labels.unique()
+    else:
+        simple_maze = mr.get_simple_maze(maze_name)
+        all_place_direction_pairs = mr.get_maze_place_direction_pairs(simple_maze)
+        cats = []
+        for _pd in all_place_direction_pairs:
+            for distance_bin_id in bin2bin_id.values():
+                for action in actions:
+                    for ff in ["forced", "free"]:
+                        cats.append(f"{_pd[0]}.{_pd[1]}.{distance_bin_id}.{action}.{ff}")
+                cats.append(f"{_pd[0]}.{_pd[1]}.{distance_bin_id}.nan.nan")
+        cats = list(np.unique(cats))  # ensure unique categories
     # convert to one-hot encoding
-    simple_maze = mr.get_simple_maze(maze_name)
-    all_place_direction_pairs = mr.get_maze_place_direction_pairs(simple_maze)
-    cats = []
-    for _pd in all_place_direction_pairs:
-        for distance_bin_id in bin2bin_id.values():
-            for action in actions:
-                for ff in ["forced", "free"]:
-                    cats.append(f"{_pd[0]}.{_pd[1]}.{distance_bin_id}.{action}.{ff}")
-            cats.append(f"{_pd[0]}.{_pd[1]}.{distance_bin_id}.nan.nan")
-    cats = list(np.unique(cats))  # ensure unique categories
     enc = OneHotEncoder(categories=[cats], sparse_output=False, handle_unknown="ignore")
 
     onehot = enc.fit_transform(labels.values.reshape(-1, 1))
