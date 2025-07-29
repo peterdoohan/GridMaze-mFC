@@ -79,7 +79,7 @@ def get_input_data(
         )
         if session_data is not None:
             # index neurons
-            n_clusters = len(session_data["session_info"]["cluster_unique_IDs"])
+            n_clusters = len(session_data["cluster_unique_IDs"])
             session_data["cluster_inds"] = torch.from_numpy(np.arange(cluster_ind, cluster_ind + n_clusters)).to(
                 torch.int32
             )
@@ -141,13 +141,14 @@ def get_session_input_data(
     spikes = torch.from_numpy(df.spike_count.values.T).to(torch.float32)
     # collect kwarg data
     session_info = {k: getattr(session, k) for k in ["name", "subject_ID", "maze_name", "day_on_maze"]}
-    session_info["cluster_unique_IDs"] = df.spike_count.columns.to_list()
     return {
         "X": X,  # input features
         "spikes": spikes,  # spike data
         "X_type_inds": X_type_inds,  # indices of input features in X
         "input_kwargs": input_kwargs,
         "session_info": session_info,
+        "cluster_unique_IDs": df.spike_count.columns.to_list(),
+        "trial_ids": df.trial.to_list(),
     }
 
 

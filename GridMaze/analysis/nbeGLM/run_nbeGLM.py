@@ -31,12 +31,12 @@ from GridMaze.paths import RESULTS_PATH
 RESULTS_DIR = RESULTS_PATH / "nbeGLM"
 
 DEFAULT_INPUT_DATA_KWARGS = {
-    "subject_IDs": "all",
+    "subject_IDs": ["m2"],
     "maze_name": "maze_1",
     "days_on_maze": "all",
     "sessions": None,
     "input_features": ["place_direction", "distance_to_goal", "egocentric_action"],
-    "input_feature_kwargs": None,
+    "input_feature_kwargs": {},
     "resolution": 0.1,
     "max_steps_to_goal": 30,
     "min_spike_count": 300,
@@ -101,7 +101,7 @@ def run_cv_nbeGLM(
 
     # update model params
     model_params["model_init_kwargs"]["input_streams"] = input_data[0]["X_type_inds"]
-    model_params["model_init_kwargs"]["input_stream_names"] = input_data[0]["input_features"]
+    model_params["model_init_kwargs"]["input_stream_names"] = input_data_kwargs["input_features"]
     model_params["model_init_kwargs"]["Nout"] = sum(s["spikes"].shape[0] for s in input_data)
 
     # save model params
@@ -110,14 +110,17 @@ def run_cv_nbeGLM(
             json.dump(model_params, f, indent=4)
 
     # get cv var explained by input features for all neurons
-    training_cv_scores, cluster_cv_scores = [], []
+    learning_curve_dfs, cluster_cv_scores = [], []
     n_sessions = len(input_data)
     for i in range(n_sessions):
         if verbose:
             print(f"Running cross-validation for session {i + 1}/{n_sessions} ...")
-        nbeGLM = Encoder(**model_init_kwargs)
+        nbeGLM = Encoder(**model_params["model_init_kwargs"])
         test_data = input_data[i]  # single session
         train_data = input_data[:i] + input_data[i + 1 :]  # all other sessions
+
+        if verbose:
+            print("     learning embedding ...")
         model, train_losses, test_perfs, train_perfs = train_model(
             nbeGLM,
             train_data,
@@ -126,9 +129,13 @@ def run_cv_nbeGLM(
             eval_alpha=model_eval_kwargs["crossval_alpha"],
             **model_train_kwargs,
         )
-        # training_cv_scores.append(
-        #     _get_learning_curve_df(test_data, train_losses, test_perfs, train_perfs, model_params)
+        # output learning curves for each model training
+        learning_curve_dfs.append(
+            _get_learning_curve_df(test_data["session_info"], train_losses, test_perfs, train_perfs, model_params)
+        )
 
+        if verbose:
+            print("     testing performance on held-out session ...")
         test_perf, valid_cluster_mask = nbeGLM.eval_representation(
             test_data["X"].to(DEVICE),
             test_data["spikes"].to(DEVICE),
@@ -138,6 +145,7 @@ def run_cv_nbeGLM(
             return_keep=True,
             trials=test_data["trial_ids"],
         )
+        return test_perf, test_data, model_params, valid_cluster_mask
         # cluster_crossval_perfs.append(
         #     _get_cluster_cross_val_df(test_perf, test_data, session, exp_kwargs, valid_cluster_mask)
         # )
@@ -171,16 +179,16 @@ def train_nbeGLM(
 
 
 # %%
-def _get_learning_curve_df(test_session_input, train_losses, test_perfs, train_perfs, exp_kwargs):
+def _get_learning_curve_df(test_session_info, train_losses, test_perfs, train_perfs, model_params):
     """ """
-    nepochs = exp_kwargs["model_train"]["nepochs"]
-    test_freq = exp_kwargs["model_train"]["test_freq"]
+    nepochs = model_params["model_train_kwargs"]["nepochs"]
+    test_freq = model_params["model_train_kwargs"]["test_freq"]
     test_epochs = np.arange(0, nepochs, test_freq)
     return pd.DataFrame(
         {
-            "subject_ID": test_session_input["subject_ID"],
-            "maze_name": test_session_input["maze_name"],
-            "day_on_maze": test_session_input["day_on_maze"],
+            "subject_ID": test_session_info["subject_ID"],
+            "maze_name": test_session_info["maze_name"],
+            "day_on_maze": test_session_info["day_on_maze"],
             "epoch": test_epochs,
             "train_loss": train_losses,
             "train_embedding_perf": train_perfs,
@@ -189,28 +197,19 @@ def _get_learning_curve_df(test_session_input, train_losses, test_perfs, train_p
     )
 
 
-def _get_cluster_cross_val_df(test_perf, test_session_input, eval_session_input, exp_kwargs, valid_clusters):
+def _get_cluster_cross_val_df(test_perf, test_session_info, model_params, valid_cluster_mask):
     """ """
     # if test session is eval session, not in training data
-    if (
-        test_session_input["subject_ID"] == eval_session_input["subject_ID"]
-        and test_session_input["session_name"] == eval_session_input["session_name"]
-    ):
-        in_training_data = False
-    else:
-        in_training_data = True
     dfs = []
-    for fold in range(exp_kwargs["model_eval"]["crossval_folds"]):
+    n_folds = model_params["model_eval_kwargs"]["crossval_folds"]
+    for fold in range(n_folds):
         dfs.append(
             pd.DataFrame(
                 {
-                    "subject_ID": test_session_input["subject_ID"],
-                    "maze_name": test_session_input["maze_name"],
-                    "day_on_maze": test_session_input["day_on_maze"],
-                    "in_training_data": in_training_data,
-                    "cluster_unique_ID": test_session_input["cluster_unique_IDs"][
-                        valid_clusters
-                    ],  # incase invalid folds bc no spikes and no model eval
+                    "subject_ID": test_session_info["subject_ID"],
+                    "maze_name": test_session_info["maze_name"],
+                    "day_on_maze": test_session_info["day_on_maze"],
+                    "cluster_unique_ID": test_session_info["cluster_unique_IDs"][valid_cluster_mask],
                     "fold": fold,
                     "cv_performance": test_perf[:, fold],
                 }
