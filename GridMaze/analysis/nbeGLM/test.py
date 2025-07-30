@@ -37,11 +37,12 @@ nbeGLM.train(train_data, test_data, device=DEVICE, **DEFAULT_MODEL_TRAIN_KWARGS)
 
 
 # %%
-
+reload(glm)
+reload(utils)
 test_scores = nbeGLM.score(
     x=test_data["X"],
     y=test_data["spikes"],
-    trials=test_data["trials"],
+    trials=test_data["trial_ids"],
     n_folds=5,
     optimal_alpha=True,
     n_jobs=16,
