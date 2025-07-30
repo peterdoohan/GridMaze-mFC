@@ -11,8 +11,7 @@ def eval_function(x_train, y_train, x_test, y_test, alpha=1e-3):
 
 def find_optimal_regularization_strength(x, y, trials, alphas=10.0 ** np.arange(2, -5, -1), n_folds=5):
 
-    Tf = len(y)
-    inds = split_trials(trials, n_folds)
+    inds = split_trials2(trials, n_folds)
 
     perfs = np.zeros((n_folds, len(alphas)))
     for fold in range(n_folds):
@@ -47,6 +46,17 @@ def split_trials(trials, n_folds):
     return inds
 
 
+def split_trials2(trials, n_folds, seed=None):
+    unique_trials = np.unique(trials)
+    rng = np.random.default_rng(seed)
+    rng.shuffle(unique_trials)
+
+    trial_splits = np.array_split(unique_trials, n_folds)
+
+    inds = [np.concatenate([np.where(trials == trial_id)[0] for trial_id in split]) for split in trial_splits]
+    return inds
+
+
 def eval_representation(
     x,
     y,
@@ -66,11 +76,11 @@ def eval_representation(
     y: output data to regress embedding onto. Shape: (number of neurons, number of time points)
     trials: trial index for each time point
     """
-
     N, T = y.shape
     if n_folds is not None:
         assert trials is not None
-        inds = split_trials(trials, n_folds)
+        trials = np.asarray(trials)
+        inds = split_trials2(trials, n_folds)
         # require spikes in all splits
         enough_spikes = np.array([(np.amin([y[n, :][ind].sum() for ind in inds]) > 0) for n in range(N)])
     else:

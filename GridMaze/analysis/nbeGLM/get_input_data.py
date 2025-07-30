@@ -139,7 +139,7 @@ def get_session_input_data(
         "spikes": spikes,  # spike data
         "input_group_indices": input_group_inds,  # indices of input groups in X
         "input_group_names": input_groups,  # names of input groups
-        "trial_ids": df.trial.to_list(),  # trial ID for each sample
+        "trial_ids": df.trial.values,  # trial ID for each sample
         "input_kwargs": input_kwargs,  # kwargs used to generate input data
         "session_info": session_info,
         "cluster_unique_IDs": df.spike_count.columns.to_list(),

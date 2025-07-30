@@ -228,7 +228,7 @@ class Encoder(torch.nn.Module):
     def score(self, x, y, **kwargs):
         # ensure x is a tensor
         if not isinstance(x, torch.Tensor):
-            x = torch.tensor(x, dtype=torch.float32)
+            x = torch.tensor(x, dtype=torch.float32).to(self.device)
 
         z = self.encode(x).detach().cpu().numpy()  # T x D
 
@@ -255,11 +255,13 @@ class Encoder(torch.nn.Module):
         self.set_input_groups(train_sessions)
         self.initialise_weights(train_sessions)
 
+        # move below to model init?
         if device is None:
             device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.to(device)
+        self.device = device
         if verbose:
-            print("device:", device)
+            print("device:", self.device)
 
         optim = torch.optim.Adam(self.parameters(), lr=lr)
 
@@ -268,12 +270,14 @@ class Encoder(torch.nn.Module):
         self.train_perfs = []
         test_perf = np.nan
 
-        train_Xs = [torch.tensor(session["X"], dtype=torch.float32).to(device) for session in train_sessions]
-        train_spikes = [torch.tensor(session["spikes"], dtype=torch.float32).to(device) for session in train_sessions]
+        train_Xs = [torch.tensor(session["X"], dtype=torch.float32).to(self.device) for session in train_sessions]
+        train_spikes = [
+            torch.tensor(session["spikes"], dtype=torch.float32).to(self.device) for session in train_sessions
+        ]
 
         if test_session is not None:
             test_X, test_spikes = (
-                torch.tensor(test_session["X"], dtype=torch.float32).to(device),
+                torch.tensor(test_session["X"], dtype=torch.float32).to(self.device),
                 test_session["spikes"],
             )
 
