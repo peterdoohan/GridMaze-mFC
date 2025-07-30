@@ -236,7 +236,7 @@ class Encoder(torch.nn.Module):
         if isinstance(y, torch.Tensor):
             y = y.detach().cpu().numpy()
 
-        return utils.eval_representation2(z.T, y, **kwargs)
+        return utils.eval_representation(z.T, y, **kwargs)
 
     def train(
         self,

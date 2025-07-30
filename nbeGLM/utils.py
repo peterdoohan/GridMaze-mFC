@@ -48,58 +48,6 @@ def split_trials(trials, n_folds):
 
 
 def eval_representation(
-    x, y, trials=None, n_folds=None, optimal_alpha=False, optimal_alpha_range=10.0 ** np.arange(2, -5, -1), alpha=1e-3
-):
-    """
-    function for evaluating the utility of the learned embedding on some dataset
-    x: input data to be embedded. Shape:
-    y: output data to regress embedding onto. Shape: (number of neurons, number of time points)
-    trials: trial index for each time point
-    """
-
-    N, T = y.shape
-    scores = np.zeros(N) + np.nan if n_folds is None else np.zeros((N, n_folds)) + np.nan
-
-    # for each neuron in the test data
-    # y ~ Poisson( lambda = exp(W z) )
-
-    if n_folds is None:
-        enough_spikes = np.ones(N, dtype=bool)  # no cross-validation, so no need to check for spikes in each fold
-    if n_folds is not None:
-        assert trials is not None
-        inds = split_trials(trials, n_folds)
-        # require spikes in all splits
-        enough_spikes = np.array([(np.amin([y[n, :][ind].sum() for ind in inds]) > 0) for n in range(N)])
-
-    for n in np.where(enough_spikes)[0]:
-        y_n = y[n, :]  # target spike counts
-        # fit a Poisson regression model from the embeddings
-        if n_folds is None:  # no crossvalidation; just test representation on the whole thing
-            scores[n] = eval_function(x, y_n, x, y_n, alpha=alpha)
-        else:
-            for fold in range(n_folds):
-                test, train = inds[fold], np.concatenate([inds[f] for f in range(n_folds) if f != fold])
-                x_train, y_n_train, trials_train = x[..., train, :], y_n[train], trials[train]
-                x_test, y_n_test = x[..., test, :], y_n[test]
-
-                if optimal_alpha:
-                    # first find the optimal regularization strength through crossvalidation on the training data
-                    alpha = find_optimal_regularization_strength(
-                        x_train, y_n_train, trials_train, alphas=optimal_alpha_range, n_folds=n_folds
-                    )
-
-                # then fit a model to the full training data with that regularization strength
-                scores[n, fold] = eval_function(x_train, y_n_train, x_test, y_n_test, alpha=alpha)
-
-                assert not np.isnan(scores[n, fold])
-
-    return scores  # (neurons by folds)
-
-
-# %%
-
-
-def eval_representation2(
     x,
     y,
     trials=None,
