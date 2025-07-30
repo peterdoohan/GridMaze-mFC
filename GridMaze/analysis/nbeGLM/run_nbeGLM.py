@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 
-from nbeGLM.model_utils import Encoder, train_model
+from nbeGLM.models import Encoder
 
 from GridMaze.analysis.nbeGLM.get_input_data import get_input_data
 
@@ -60,11 +60,6 @@ def run_cv_nbeGLM(
         print("Loading input data ...")
     input_data = get_input_data(**input_data_kwargs)
 
-    # update model params
-    model_params["model_init_kwargs"]["input_streams"] = input_data[0]["X_type_inds"]
-    model_params["model_init_kwargs"]["input_stream_names"] = input_data_kwargs["input_features"]
-    model_params["model_init_kwargs"]["Nout"] = sum(s["spikes"].shape[0] for s in input_data)
-
     # get cv var explained by input features for all neurons
     learning_curve_dfs, cluster_cv_scores = [], []
     n_sessions = len(input_data)
@@ -78,31 +73,27 @@ def run_cv_nbeGLM(
         if verbose:
             print("     learning embedding ...")
         assert model_init_kwargs["with_embedding"], "nbeGLM requires with_embedding=True"
-        model, train_losses, test_perfs, train_perfs = train_model(
-            nbeGLM,
-            train_data,
-            test_data,
-            DEVICE,
-            **model_train_kwargs,
-        )
+
+        # train sklearn style
+        nbeGLM.train(train_data, test_data, device=DEVICE, **model_train_kwargs)
         # output learning curves for each model training
         learning_curve_dfs.append(
             _get_learning_curve_df(
-                train_losses, test_perfs, train_perfs, model_params, test_session_info=test_data["session_info"]
+                nbeGLM.train_losses,
+                nbeGLM.test_perfs,
+                nbeGLM.train_perfs,
+                model_params,
+                test_session_info=test_data["session_info"],
             )
         )
-
+        # test on held-out session
         if verbose:
             print("     testing performance on held-out session ...")
-        test_perf, valid_cluster_mask = model.eval_representation(
-            test_data["X"].to(DEVICE),
-            test_data["spikes"].to(DEVICE),
-            cv=model_eval_kwargs["crossval_folds"],
-            alpha=model_eval_kwargs["crossval_alpha"],
-            embed=True,
-            return_keep=True,
-            trials=test_data["trial_ids"],
-        )
+        test_perf = nbeGLM.score(
+            x=test_data["X"],
+            y=test_data["spikes"],
+            # need more kwargs
+        )  # neurons, folds
         cluster_cv_scores.append(
             _get_cluster_cross_val_df(
                 test_perf, test_data["session_info"], test_data["cluster_unique_IDs"], model_params, valid_cluster_mask

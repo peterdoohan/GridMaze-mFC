@@ -36,9 +36,9 @@ FRAME_RATE = 60  # Hz
 
 
 def get_input_data(
-    subject_IDs="all",
+    subject_IDs=["m2"],
     maze_name="maze_1",
-    days_on_maze="all",
+    days_on_maze="late",
     sessions=None,
     resolution=0.1,
     max_steps_to_goal=30,
@@ -49,7 +49,6 @@ def get_input_data(
     verbose=False,
 ):
     # load session objects
-
     if sessions is None:
         if verbose:
             print("Loading session objects ...")
@@ -63,7 +62,8 @@ def get_input_data(
             with_data=with_data,
             must_have_data=True,
         )
-    input_data, cluster_ind = [], 0
+    input_data = []
+    # gen input data for each session
     for session in sessions:
         if verbose:
             print(session.name)
@@ -78,13 +78,6 @@ def get_input_data(
             verbose,
         )
         if session_data is not None:
-            # index neurons
-            n_clusters = len(session_data["cluster_unique_IDs"])
-            session_data["cluster_inds"] = torch.from_numpy(np.arange(cluster_ind, cluster_ind + n_clusters)).to(
-                torch.int32
-            )
-            cluster_ind += n_clusters
-            # add session data
             input_data.append(session_data)
     return input_data
 
@@ -98,8 +91,8 @@ def get_session_input_data(
     max_steps_to_goal=30,
     moving_only=False,
     min_spike_count=300,
-    input_features=["distance_to_goal", "place_direction", "egocentric_action", "acceleration"],
-    input_feature_kwargs={"distance_to_goal": None, "place_direction": None, "egocentric_action": None},
+    input_groups=["distance_to_goal", "place_direction", "egocentric_action", "acceleration"],
+    input_group_kwargs={"distance_to_goal": None, "place_direction": None, "egocentric_action": None},
     verbose=False,
 ):
     """
@@ -108,7 +101,7 @@ def get_session_input_data(
     input_kwargs = locals()
     input_kwargs.pop("session", None)
     # load data and update navigation variables
-    df = init_navigation_spikes_df(session, input_features)
+    df = init_navigation_spikes_df(session, input_groups)
     # downsample data
     df = ds.downsample_navigation_activity_df(df, resolution=resolution)
     # filter navigation data
@@ -128,27 +121,28 @@ def get_session_input_data(
             print("No neurons meet min spike count threshold")
         return None
     # gather feature data
-    X, X_type_inds, ind = [], [], 0
-    for _input in input_features:
-        kwargs = input_feature_kwargs[_input] if _input in input_feature_kwargs.keys() else None
+    X, input_group_inds, ind = [], [], 0
+    for _input in input_groups:
+        kwargs = input_group_kwargs[_input] if _input in input_group_kwargs.keys() else None
         x = get_input_features(df, _input, kwargs)
         X.append(x)
         Nin = x.shape[1]
-        X_type_inds.append(list(range(ind, ind + Nin)))
+        input_group_inds.append(list(range(ind, ind + Nin)))
         ind += Nin
-    X = torch.from_numpy(np.concatenate(X, axis=1).T).to(torch.float32)
+    X = np.concatenate(X, axis=1).T
     # gather spike data
-    spikes = torch.from_numpy(df.spike_count.values.T).to(torch.float32)
+    spikes = df.spike_count.values.T
     # collect kwarg data
     session_info = {k: getattr(session, k) for k in ["name", "subject_ID", "maze_name", "day_on_maze"]}
     return {
         "X": X,  # input features
         "spikes": spikes,  # spike data
-        "X_type_inds": X_type_inds,  # indices of input features in X
-        "input_kwargs": input_kwargs,
+        "input_group_indices": input_group_inds,  # indices of input groups in X
+        "input_group_names": input_groups,  # names of input groups
+        "trial_ids": df.trial.to_list(),  # trial ID for each sample
+        "input_kwargs": input_kwargs,  # kwargs used to generate input data
         "session_info": session_info,
         "cluster_unique_IDs": df.spike_count.columns.to_list(),
-        "trial_ids": df.trial.to_list(),
     }
 
 
