@@ -16,7 +16,7 @@ def find_optimal_regularization_strength(x, y, trials, alphas=10.0 ** np.arange(
 
     perfs = np.zeros((n_folds, len(alphas)))
     for fold in range(n_folds):
-        test, train = inds[fold], np.concatenate([inds[f] for f in range(cv) if f != fold])
+        test, train = inds[fold], np.concatenate([inds[f] for f in range(n_folds) if f != fold])
         # split the data into train and test for this fold
         x_train, y_train, x_test, y_test = x[train], y[train], x[test], y[test]
         for ialpha, alpha in enumerate(alphas):
@@ -96,25 +96,82 @@ def eval_representation(
     return scores  # (neurons by folds)
 
 
-def _eval_neuron_cv(n, x, y, trials, n_folds, inds, alpha, optimal_alpha, optimal_alpha_range):
+# %%
+
+
+def eval_representation2(
+    x,
+    y,
+    trials=None,
+    n_folds=None,
+    optimal_alpha=False,
+    optimal_alpha_range=10.0 ** np.arange(2, -5, -1),
+    alpha=1e-3,
+    n_jobs=16,
+):
+    """
+    for each neuron in the test data
+    y ~ Poisson( lambda = exp(W z) )
+
+    function for evaluating the utility of the learned embedding on some dataset
+    x: input data to be embedded. Shape:
+    y: output data to regress embedding onto. Shape: (number of neurons, number of time points)
+    trials: trial index for each time point
+    """
+
+    N, T = y.shape
+    if n_folds is not None:
+        assert trials is not None
+        inds = split_trials(trials, n_folds)
+        # require spikes in all splits
+        enough_spikes = np.array([(np.amin([y[n, :][ind].sum() for ind in inds]) > 0) for n in range(N)])
+    else:
+        inds = None  # no cv
+        enough_spikes = np.ones(N, dtype=bool)  # no cross-validation, so no need to check for spikes in each fold
+
+    # optionally run eval in parallel over neurons
+    if n_jobs is not None:
+        scores = Parallel(n_jobs=n_jobs)(
+            delayed(_eval_neuron)(
+                n, x, y, enough_spikes, trials, n_folds, inds, alpha, optimal_alpha, optimal_alpha_range
+            )
+            for n in range(N)
+        )
+    # otherwise run eval sequentially
+    else:
+        scores = [
+            _eval_neuron(n, x, y, enough_spikes, trials, n_folds, inds, alpha, optimal_alpha, optimal_alpha_range)
+            for n in range(N)
+        ]
+    scores = np.array(scores)
+    return scores
+
+
+def _eval_neuron(n, x, y, enough_spikes, trials, n_folds, inds, alpha, optimal_alpha, optimal_alpha_range):
     """ """
     y_n = y[n, :]  # target spike counts
+    if not enough_spikes[n]:
+        return np.nan if n_folds is None else np.zeros(n_folds) + np.nan
+
     # fit a Poisson regression model from the embeddings
-    neuron_scores = np.zeros(n_folds)
-    for fold in range(n_folds):
-        test, train = inds[fold], np.concatenate([inds[f] for f in range(n_folds) if f != fold])
-        x_train, y_n_train, trials_train = x[..., train, :], y_n[train], trials[train]
-        x_test, y_n_test = x[..., test, :], y_n[test]
+    if n_folds is None:  # no crossvalidation; just test representation on the whole thing
+        return eval_function(x, y_n, x, y_n, alpha=alpha)
+    else:
+        neuron_scores = np.zeros(n_folds)
+        for fold in range(n_folds):
+            test, train = inds[fold], np.concatenate([inds[f] for f in range(n_folds) if f != fold])
+            x_train, y_n_train, trials_train = x[..., train, :], y_n[train], trials[train]
+            x_test, y_n_test = x[..., test, :], y_n[test]
 
-        if optimal_alpha:
-            # first find the optimal regularization strength through crossvalidation on the training data
-            alpha = find_optimal_regularization_strength(
-                x_train, y_n_train, trials_train, alphas=optimal_alpha_range, n_folds=n_folds
-            )
+            if optimal_alpha:
+                # first find the optimal regularization strength through crossvalidation on the training data
+                alpha = find_optimal_regularization_strength(
+                    x_train, y_n_train, trials_train, alphas=optimal_alpha_range, n_folds=n_folds
+                )
 
-        # then fit a model to the full training data with that regularization strength
-        neuron_scores[fold] = eval_function(x_train, y_n_train, x_test, y_n_test, alpha=alpha)
+            # then fit a model to the full training data with that regularization strength
+            neuron_scores[fold] = eval_function(x_train, y_n_train, x_test, y_n_test, alpha=alpha)
 
-        assert not np.isnan(neuron_scores[fold])
+            assert not np.isnan(neuron_scores[fold])
 
-    return neuron_scores
+        return neuron_scores
