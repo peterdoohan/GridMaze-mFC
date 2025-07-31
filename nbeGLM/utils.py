@@ -18,7 +18,7 @@ def eval_function(x_train, y_train, x_test, y_test, alpha=1e-3):
 
 def find_optimal_regularization_strength(x, y, trials, alphas=10.0 ** np.arange(2, -5, -1), n_folds=5):
 
-    inds = split_trials2(trials, n_folds)
+    inds = split_trials(trials, n_folds)
 
     perfs = np.zeros((n_folds, len(alphas)))
     for fold in range(n_folds):
@@ -41,7 +41,7 @@ def find_optimal_regularization_strength(x, y, trials, alphas=10.0 ** np.arange(
     return best_alpha
 
 
-def split_trials2(trials, n_folds, seed=None):
+def split_trials(trials, n_folds, seed=None):
     unique_trials = np.unique(trials)
     rng = np.random.default_rng(seed)
     rng.shuffle(unique_trials)
@@ -61,6 +61,7 @@ def eval_representation(
     optimal_alpha_range=10.0 ** np.arange(2, -5, -1),
     alpha=1e-3,
     n_jobs=16,
+    verbose=False,
 ):
     """
     for each neuron in the test data
@@ -75,7 +76,7 @@ def eval_representation(
     if n_folds is not None:
         assert trials is not None
         trials = np.asarray(trials)
-        inds = split_trials2(trials, n_folds)
+        inds = split_trials(trials, n_folds)
         # require spikes in all splits
         enough_spikes = np.array([(np.amin([y[n, :][ind].sum() for ind in inds]) > 0) for n in range(N)])
     else:
@@ -84,24 +85,30 @@ def eval_representation(
 
     # optionally run eval in parallel over neurons
     if n_jobs is not None:
+        if verbose:
+            print(f"Evaluating {N} neurons in parallel with {n_jobs} jobs")
         scores = Parallel(n_jobs=n_jobs)(
             delayed(_eval_neuron)(
-                n, x, y, enough_spikes, trials, n_folds, inds, alpha, optimal_alpha, optimal_alpha_range
+                n, x, y, enough_spikes, trials, n_folds, inds, alpha, optimal_alpha, optimal_alpha_range, verbose
             )
             for n in range(N)
         )
     # otherwise run eval sequentially
     else:
         scores = [
-            _eval_neuron(n, x, y, enough_spikes, trials, n_folds, inds, alpha, optimal_alpha, optimal_alpha_range)
+            _eval_neuron(
+                n, x, y, enough_spikes, trials, n_folds, inds, alpha, optimal_alpha, optimal_alpha_range, verbose
+            )
             for n in range(N)
         ]
     scores = np.array(scores)
     return scores
 
 
-def _eval_neuron(n, x, y, enough_spikes, trials, n_folds, inds, alpha, optimal_alpha, optimal_alpha_range):
+def _eval_neuron(n, x, y, enough_spikes, trials, n_folds, inds, alpha, optimal_alpha, optimal_alpha_range, verbose):
     """ """
+    if verbose:
+        print(f" evaluating neuron {n + 1}")
     y_n = y[n, :]  # target spike counts
     if not enough_spikes[n]:
         return np.nan if n_folds is None else np.zeros(n_folds) + np.nan

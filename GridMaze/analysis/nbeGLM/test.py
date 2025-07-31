@@ -1,9 +1,7 @@
 # %% import some stuff
 
-import os
-from importlib import reload
-
 # os.chdir("/ceph/behrens/peter_doohan/goalNav_mFC/experiment/code")
+from importlib import reload
 import numpy as np
 import torch
 from GridMaze.analysis.nbeGLM.get_input_data import get_input_data
@@ -22,30 +20,44 @@ from jobs.nbeGLM.utils import (
 
 
 # %%
-subject_ids = ["m2"]
-data = get_input_data(subject_IDs=subject_ids)
+data = get_input_data()
 
 # %%
 reload(glm)
 reload(utils)
-nbeGLM = glm.Encoder()
+
+# %%
+nbeGLM = glm.nbeGLM()
 i = 0
 test_data = data[i]  # single session
 train_data = data[:i] + data[i + 1 :]  # all other sessions
 
-nbeGLM.train(train_data, test_data, device=DEVICE, **DEFAULT_MODEL_TRAIN_KWARGS)
+nbeGLM.train(train_data, test_data)
 
 
 # %%
-reload(glm)
-reload(utils)
+
 test_scores = nbeGLM.score(
     x=test_data["X"],
     y=test_data["spikes"],
     trials=test_data["trial_ids"],
     n_folds=5,
     optimal_alpha=True,
-    n_jobs=16,
+    n_jobs=24,
+    verbose=True,
+)
+
+# %% baseline perf
+
+baselineGLM = glm.baselineGLM()
+baseline_perf = baselineGLM.score(
+    x=test_data["X"],
+    y=test_data["spikes"],
+    trials=test_data["trial_ids"],
+    n_folds=5,
+    optimal_alpha=True,
+    n_jobs=24,
+    verbose=True,
 )
 
 # %%

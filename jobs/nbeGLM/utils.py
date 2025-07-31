@@ -25,41 +25,38 @@ DEFAULT_INPUT_DATA_KWARGS = {
 }
 
 DEFAULT_MODEL_INIT_KWARGS = {
-    "with_embedding": True,
-    "latent_inputs": None,
-    "latent_nonlin": None,
-    "partition": None,
     "Nhid": [100, 50],
-    "Nlat": 20,
+    "Nlat": 15,
     "beta_act": 1e-1,
     "beta_weight": 1e-1,
     "inv_link": "exp",
-    "noise_function": "Poisson",
-    "sqrt_counts": False,
-    "combine_frs": False,
+    "partition": None,
+    "latent_nonline": None,
 }
 
 DEFAULT_MODEL_TRAIN_KWARGS = {
+    "device": None,
+    "test_freq": 1000,
     "lr": 5e-4,
     "nepochs": 3001,
-    "test_freq": 1000,
     "eval_alpha": 1e-3,
+    "verbose": True,
 }
 
-DEFAULT_MODEL_EVAL_KWARGS = {
-    "crossval_folds": 5,
-    "crossval_alpha": 1e-3,
-    "crossval_train_sessions": False,
+DEFAULT_SCORE_KWARGS = {
+    "n_folds": 5,
+    "optimal_alpha": True,
+    "n_jobs": 24,
+    "verbose": False,
 }
 
-DEFAULT_CV_NBEGLM_PARAMS = {
+DEFAULT_NBEGLM_PARAMS = {
     "input_data_kwargs": DEFAULT_INPUT_DATA_KWARGS,
     "model_init_kwargs": DEFAULT_MODEL_INIT_KWARGS,
     "model_train_kwargs": DEFAULT_MODEL_TRAIN_KWARGS,
-    "model_eval_kwargs": DEFAULT_MODEL_EVAL_KWARGS,
+    "score_kwargs": DEFAULT_SCORE_KWARGS,
     "seed": 0,
-    "overwrite": True,
-    "verbose": True,
+    "save_path": None,
 }
 
 # %% Functions

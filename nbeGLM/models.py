@@ -1,12 +1,17 @@
+"""
+TODO
+"""
+
+# %% Imports
 import time
 import torch
 import numpy as np
 from nbeGLM import utils
 
-# @title Specify the model
+# %% Core Class
 
 
-class Encoder(torch.nn.Module):
+class nbeGLM(torch.nn.Module):
     """pytorch model for learning task embeddings"""
 
     def __init__(
@@ -27,7 +32,7 @@ class Encoder(torch.nn.Module):
         partition (list of int lists): optional partitioning of inputs into things that only combine linearly at the latent.
             each list specifies a set of input streams to be embedded together. Default: a single embedding including all input streams not in 'latent_inputs'
         """
-        super(Encoder, self).__init__()
+        super(nbeGLM, self).__init__()
 
         # convert input_streams to tensor
         assert latent_nonlin in {None, "relu"}
@@ -41,6 +46,20 @@ class Encoder(torch.nn.Module):
 
         # set latent nonlinearity
         self.latent_nonlin = latent_nonlin
+
+    def __repr__(self):
+        lines = [
+            "╭─────────────────────────────╮",
+            "│            nbeGLM           │",
+            "╰─────────────────────────────╯",
+            f"├─ Hidden Layers       : {self.Nhid}",
+            f"├─ Latent Dim          : {self.Nlat}",
+            f"├─ β (activation)      : {self.beta_act}",
+            f"├─ β (weights)         : {self.beta_weight}",
+            f"├─ Partition           : {self.partition}",
+            f"╰─ Latent Nonlinearity : {self.latent_nonlin}",
+        ]
+        return "\n".join(lines)
 
     def set_input_groups(self, train_data):
 
@@ -225,7 +244,7 @@ class Encoder(torch.nn.Module):
         self.tot_loss = self.loss(y, self.yhat, self.z, neuron_inds=neuron_inds)  # compute loss
         return self.tot_loss
 
-    def score(self, x, y, **kwargs):
+    def score(self, x, y, trials=None, n_folds=None, optimal_alpha=False, n_jobs=None, verbose=False, **kwargs):
         # ensure x is a tensor
         if not isinstance(x, torch.Tensor):
             x = torch.tensor(x, dtype=torch.float32).to(self.device)
@@ -236,18 +255,27 @@ class Encoder(torch.nn.Module):
         if isinstance(y, torch.Tensor):
             y = y.detach().cpu().numpy()
 
-        return utils.eval_representation(z.T, y, **kwargs)
+        return utils.eval_representation(
+            z.T,
+            y,
+            trials=trials,
+            n_folds=n_folds,
+            optimal_alpha=optimal_alpha,
+            n_jobs=n_jobs,
+            verbose=verbose,
+            **kwargs,
+        )
 
     def train(
         self,
         train_sessions,
         test_session=None,
         device=None,
-        test_freq=5,
+        test_freq=1000,
         lr=1e-3,
-        nepochs=300,
+        nepochs=3001,
         eval_alpha=1e-3,
-        verbose=True,
+        verbose=False,
     ):
         """training function"""
         # update X, spikes to torch
@@ -322,3 +350,27 @@ class Encoder(torch.nn.Module):
                         f"Weight Loss: {weight_loss:>10.4g} │ "
                         f"Time:        {(time.time() - t0):>10.4g}s│"
                     )
+
+
+# %% Baseline models
+
+
+class baselineGLM:
+    """run 'baseline' Poisson GLM without embedding"""
+
+    def __init__(self):
+        return
+
+    def __repr__(self):
+        lines = [
+            "╭─────────────────────────────╮",
+            "│          baselineGLM        │",
+            "╰─────────────────────────────╯",
+            f"├─ no embedding",
+        ]
+        return "\n".join(lines)
+
+    def score(self, x, y, trials=None, n_folds=5, optimal_alpha=False, n_jobs=None, verbose=False):
+        return utils.eval_representation(
+            x.T, y, trials=trials, n_folds=n_folds, optimal_alpha=optimal_alpha, n_jobs=n_jobs, verbose=verbose
+        )
