@@ -14,8 +14,8 @@ RESULTS_DIR = RESULTS_PATH / "nbeGLM"
 # %% Functions
 
 
-def submit_jobs(seed=0, subfolder="interaction_validation"):
-    model_set_params = get_model_set_params(seed=0, subfolder="interaction_validation")
+def submit_jobs(seed=0, subfolder="full_models"):
+    model_set_params = get_model_set_params(seed, subfolder)
     # save model set params to json
     with open(RESULTS_DIR / subfolder / "model_set_params.json", "w") as f:
         json.dump(model_set_params, f, indent=4)
@@ -28,16 +28,14 @@ def submit_jobs(seed=0, subfolder="interaction_validation"):
     return print("all jobs submitted to hpc")
 
 
-def get_model_set_params(seed=0, subfolder="interaction_validation"):
+def get_model_set_params(seed=0, subfolder="full_models"):
     """ """
     model_set_params = []
+    input_groups = ["place_direction", "distance_to_goal", "egocentric_action"]
     for maze_name in ["maze_1", "maze_2", "rooms_maze"]:
-        for input_groups, partition, model_name in [
-            (["place"], None, "place"),
-            (["direction"], None, "direction"),
-            (["place", "direction"], [("place"), ("direction")], "place_direction_linear"),
-            (["place", "direction"], None, "place_direction_nonlinear"),
-            (["place_direction"], None, "place_direction_conjunction"),
+        for partition, model_name in [
+            (None, "non-paritioned"),
+            ([("place_direction"), ("distance_to_goal"), ("egocentric_action")], "partitioned"),
         ]:
             # update defualt input data kwargs
             input_data_kwargs = deepcopy(ju.DEFAULT_INPUT_DATA_KWARGS)
@@ -64,7 +62,7 @@ def get_model_set_params(seed=0, subfolder="interaction_validation"):
                         "verbose": True,
                         "save_path": RESULTS_DIR / subfolder / maze_name / model_name,
                     },
-                    "run_fn": "run_cv_nbeGLM",
+                    "run_fn": "train_nbeGLM",
                 }
             )
 
