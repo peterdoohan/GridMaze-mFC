@@ -27,10 +27,8 @@ class nbeGLM(torch.nn.Module):
         input_streams (list of int arrays): indices for each input stream. Use [np.arange(Nin)] to treat everything as one stream.
         Nhid (list of int): list of hidden layer dimensions (for each input stream)
         Nlat (int): latent dimension (output of the embedding streams)
-        Nout (int): output dimension (total number of neurons)
         beta_act, beta_weight (floats): regularization parameters
-        partition (list of int lists): optional partitioning of inputs into things that only combine linearly at the latent.
-            each list specifies a set of input streams to be embedded together. Default: a single embedding including all input streams not in 'latent_inputs'
+        partition
         """
         super(nbeGLM, self).__init__()
 
@@ -244,7 +242,9 @@ class nbeGLM(torch.nn.Module):
         self.tot_loss = self.loss(y, self.yhat, self.z, neuron_inds=neuron_inds)  # compute loss
         return self.tot_loss
 
-    def score(self, x, y, trials=None, n_folds=None, optimal_alpha=False, n_jobs=None, verbose=False, **kwargs):
+    def score(
+        self, x, y, trials=None, n_folds=None, alpha=0.001, optimal_alpha=False, n_jobs=None, verbose=False, **kwargs
+    ):
         # ensure x is a tensor
         if not isinstance(x, torch.Tensor):
             x = torch.tensor(x, dtype=torch.float32).to(self.device)
@@ -261,6 +261,7 @@ class nbeGLM(torch.nn.Module):
             trials=trials,
             n_folds=n_folds,
             optimal_alpha=optimal_alpha,
+            alpha=alpha,
             n_jobs=n_jobs,
             verbose=verbose,
             **kwargs,
@@ -275,6 +276,7 @@ class nbeGLM(torch.nn.Module):
         lr=1e-3,
         nepochs=3001,
         eval_alpha=1e-3,
+        n_jobs=None,
         verbose=False,
     ):
         """training function"""
@@ -323,12 +325,23 @@ class nbeGLM(torch.nn.Module):
             if epoch % test_freq == 0:
                 test_train_sesh = np.random.choice(len(train_sessions))
                 if test_session is not None:
-                    test_perf = np.nanmean(self.score(test_X, test_spikes))
+                    test_perf = np.nanmean(
+                        self.score(
+                            test_X,
+                            test_spikes,
+                            n_jobs=n_jobs,
+                        )
+                    )
                 else:
                     test_perf = None
 
                 train_perf = np.nanmean(
-                    self.score(train_Xs[test_train_sesh], train_spikes[test_train_sesh], alpha=eval_alpha)
+                    self.score(
+                        train_Xs[test_train_sesh],
+                        train_spikes[test_train_sesh],
+                        alpha=eval_alpha,
+                        n_jobs=n_jobs,
+                    )
                 )
 
                 self.train_losses.append(np.mean(epoch_losses))

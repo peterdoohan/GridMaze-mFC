@@ -60,7 +60,7 @@ def eval_representation(
     optimal_alpha=False,
     optimal_alpha_range=10.0 ** np.arange(2, -5, -1),
     alpha=1e-3,
-    n_jobs=16,
+    n_jobs=None,
     verbose=False,
 ):
     """

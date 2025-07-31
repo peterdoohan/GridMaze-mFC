@@ -39,6 +39,7 @@ DEFAULT_MODEL_TRAIN_KWARGS = {
     "lr": 5e-4,
     "nepochs": 3001,
     "eval_alpha": 1e-3,
+    "n_jobs": 24,
     "verbose": True,
 }
 
