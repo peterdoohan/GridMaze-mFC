@@ -1,6 +1,13 @@
+"""
+Utility functions for models.py
+"""
+
+# %% Imports
 import numpy as np
 from sklearn import linear_model
 from joblib import delayed, Parallel
+
+# %% Functions
 
 
 def eval_function(x_train, y_train, x_test, y_test, alpha=1e-3):
@@ -32,18 +39,6 @@ def find_optimal_regularization_strength(x, y, trials, alphas=10.0 ** np.arange(
     best_alpha = alphas[np.argmax(mean_perfs)]  # best regularization strength
 
     return best_alpha
-
-
-def split_trials(trials, n_folds):
-    """randomly assigns trials into cv different folds"""
-    unique_trials = np.unique(trials)
-    trial_splits = [[] for _ in range(n_folds)]
-    for trial in unique_trials:
-        trial_splits[int(trial) % n_folds].append(trial)
-    inds = [
-        np.concatenate([np.where(trials == trial_id)[0] for trial_id in trial_split]) for trial_split in trial_splits
-    ]
-    return inds
 
 
 def split_trials2(trials, n_folds, seed=None):
