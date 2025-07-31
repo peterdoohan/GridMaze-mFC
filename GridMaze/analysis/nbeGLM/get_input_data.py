@@ -44,8 +44,8 @@ def get_input_data(
     max_steps_to_goal=30,
     moving_only=False,
     min_spike_count=300,
-    input_features=["distance_to_goal", "place_direction", "egocentric_action"],
-    input_feature_kwargs={"distance_to_goal": None, "place_direction": None, "egocentric_action": None},
+    input_groups=["distance_to_goal", "place_direction", "egocentric_action"],
+    input_group_kwargs={},
     verbose=False,
 ):
     # load session objects
@@ -53,7 +53,7 @@ def get_input_data(
         if verbose:
             print("Loading session objects ...")
         with_data = ["navigation_df", "navigation_spike_counts_df", "cluster_metrics"]
-        if "theta_phase" in input_features:  # note if loading lfp data for all sessions >128GB RAM req
+        if "theta_phase" in input_groups:  # note if loading lfp data for all sessions >128GB RAM req
             with_data.extend(["lfp_signal", "lfp_times", "lfp_metrics"])
         sessions = gs.get_maze_sessions(
             subject_IDs=subject_IDs,
@@ -73,8 +73,8 @@ def get_input_data(
             max_steps_to_goal,
             moving_only,
             min_spike_count,
-            input_features,
-            input_feature_kwargs,
+            input_groups,
+            input_group_kwargs,
             verbose,
         )
         if session_data is not None:

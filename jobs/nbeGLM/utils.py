@@ -16,8 +16,8 @@ DEFAULT_INPUT_DATA_KWARGS = {
     "subject_IDs": ["m2"],
     "maze_name": "maze_1",
     "days_on_maze": "late",
-    "input_features": ["place_direction", "distance_to_goal", "egocentric_action"],
-    "input_feature_kwargs": {},
+    "input_groups": ["place_direction", "distance_to_goal", "egocentric_action"],
+    "input_group_kwargs": {},
     "resolution": 0.1,
     "max_steps_to_goal": 30,
     "min_spike_count": 300,
@@ -63,9 +63,9 @@ DEFAULT_NBEGLM_PARAMS = {
 # %% Functions
 
 
-def get_SLURM_script(exp_name, subfolder, model_params, run_fn="run_cv_nbeGLM"):
+def get_SLURM_script(model_name, subfolder, model_params, run_fn="run_cv_nbeGLM"):
     """Create SLURM script for running nbeGLM experiment."""
-    # check subfolder and exp_name folder exist in jobs/nbeGLM and results/nbeGLM
+    # check subfolder and model_name folder exist in jobs/nbeGLM and results/nbeGLM
     for base_dir in [RESULTS_DIR, JOBS_PATH]:
         output_path = base_dir / subfolder
         if not output_path.exists():
@@ -79,9 +79,9 @@ def get_SLURM_script(exp_name, subfolder, model_params, run_fn="run_cv_nbeGLM"):
 
     # create SLURM script
     script = f"""#!/bin/bash
-#SBATCH --job-name=nbeGLM_{exp_name}
-#SBATCH --output=jobs/nbeGLM/{subfolder}/out/{exp_name}.out
-#SBATCH --error=jobs/nbeGLM/{subfolder}/err/{exp_name}.err
+#SBATCH --job-name=nbeGLM_{model_name}
+#SBATCH --output=jobs/nbeGLM/{subfolder}/out/{model_name}.out
+#SBATCH --error=jobs/nbeGLM/{subfolder}/err/{model_name}.err
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=24
 #SBATCH -p gpu
@@ -99,7 +99,7 @@ from GridMaze.analysis.nbeGLM import run_nbeGLM as rn
 rn.{run_fn}(**{model_params})
 EOF
 """
-    script_path = f"jobs/nbeGLM/{subfolder}/slurm/{exp_name}.sh"
+    script_path = f"jobs/nbeGLM/{subfolder}/slurm/{model_name}.sh"
     with open(script_path, "w") as f:
         f.write(script)
     return script_path
