@@ -13,10 +13,10 @@ JOBS_PATH = Path("../jobs/nbeGLM")
 # %% Default Parameters
 
 DEFAULT_INPUT_DATA_KWARGS = {
-    "subject_IDs": "all",
+    "subject_IDs": ["m2"],
     "maze_name": "maze_1",
-    "days_on_maze": "all",
-    "input_features": ["place-direction", "distance_to_goal", "egocentric_action"],
+    "days_on_maze": "late",
+    "input_features": ["place_direction", "distance_to_goal", "egocentric_action"],
     "input_feature_kwargs": {},
     "resolution": 0.1,
     "max_steps_to_goal": 30,
@@ -29,9 +29,8 @@ DEFAULT_MODEL_INIT_KWARGS = {
     "Nlat": 15,
     "beta_act": 1e-1,
     "beta_weight": 1e-1,
-    "inv_link": "exp",
     "partition": None,
-    "latent_nonline": None,
+    "latent_nonlin": None,
 }
 
 DEFAULT_MODEL_TRAIN_KWARGS = {
@@ -57,6 +56,7 @@ DEFAULT_NBEGLM_PARAMS = {
     "score_kwargs": DEFAULT_SCORE_KWARGS,
     "seed": 0,
     "save_path": None,
+    "verboose": True,
 }
 
 # %% Functions

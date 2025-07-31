@@ -324,6 +324,8 @@ class nbeGLM(torch.nn.Module):
                 test_train_sesh = np.random.choice(len(train_sessions))
                 if test_session is not None:
                     test_perf = np.nanmean(self.score(test_X, test_spikes))
+                else:
+                    test_perf = None
 
                 train_perf = np.nanmean(
                     self.score(train_Xs[test_train_sesh], train_spikes[test_train_sesh], alpha=eval_alpha)
