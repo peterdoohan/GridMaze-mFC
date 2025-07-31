@@ -212,6 +212,8 @@ def get_input_features(df, input_feature, input_kwargs):
     # derivative variables
     elif input_feature == "place_direction_distance_to_goal_egocentric_action":
         x = _get_place_direction_distance_to_goal_egocentric_action_regressors(df, **(input_kwargs or {}))
+    elif input_feature == "place_direction_distance_to_goal":
+        x = _get_place_direction_distance_to_goal_regressors(df, **(input_kwargs or {}))
     elif input_feature == "place":
         x = _get_place_direction_regressors(df, regressor="place")
     elif input_feature == "direction":
@@ -244,7 +246,7 @@ def _get_distance_to_goal_regressors(
     method="onehot",
     metric=("distance_to_goal", "geodesic"),
     bin_method="uniform",
-    bin_spacing=0.05,
+    bin_spacing=0.1,
     max_distance=None,
     n_log_bins=30,
     n_bases=10,
@@ -366,13 +368,66 @@ def _get_theta_regressors(df):
     return regressors
 
 
+# %% product space regressors for baselineGLM analyses
+
+
+def _get_place_direction_distance_to_goal_regressors(
+    df,
+    distance_metric=("distance_to_goal", "geodesic"),
+    max_distance=None,
+    bin_method="uniform",
+    bin_spacing=0.1,
+    n_log_bins=30,
+    keep_only_visited=False,
+):
+    """ """
+    maze_name = df.maze_name.unique()[0]
+    _df = df.copy()
+    _df[("free_forced", "")] = (
+        _df[("action", "choice_degree")].map({1: "forced", 2: "forced", 3: "free", 4: "free"}).values
+    )
+    if max_distance is None:
+        _max = dd.get_distance_percentile(distance_metric, 0.9)
+    if distance_metric[0] == "distance_to_goal":
+        if bin_method == "uniform":
+            n_bins = int(_max / bin_spacing)
+        elif bin_method == "log":
+            n_bins = n_log_bins
+        bins = convert._get_distance_bins(
+            binning_method=bin_method,
+            n_distance_bins=n_bins,
+            distance_metrics=distance_metric,
+            max_distance=_max,
+        )
+        bin2bin_id = {v: k for k, v in enumerate(bins)}
+        bin2bin_id[np.nan] = 0
+        binned_distances = pd.cut(_df[distance_metric], bins=bins, include_lowest=True)
+        bin_ids = binned_distances.map(bin2bin_id).values.astype(int)  # n_samples x 1
+
+    labels = _df.maze_position.simple + "." + _df.cardinal_movement_direction + "." + bin_ids.astype(str) + "."
+    if keep_only_visited:
+        cats = labels.unique()
+    else:
+        simple_maze = mr.get_simple_maze(maze_name)
+        all_place_direction_pairs = mr.get_maze_place_direction_pairs(simple_maze)
+        cats = []
+        for _pd in all_place_direction_pairs:
+            for distance_bin_id in bin2bin_id.values():
+                cats.append(f"{_pd[0]}.{_pd[1]}.{distance_bin_id}")
+        cats = list(np.unique(cats))  # ensure unique categories
+    # convert to one-hot encoding
+    enc = OneHotEncoder(categories=[cats], sparse_output=False, handle_unknown="ignore")
+    onehot = enc.fit_transform(labels.values.reshape(-1, 1))
+    return onehot  # n_samples x n_place_directions * n_distance_bins
+
+
 def _get_place_direction_distance_to_goal_egocentric_action_regressors(
     df,
     actions=["turn_left", "turn_right", "go_forward", "go_back"],
     distance_metric=("distance_to_goal", "geodesic"),
     max_distance=None,
     bin_method="uniform",
-    bin_spacing=0.05,
+    bin_spacing=0.1,
     n_log_bins=30,
     keep_only_visited=False,
 ):
