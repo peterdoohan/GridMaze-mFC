@@ -57,7 +57,8 @@ DEFAULT_NBEGLM_PARAMS = {
     "score_kwargs": DEFAULT_SCORE_KWARGS,
     "seed": 0,
     "save_path": None,
-    "verboose": True,
+    "verbose": True,
+    "overwrite": False,
 }
 
 # %% Functions

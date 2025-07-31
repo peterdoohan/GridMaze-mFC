@@ -27,7 +27,7 @@ def submit_jobs(seed=0, subfolder="performance_validation"):
     return print("all jobs submitted to hpc")
 
 
-def get_model_set_params(seed=0, subfolder="performance_validation"):
+def get_model_set_params(seed=0, subfolder="performance_validation", overwrite=False):
     """
     generate a list of dicts (.jsons) that define all the models to compare for the nbeGLM validation figure
     """
@@ -86,6 +86,7 @@ def get_model_set_params(seed=0, subfolder="performance_validation"):
                         "seed": seed,
                         "verbose": True,
                         "save_path": RESULTS_DIR / subfolder / maze_name / model_name,
+                        "overwrite": overwrite,
                     },
                     "run_fn": fn,
                 }

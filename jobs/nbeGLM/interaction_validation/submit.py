@@ -28,7 +28,7 @@ def submit_jobs(seed=0, subfolder="interaction_validation"):
     return print("all jobs submitted to hpc")
 
 
-def get_model_set_params(seed=0, subfolder="interaction_validation"):
+def get_model_set_params(seed=0, subfolder="interaction_validation", overwrite=False):
     """ """
     model_set_params = []
     for maze_name in ["maze_1", "maze_2", "rooms_maze"]:
@@ -63,6 +63,7 @@ def get_model_set_params(seed=0, subfolder="interaction_validation"):
                         "seed": seed,
                         "verbose": True,
                         "save_path": RESULTS_DIR / subfolder / maze_name / model_name,
+                        "overwrite": overwrite,
                     },
                     "run_fn": "run_cv_nbeGLM",
                 }
