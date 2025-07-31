@@ -44,8 +44,15 @@ def run_cv_nbeGLM(
     seed=0,
     verbose=True,
     save_path=None,
+    overwrite=False,
 ):
     """ """
+    # check if model has already been run (model_name/DONE.txt exists)
+    if save_path is not None:
+        if not overwrite and (save_path / "DONE.txt").exists():
+            if verbose:
+                print(f"model output already populated, set overwrite=True to overwrite existing results")
+            return
     # remember model params
     model_params = copy.deepcopy(locals())
     # set seed
@@ -126,8 +133,16 @@ def run_cv_baselineGLM(
     seed=0,
     verbose=True,
     save_path=None,
+    overwrite=False,
 ):
     """run regular GLM *without* learned neural-behavioural embedding"""
+    # check if model has already been run (model_name/DONE.txt exists)
+    if save_path is not None:
+        if not overwrite and (save_path / "DONE.txt").exists():
+            if verbose:
+                print(f"model output already populated, set overwrite=True to overwrite existing results")
+            return
+
     # remember model params
     model_params = copy.deepcopy(locals())
     # set seed
@@ -185,10 +200,18 @@ def train_nbeGLM(
     save_path=None,
     seed=0,
     verbose=True,
+    overwrite=False,
 ):
     """
     non-cv training embedding model on all input data. Useful for looking at latents
     """
+    # check if model has already been run (model_name/DONE.txt exists)
+    if save_path is not None:
+        if not overwrite and (save_path / "DONE.txt").exists():
+            if verbose:
+                print(f"model output already populated, set overwrite=True to overwrite existing results")
+            return
+
     # remember model params
     model_params = copy.deepcopy(locals())
     # set seed
