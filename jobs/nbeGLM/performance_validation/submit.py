@@ -13,10 +13,10 @@ RESULTS_DIR = RESULTS_PATH / "nbeGLM"
 # %% Functions
 
 
-def submit_jobs():
+def submit_jobs(seed=0, subfolder="performance_validation"):
     model_set_params = get_model_set_params(seed=0, subfolder="performance_validation")
     # save model set params to json
-    with open(RESULTS_DIR / "model_set_params.json", "w") as f:
+    with open(RESULTS_DIR / subfolder / "model_set_params.json", "w") as f:
         json.dump(model_set_params, f, indent=4)
 
     # write slurm script for each job/model and submit to cluster
@@ -85,7 +85,7 @@ def get_model_set_params(seed=0, subfolder="performance_validation"):
                         "score_kwargs": score_kwargs,
                         "seed": seed,
                         "verbose": True,
-                        "save_path": RESULTS_DIR / maze_name / model_name,
+                        "save_path": RESULTS_DIR / subfolder / maze_name / model_name,
                     },
                     "run_fn": fn,
                 }
