@@ -35,7 +35,7 @@ def get_model_set_params(seed=0, subfolder="interaction_validation"):
         for input_groups, partition, model_name in [
             (["place"], None, "place"),
             (["direction"], None, "direction"),
-            (["place", "direction"], [("place"), ("direction")], "place_direction_linear"),
+            (["place", "direction"], [("place",), ("direction",)], "place_direction_linear"),
             (["place", "direction"], None, "place_direction_nonlinear"),
             (["place_direction"], None, "place_direction_conjunction"),
         ]:

@@ -15,7 +15,7 @@ import pickle
 import numpy as np
 import pandas as pd
 
-from nbeGLM.models import nbeGLM, baselineGLM
+from nbeGLM import models
 
 from GridMaze.analysis.nbeGLM.get_input_data import get_input_data
 
@@ -68,7 +68,7 @@ def run_cv_nbeGLM(
         train_sessions = input_data[:i] + input_data[i + 1 :]  # all other sessions
 
         # init model
-        model = nbeGLM(**model_init_kwargs)
+        model = models.nbeGLM(**model_init_kwargs)
 
         if verbose:
             print("     learning embedding ...")
@@ -149,7 +149,7 @@ def run_cv_baselineGLM(
         test_session = input_data[i]  # single session
 
         # init model
-        model = baselineGLM()
+        model = models.baselineGLM()
         test_scores = model.score(
             x=test_session["X"],
             y=test_session["spikes"],
@@ -201,7 +201,7 @@ def train_nbeGLM(
     input_data = get_input_data(**input_data_kwargs)
 
     # fit model
-    model = nbeGLM(**model_init_kwargs)
+    model = models.nbeGLM(**model_init_kwargs)
     if verbose:
         print("     training model on all input data ...")
     model.train(input_data, test_session=None, **model_train_kwargs)
@@ -224,12 +224,12 @@ def train_nbeGLM(
         learning_curve_df.to_csv(save_path / "training.csv", index=False)
         # save model w/ weights
         with open(save_path / "model.pkl", "wb") as f:
-            pickle.dump(nbeGLM, f)
+            pickle.dump(model, f)
         # save DONE.txt file to indicate that the job is done
         with open(save_path / "DONE.txt", "w") as f:
             f.write("DONE")
 
-    return nbeGLM
+    return model
 
 
 # %% helper functions

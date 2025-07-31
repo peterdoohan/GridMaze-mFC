@@ -35,11 +35,11 @@ def get_model_set_params(seed=0, subfolder="main_feature_interactions"):
         for partition, model_name in [
             (None, "place.direction.distance_to_goal.egocentric_action"),
             (
-                [("place"), ("direction"), ("distance_to_goal"), ("egocentric_action")],
+                [("place",), ("direction",), ("distance_to_goal",), ("egocentric_action",)],
                 "place-direction-distance_to_goal-egocentric_action",
             ),
             (
-                [("place", "direction"), ("distance_to_goal"), ("egocentric_action")],
+                [("place", "direction"), ("distance_to_goal",), ("egocentric_action",)],
                 "place.direction-distance_to_goal-egocentric_action",
             ),
         ]:
