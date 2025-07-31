@@ -354,7 +354,8 @@ class nbeGLM(torch.nn.Module):
                         self.weight_loss.detach().cpu().numpy(),
                     )
                     back = int(round(test_freq / 2))
-                    test_perf, train_perf = np.mean(self.test_perfs[-back:]), np.mean(self.train_perfs[-back:])
+                    train_perf = np.mean(self.train_perfs[-back:])
+                    test_perf = np.mean(self.test_perfs[-back:]) if test_session is not None else 0
                     print(
                         f"\nEpoch {epoch:>3} │ "
                         f"Test Perf:   {test_perf:>10.4g} │ "

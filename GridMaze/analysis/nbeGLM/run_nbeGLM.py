@@ -144,7 +144,7 @@ def run_cv_baselineGLM(
     n_sessions = len(input_data)
     for i in range(n_sessions):
         if verbose:
-            print(f"Running cross-validatied nbeGLM for session {i + 1}/{n_sessions} ...")
+            print(f"Running cross-validatied baseline Poisson GLM for session {i + 1}/{n_sessions} ...")
 
         test_session = input_data[i]  # single session
 

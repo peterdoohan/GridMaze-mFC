@@ -115,3 +115,61 @@ test_scores = rg.run_cv_nbeGLM(
 )
 
 # %%
+
+test_scores = rg.run_cv_baselineGLM(
+    input_data_kwargs={
+        "subject_IDs": ["m2"],
+        "maze_name": "maze_1",
+        "days_on_maze": "late",
+        "input_groups": ["place"],
+        "input_group_kwargs": {},
+        "resolution": 0.1,
+        "max_steps_to_goal": 30,
+        "min_spike_count": 300,
+        "moving_only": False,
+    },
+    score_kwargs={
+        "n_folds": 5,
+        "optimal_alpha": True,
+        "n_jobs": 24,
+        "verbose": False,
+    },
+    seed=0,
+    verbose=True,
+    save_path=None,
+)
+
+# %%
+
+model = rg.train_nbeGLM(
+    input_data_kwargs={
+        "subject_IDs": ["m2"],
+        "maze_name": "maze_1",
+        "days_on_maze": "late",
+        "input_groups": ["place", "direction", "distance_to_goal", "egocentric_action"],
+        "input_group_kwargs": {},
+        "resolution": 0.1,
+        "max_steps_to_goal": 30,
+        "min_spike_count": 300,
+        "moving_only": False,
+    },
+    model_init_kwargs={
+        "Nhid": [100, 50],
+        "Nlat": 15,
+        "beta_act": 1e-1,
+        "beta_weight": 1e-1,
+        "partition": [("place", "direction"), ("distance_to_goal",), ("egocentric_action",)],
+        "latent_nonlin": None,
+    },
+    model_train_kwargs={
+        "device": None,
+        "test_freq": 1000,
+        "lr": 1e-3,
+        "nepochs": 3001,
+        "eval_alpha": 1e-3,
+        "n_jobs": 24,
+        "verbose": True,
+    },
+)
+
+# %%
