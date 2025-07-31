@@ -36,7 +36,7 @@ DEFAULT_MODEL_INIT_KWARGS = {
 DEFAULT_MODEL_TRAIN_KWARGS = {
     "device": None,
     "test_freq": 1000,
-    "lr": 5e-4,
+    "lr": 1e-3,
     "nepochs": 3001,
     "eval_alpha": 1e-3,
     "n_jobs": 24,
@@ -63,27 +63,26 @@ DEFAULT_NBEGLM_PARAMS = {
 # %% Functions
 
 
-def get_SLURM_script(model_name, subfolder, model_params, run_fn="run_cv_nbeGLM"):
+def get_SLURM_script(model_name, subfolder, maze_name, model_params, run_fn="run_cv_nbeGLM"):
     """Create SLURM script for running nbeGLM experiment."""
-    # check subfolder and model_name folder exist in jobs/nbeGLM and results/nbeGLM
-    for base_dir in [RESULTS_DIR, JOBS_PATH]:
-        output_path = base_dir / subfolder
-        if not output_path.exists():
-            output_path.mkdir(parents=True, exist_ok=True)
-
-    # make sure jobs folder structure is in place
+    # check jobs and results output folders exist
+    _job_name = ".".join([maze_name, model_name])
+    jobs_output_path = JOBS_PATH / subfolder
     for folder in ["out", "err", "slurm"]:
-        output_path = JOBS_PATH / subfolder / "jobs" / f"{folder}"
+        output_path = jobs_output_path / "jobs" / f"{folder}"
         if not output_path.exists():
             output_path.mkdir(parents=True, exist_ok=True)
+    results_output_path = RESULTS_DIR / subfolder / maze_name / model_name
+    if not results_output_path.exists():
+        results_output_path.mkdir(parents=True, exist_ok=True)
 
     # create SLURM script
     script = f"""#!/bin/bash
-#SBATCH --job-name=nbeGLM_{model_name}
-#SBATCH --output=jobs/nbeGLM/{subfolder}/out/{model_name}.out
-#SBATCH --error=jobs/nbeGLM/{subfolder}/err/{model_name}.err
+#SBATCH --job-name=nbeGLM_{_job_name}
+#SBATCH --output=jobs/nbeGLM/{subfolder}/out/{_job_name}.out
+#SBATCH --error=jobs/nbeGLM/{subfolder}/err/{_job_name}.err
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=24
+#SBATCH --cpus-per-task=4
 #SBATCH -p gpu
 #SBATCH --gres=gpu:1
 #SBATCH --mem=64GB

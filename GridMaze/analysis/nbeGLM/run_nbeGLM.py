@@ -113,6 +113,9 @@ def run_cv_nbeGLM(
         # save model training data
         training_df.to_csv(save_path / "training.csv", index=False)
         cv_scores_df.to_csv(save_path / "cv_scores.csv", index=False)
+        # save DONE.txt file to indicate that the job is done
+        with open(save_path / "DONE.txt", "w") as f:
+            f.write("DONE")
 
     return cv_scores_df
 
@@ -168,6 +171,9 @@ def run_cv_baselineGLM(
         with open(save_path / "model_params.json", "w") as f:
             json.dump(model_params, f, indent=4)
         cv_scores_df.to_csv(save_path / "cv_scores.csv", index=False)
+        # save DONE.txt file to indicate that the job is done
+        with open(save_path / "DONE.txt", "w") as f:
+            f.write("DONE")
 
     return cv_scores_df
 
@@ -219,6 +225,9 @@ def train_nbeGLM(
         # save model w/ weights
         with open(save_path / "model.pkl", "wb") as f:
             pickle.dump(nbeGLM, f)
+        # save DONE.txt file to indicate that the job is done
+        with open(save_path / "DONE.txt", "w") as f:
+            f.write("DONE")
 
     return nbeGLM
 

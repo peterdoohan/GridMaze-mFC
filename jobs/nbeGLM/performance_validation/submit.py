@@ -1,18 +1,33 @@
 """ """
 
 # %% Imports
-from pathlib import Path
+import os
+import json
 from copy import deepcopy
 from jobs.nbeGLM import utils as ju
 
 # %% Global variables
 from GridMaze.paths import RESULTS_PATH
 
-RESULTS_DIR = RESULTS_PATH / "nbeGLM" / "performance_validation"
+RESULTS_DIR = RESULTS_PATH / "nbeGLM"
 # %% Functions
 
 
-def get_model_set_params(seed=0):
+def submit_jobs():
+    model_set_params = get_model_set_params(seed=0, subfolder="performance_validation")
+    # save model set params to json
+    with open(RESULTS_DIR / "model_set_params.json", "w") as f:
+        json.dump(model_set_params, f, indent=4)
+
+    # write slurm script for each job/model and submit to cluster
+    for model_params in model_set_params:
+        script_path = ju.get_SLURM_script(**model_params)
+        os.system(f"chmod +x {script_path}")
+        os.system(f"sbatch {script_path}")
+    return print("all jobs submitted to hpc")
+
+
+def get_model_set_params(seed=0, subfolder="performance_validation"):
     """
     generate a list of dicts (.jsons) that define all the models to compare for the nbeGLM validation figure
     """
@@ -61,7 +76,8 @@ def get_model_set_params(seed=0):
             model_set_params.append(
                 {
                     "model_name": model_name,
-                    "subfolder": "main_representation_validation",
+                    "subfolder": subfolder,
+                    "maze_name": maze_name,
                     "model_params": {
                         "input_data_kwargs": input_data_kwargs,
                         "model_init_kwargs": model_init_kwargs,
@@ -69,7 +85,7 @@ def get_model_set_params(seed=0):
                         "score_kwargs": score_kwargs,
                         "seed": seed,
                         "verbose": True,
-                        "save_path": RESULTS_DIR / model_name,
+                        "save_path": RESULTS_DIR / maze_name / model_name,
                     },
                     "run_fn": fn,
                 }
@@ -94,12 +110,12 @@ def get_model_set_params(seed=0):
             ),
             (
                 ["place_direction_distance_to_goal"],
-                {},
+                {"place_direction_distance_to_goal": {"keep_only_visited": False}},
                 "baseline_place_direction_distance_to_goal",
             ),
             (
                 ["place_direction_distance_to_goal_egocentric_action"],
-                {},
+                {"place_direction_distance_to_goal_egocentric_action": {"keep_only_visited": False}},
                 "baseline_place_direction_distance_to_goal_egocentric_action",
             ),
         ]:
@@ -108,24 +124,19 @@ def get_model_set_params(seed=0):
             input_data_kwargs["maze_name"] = maze_name
             input_data_kwargs["input_groups"] = input_groups
             input_data_kwargs["input_group_kwargs"] = input_group_kwargs
-            # use defualt model init kwargs
-            model_init_kwargs = deepcopy(ju.DEFAULT_MODEL_INIT_KWARGS)
-            # use defualt model train kwargs
-            model_train_kwargs = deepcopy(ju.DEFAULT_MODEL_TRAIN_KWARGS)
             # use defualt score kwargs
             score_kwargs = deepcopy(ju.DEFAULT_SCORE_KWARGS)
             model_set_params.append(
                 {
                     "model_name": model_name,
-                    "subfolder": "main_representation_validation",
+                    "subfolder": subfolder,
+                    "maze_name": maze_name,
                     "model_params": {
                         "input_data_kwargs": input_data_kwargs,
-                        "model_init_kwargs": model_init_kwargs,
-                        "model_train_kwargs": model_train_kwargs,
                         "score_kwargs": score_kwargs,
                         "seed": seed,
                         "verbose": True,
-                        "save_path": RESULTS_DIR / model_name,
+                        "save_path": RESULTS_DIR / subfolder / maze_name / model_name,
                     },
                     "run_fn": fn,
                 }
