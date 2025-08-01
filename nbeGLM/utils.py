@@ -89,26 +89,24 @@ def eval_representation(
             print(f"Evaluating {N} neurons in parallel with {n_jobs} jobs")
         scores = Parallel(n_jobs=n_jobs)(
             delayed(_eval_neuron)(
-                n, x, y, enough_spikes, trials, n_folds, inds, alpha, optimal_alpha, optimal_alpha_range, verbose
+                n, x, y, enough_spikes, trials, n_folds, inds, alpha, optimal_alpha, optimal_alpha_range
             )
             for n in range(N)
         )
     # otherwise run eval sequentially
     else:
+        if verbose:
+            print(f"Evaluating {N} neurons")
         scores = [
-            _eval_neuron(
-                n, x, y, enough_spikes, trials, n_folds, inds, alpha, optimal_alpha, optimal_alpha_range, verbose
-            )
+            _eval_neuron(n, x, y, enough_spikes, trials, n_folds, inds, alpha, optimal_alpha, optimal_alpha_range)
             for n in range(N)
         ]
     scores = np.array(scores)
     return scores
 
 
-def _eval_neuron(n, x, y, enough_spikes, trials, n_folds, inds, alpha, optimal_alpha, optimal_alpha_range, verbose):
+def _eval_neuron(n, x, y, enough_spikes, trials, n_folds, inds, alpha, optimal_alpha, optimal_alpha_range):
     """ """
-    if verbose:
-        print(f" evaluating neuron {n + 1}")
     y_n = y[n, :]  # target spike counts
     if not enough_spikes[n]:
         return np.nan if n_folds is None else np.zeros(n_folds) + np.nan

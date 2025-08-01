@@ -76,7 +76,7 @@ reload(utils)
 
 test_scores = rg.run_cv_nbeGLM(
     input_data_kwargs={
-        "subject_IDs": ["m2"],
+        "subject_IDs": "all",
         "maze_name": "maze_1",
         "days_on_maze": "late",
         "input_groups": ["place", "direction", "distance_to_goal", "egocentric_action"],
@@ -91,23 +91,23 @@ test_scores = rg.run_cv_nbeGLM(
         "Nlat": 15,
         "beta_act": 1e-1,
         "beta_weight": 1e-1,
-        "partition": [("place", "direction"), ("distance_to_goal",), ("egocentric_action",)],
+        "partition": None,  # [("place", "direction"), ("distance_to_goal",), ("egocentric_action",)],
         "latent_nonlin": None,
     },
     model_train_kwargs={
         "device": None,
-        "test_freq": 1000,
-        "lr": 1e-3,
-        "nepochs": 3001,
+        "test_freq": 1_000,
+        "lr": 1e-2,
+        "nepochs": 15_001,
         "eval_alpha": 1e-3,
-        "n_jobs": 24,
+        "n_jobs": -1,
         "verbose": True,
     },
     score_kwargs={
         "n_folds": 5,
         "optimal_alpha": True,
-        "n_jobs": 24,
-        "verbose": False,
+        "n_jobs": -1,
+        "verbose": True,
     },
     seed=0,
     verbose=True,
@@ -143,7 +143,7 @@ test_scores = rg.run_cv_baselineGLM(
 
 model = rg.train_nbeGLM(
     input_data_kwargs={
-        "subject_IDs": ["m2"],
+        "subject_IDs": "all",
         "maze_name": "maze_1",
         "days_on_maze": "late",
         "input_groups": ["place", "direction", "distance_to_goal", "egocentric_action"],
@@ -158,16 +158,16 @@ model = rg.train_nbeGLM(
         "Nlat": 15,
         "beta_act": 1e-1,
         "beta_weight": 1e-1,
-        "partition": [("place", "direction"), ("distance_to_goal",), ("egocentric_action",)],
+        "partition": None,
         "latent_nonlin": None,
     },
     model_train_kwargs={
         "device": None,
-        "test_freq": 1000,
+        "test_freq": 2000,
         "lr": 1e-3,
-        "nepochs": 3001,
+        "nepochs": 20_001,
         "eval_alpha": 1e-3,
-        "n_jobs": 24,
+        "n_jobs": -1,
         "verbose": True,
     },
 )
