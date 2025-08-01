@@ -14,6 +14,7 @@ import torch
 import pickle
 import numpy as np
 import pandas as pd
+from pathlib import Path
 
 from nbeGLM import models
 
@@ -47,14 +48,11 @@ def run_cv_nbeGLM(
     overwrite=False,
 ):
     """ """
-    # check if model has already been run (model_name/DONE.txt exists)
-    if save_path is not None:
-        if not overwrite and (save_path / "DONE.txt").exists():
-            if verbose:
-                print(f"model output already populated, set overwrite=True to overwrite existing results")
-            return
+    if _outputs_exist(save_path, overwrite, verbose):
+        return
     # remember model params
     model_params = copy.deepcopy(locals())
+    model_params["fn"] = "run_cv_nbeGLM"
     # set seed
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -112,17 +110,13 @@ def run_cv_nbeGLM(
     cv_scores_df = pd.concat(cluster_cv_scores, axis=0).reset_index(drop=True)
 
     if save_path is not None:
-        if verbose:
-            print(f"Saving outputs to: {save_path}")
-        # save model params
-        with open(save_path / "model_params.json", "w") as f:
-            json.dump(model_params, f, indent=4)
-        # save model training data
-        training_df.to_csv(save_path / "training.csv", index=False)
-        cv_scores_df.to_csv(save_path / "cv_scores.csv", index=False)
-        # save DONE.txt file to indicate that the job is done
-        with open(save_path / "DONE.txt", "w") as f:
-            f.write("DONE")
+        _save_outputs(
+            save_path,
+            model_params=model_params,
+            training_df=training_df,
+            cv_scores_df=cv_scores_df,
+            verbose=verbose,
+        )
 
     return cv_scores_df
 
@@ -136,15 +130,11 @@ def run_cv_baselineGLM(
     overwrite=False,
 ):
     """run regular GLM *without* learned neural-behavioural embedding"""
-    # check if model has already been run (model_name/DONE.txt exists)
-    if save_path is not None:
-        if not overwrite and (save_path / "DONE.txt").exists():
-            if verbose:
-                print(f"model output already populated, set overwrite=True to overwrite existing results")
-            return
-
+    if _outputs_exist(save_path, overwrite, verbose):
+        return
     # remember model params
     model_params = copy.deepcopy(locals())
+    model_params["fn"] = "run_cv_baselineGLM"
     # set seed
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -180,15 +170,12 @@ def run_cv_baselineGLM(
         )
     cv_scores_df = pd.concat(cluster_cv_scores, axis=0).reset_index(drop=True)
     if save_path is not None:
-        if verbose:
-            print(f"Saving outputs to: {save_path}")
-        # save model params
-        with open(save_path / "model_params.json", "w") as f:
-            json.dump(model_params, f, indent=4)
-        cv_scores_df.to_csv(save_path / "cv_scores.csv", index=False)
-        # save DONE.txt file to indicate that the job is done
-        with open(save_path / "DONE.txt", "w") as f:
-            f.write("DONE")
+        _save_outputs(
+            save_path,
+            model_params=model_params,
+            cv_scores_df=cv_scores_df,
+            verbose=verbose,
+        )
 
     return cv_scores_df
 
@@ -205,15 +192,12 @@ def train_nbeGLM(
     """
     non-cv training embedding model on all input data. Useful for looking at latents
     """
-    # check if model has already been run (model_name/DONE.txt exists)
-    if save_path is not None:
-        if not overwrite and (save_path / "DONE.txt").exists():
-            if verbose:
-                print(f"model output already populated, set overwrite=True to overwrite existing results")
-            return
+    if _outputs_exist(save_path, overwrite, verbose):
+        return
 
     # remember model params
     model_params = copy.deepcopy(locals())
+    model_params["fn"] = "train_nbeGLM"
     # set seed
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -226,36 +210,74 @@ def train_nbeGLM(
     # fit model
     model = models.nbeGLM(**model_init_kwargs)
     if verbose:
-        print("     training model on all input data ...")
+        print("Learning embedding from all input data ...")
     model.train(input_data, test_session=None, **model_train_kwargs)
 
     # save outputs
     if save_path is not None:
-        if verbose:
-            print(f"     saving outputs to: {save_path}")
-        # save model params
-        with open(save_path / "model_params.json", "w") as f:
-            json.dump(model_params, f, indent=4)
-        # save model training data
-        learning_curve_df = _get_learning_curve_df(
+        training_df = _get_learning_curve_df(
             model.train_losses,
             model.test_perfs,
             model.train_perfs,
             model_train_kwargs,
             test_session_info=None,
         )
-        learning_curve_df.to_csv(save_path / "training.csv", index=False)
-        # save model w/ weights
-        with open(save_path / "model.pkl", "wb") as f:
-            pickle.dump(model, f)
-        # save DONE.txt file to indicate that the job is done
-        with open(save_path / "DONE.txt", "w") as f:
-            f.write("DONE")
+        _save_outputs(
+            save_path,
+            model_params=model_params,
+            training_df=training_df,
+            model=model,
+            verbose=verbose,
+        )
 
     return model
 
 
 # %% helper functions
+
+
+def _outputs_exist(save_path, overwrite, verbose):
+    """
+    also returns False is save_path is None
+    """
+    if save_path is not None:
+        if not overwrite and (Path(save_path) / "DONE.txt").exists():
+            if verbose:
+                print(f"model output already populated, set overwrite=True to overwrite existing results")
+            return True
+    else:
+        return False
+
+
+def _save_outputs(save_path, model_params=None, training_df=None, cv_scores_df=None, model=None, verbose=False):
+    """ """
+    if save_path is None:
+        return
+    else:
+        # ensure save path exists
+        if not save_path.exists():
+            save_path.mkdir(parents=True, exist_ok=True)
+        if verbose:
+            print(f"Saving outputs to: {save_path}")
+        # save model params
+        if model_params is not None:
+            model_params["save_path"] = str(save_path) if save_path is not None else None  # make .json serializable
+            with open(save_path / "model_params.json", "w") as f:
+                json.dump(model_params, f, indent=4)
+        # save model training data
+        if training_df is not None:
+            training_df.to_csv(save_path / "training.csv", index=False)
+        # save cv neuron scores
+        if cv_scores_df is not None:
+            cv_scores_df.to_csv(save_path / "cv_scores.csv", index=False)
+        # save model w/ weights
+        if model is not None:
+            with open(save_path / "model.pkl", "wb") as f:
+                pickle.dump(model, f)
+        # save DONE.txt file to indicate that the job is done
+        with open(save_path / "DONE.txt", "w") as f:
+            f.write("DONE")
+    return
 
 
 def _get_learning_curve_df(train_losses, test_perfs, train_perfs, model_train_kwargs, test_session_info=None):

@@ -11,7 +11,7 @@ from joblib import delayed, Parallel
 
 
 def eval_function(x_train, y_train, x_test, y_test, alpha=1e-3):
-    clf = linear_model.PoissonRegressor(alpha=alpha)
+    clf = linear_model.PoissonRegressor(alpha=alpha, max_iter=10_000)
     clf.fit(x_train, y_train)
     return clf.score(x_test, y_test)  # evaluate the goodness of the fit
 
@@ -28,7 +28,9 @@ def find_optimal_regularization_strength(x, y, trials, alphas=10.0 ** np.arange(
         for ialpha, alpha in enumerate(alphas):
 
             if ialpha == 0:  # instantiate to begin with
-                clf = linear_model.PoissonRegressor(alpha=alpha, warm_start=True)  # then continue from warm start
+                clf = linear_model.PoissonRegressor(
+                    alpha=alpha, warm_start=True, max_iter=10_000
+                )  # then continue from warm start
             else:
                 clf.alpha = alpha  # just overwrite alpha
 

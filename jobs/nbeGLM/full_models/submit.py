@@ -60,7 +60,7 @@ def get_model_set_params(seed=0, subfolder="full_models"):
                         "score_kwargs": score_kwargs,
                         "seed": seed,
                         "verbose": True,
-                        "save_path": RESULTS_DIR / subfolder / maze_name / model_name,
+                        "save_path": str(RESULTS_DIR / subfolder / maze_name / model_name),
                     },
                     "run_fn": "train_nbeGLM",
                 }

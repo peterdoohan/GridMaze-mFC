@@ -18,6 +18,9 @@ from jobs.nbeGLM.utils import (
     DEFAULT_SCORE_KWARGS,
 )
 
+from GridMaze.paths import RESULTS_PATH
+
+TEST_RESULTS_DIR = RESULTS_PATH / "nbeGLM" / "test"
 
 # %%
 data = get_input_data()
@@ -76,7 +79,7 @@ reload(utils)
 
 test_scores = rg.run_cv_nbeGLM(
     input_data_kwargs={
-        "subject_IDs": "all",
+        "subject_IDs": ["m2"],
         "maze_name": "maze_1",
         "days_on_maze": "late",
         "input_groups": ["place", "direction", "distance_to_goal", "egocentric_action"],
@@ -88,30 +91,30 @@ test_scores = rg.run_cv_nbeGLM(
     },
     model_init_kwargs={
         "Nhid": [100, 50],
-        "Nlat": 15,
+        "Nlat": 20,
         "beta_act": 1e-1,
         "beta_weight": 1e-1,
-        "partition": None,  # [("place", "direction"), ("distance_to_goal",), ("egocentric_action",)],
+        "partition": None,
         "latent_nonlin": None,
     },
     model_train_kwargs={
         "device": None,
-        "test_freq": 1_000,
-        "lr": 1e-2,
-        "nepochs": 15_001,
+        "test_freq": 100,
+        "lr": 1e-3,
+        "nepochs": 101,
         "eval_alpha": 1e-3,
-        "n_jobs": -1,
+        "n_jobs": 64,
         "verbose": True,
     },
     score_kwargs={
         "n_folds": 5,
         "optimal_alpha": True,
-        "n_jobs": -1,
+        "n_jobs": 64,
         "verbose": True,
     },
     seed=0,
     verbose=True,
-    save_path=None,
+    save_path=TEST_RESULTS_DIR / "TEST_cv_nbeGLM",
 )
 
 # %%
@@ -136,12 +139,12 @@ test_scores = rg.run_cv_baselineGLM(
     },
     seed=0,
     verbose=True,
-    save_path=None,
+    save_path=TEST_RESULTS_DIR / "TEST_cv_baselineGLM",
 )
 
 # %%
 
-model = rg.train_nbeGLM(
+part_model2 = rg.train_nbeGLM(
     input_data_kwargs={
         "subject_IDs": "all",
         "maze_name": "maze_1",
@@ -158,18 +161,21 @@ model = rg.train_nbeGLM(
         "Nlat": 15,
         "beta_act": 1e-1,
         "beta_weight": 1e-1,
-        "partition": None,
+        "partition": [("place",), ("direction",), ("distance_to_goal",), ("egocentric_action",)],
         "latent_nonlin": None,
     },
     model_train_kwargs={
         "device": None,
-        "test_freq": 2000,
+        "test_freq": 10,
         "lr": 1e-3,
-        "nepochs": 20_001,
+        "nepochs": 101,
         "eval_alpha": 1e-3,
         "n_jobs": -1,
         "verbose": True,
     },
+    seed=0,
+    verbose=True,
+    save_path=TEST_RESULTS_DIR / "TEST_full_model",
 )
 
 # %%

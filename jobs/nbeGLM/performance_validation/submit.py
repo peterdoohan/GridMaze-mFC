@@ -14,7 +14,7 @@ RESULTS_DIR = RESULTS_PATH / "nbeGLM"
 
 
 def submit_jobs(seed=0, subfolder="performance_validation"):
-    model_set_params = get_model_set_params(seed=0, subfolder="performance_validation")
+    model_set_params = get_model_set_params(seed, subfolder)
     # save model set params to json
     with open(RESULTS_DIR / subfolder / "model_set_params.json", "w") as f:
         json.dump(model_set_params, f, indent=4)
@@ -85,7 +85,7 @@ def get_model_set_params(seed=0, subfolder="performance_validation", overwrite=F
                         "score_kwargs": score_kwargs,
                         "seed": seed,
                         "verbose": True,
-                        "save_path": RESULTS_DIR / subfolder / maze_name / model_name,
+                        "save_path": str(RESULTS_DIR / subfolder / maze_name / model_name),
                         "overwrite": overwrite,
                     },
                     "run_fn": fn,
@@ -137,7 +137,7 @@ def get_model_set_params(seed=0, subfolder="performance_validation", overwrite=F
                         "score_kwargs": score_kwargs,
                         "seed": seed,
                         "verbose": True,
-                        "save_path": RESULTS_DIR / subfolder / maze_name / model_name,
+                        "save_path": str(RESULTS_DIR / subfolder / maze_name / model_name),
                     },
                     "run_fn": fn,
                 }

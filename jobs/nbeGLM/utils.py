@@ -13,7 +13,7 @@ JOBS_PATH = Path("../jobs/nbeGLM")
 # %% Default Parameters
 
 DEFAULT_INPUT_DATA_KWARGS = {
-    "subject_IDs": ["m2"],
+    "subject_IDs": "all",
     "maze_name": "maze_1",
     "days_on_maze": "late",
     "input_groups": ["place_direction", "distance_to_goal", "egocentric_action"],
@@ -26,7 +26,7 @@ DEFAULT_INPUT_DATA_KWARGS = {
 
 DEFAULT_MODEL_INIT_KWARGS = {
     "Nhid": [100, 50],
-    "Nlat": 15,
+    "Nlat": 20,
     "beta_act": 1e-1,
     "beta_weight": 1e-1,
     "partition": None,
@@ -35,18 +35,18 @@ DEFAULT_MODEL_INIT_KWARGS = {
 
 DEFAULT_MODEL_TRAIN_KWARGS = {
     "device": None,
-    "test_freq": 1000,
+    "test_freq": 300,
     "lr": 1e-3,
     "nepochs": 3001,
     "eval_alpha": 1e-3,
-    "n_jobs": 24,
+    "n_jobs": 64,
     "verbose": True,
 }
 
 DEFAULT_SCORE_KWARGS = {
     "n_folds": 5,
     "optimal_alpha": True,
-    "n_jobs": 24,
+    "n_jobs": 64,
     "verbose": False,
 }
 
