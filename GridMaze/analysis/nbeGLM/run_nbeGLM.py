@@ -130,6 +130,7 @@ def run_cv_baselineGLM(
     overwrite=False,
 ):
     """run regular GLM *without* learned neural-behavioural embedding"""
+    save_path = Path(save_path) if save_path is not None else None
     if _outputs_exist(save_path, overwrite, verbose):
         return
     # remember model params
@@ -241,7 +242,7 @@ def _outputs_exist(save_path, overwrite, verbose):
     also returns False is save_path is None
     """
     if save_path is not None:
-        if not overwrite and (Path(save_path) / "DONE.txt").exists():
+        if not overwrite and (save_path / "DONE.txt").exists():
             if verbose:
                 print(f"model output already populated, set overwrite=True to overwrite existing results")
             return True

@@ -8,7 +8,7 @@ from GridMaze.paths import RESULTS_PATH
 
 RESULTS_DIR = RESULTS_PATH / "nbeGLM"
 
-JOBS_PATH = Path("../jobs/nbeGLM")
+JOBS_PATH = Path("./jobs/nbeGLM")
 
 # %% Default Parameters
 
@@ -99,7 +99,7 @@ from GridMaze.analysis.nbeGLM import run_nbeGLM as rn
 rn.{run_fn}(**{model_params})
 EOF
 """
-    script_path = f"jobs/nbeGLM/{subfolder}/slurm/{model_name}.sh"
+    script_path = f"jobs/nbeGLM/{subfolder}/slurm/{_job_name}.sh"
     with open(script_path, "w") as f:
         f.write(script)
     return script_path
