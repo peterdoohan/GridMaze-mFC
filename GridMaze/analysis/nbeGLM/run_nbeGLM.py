@@ -48,6 +48,7 @@ def run_cv_nbeGLM(
     overwrite=False,
 ):
     """ """
+    save_path = Path(save_path) if save_path is not None else None
     if _outputs_exist(save_path, overwrite, verbose):
         return
     # remember model params
@@ -193,6 +194,7 @@ def train_nbeGLM(
     """
     non-cv training embedding model on all input data. Useful for looking at latents
     """
+    save_path = Path(save_path) if save_path is not None else None
     if _outputs_exist(save_path, overwrite, verbose):
         return
 

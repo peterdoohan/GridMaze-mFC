@@ -39,14 +39,14 @@ DEFAULT_MODEL_TRAIN_KWARGS = {
     "lr": 1e-3,
     "nepochs": 3001,
     "eval_alpha": 1e-3,
-    "n_jobs": 64,
+    "n_jobs": 32,
     "verbose": True,
 }
 
 DEFAULT_SCORE_KWARGS = {
     "n_folds": 5,
     "optimal_alpha": True,
-    "n_jobs": 64,
+    "n_jobs": 32,
     "verbose": False,
 }
 
@@ -86,7 +86,7 @@ def get_SLURM_script(model_name, subfolder, maze_name, model_params, run_fn="run
 #SBATCH --cpus-per-task=4
 #SBATCH -p gpu
 #SBATCH --gres=gpu:1
-#SBATCH --mem=32GB
+#SBATCH --mem=64GB
 #SBATCH --time=72:00:00
 
 module load miniconda
