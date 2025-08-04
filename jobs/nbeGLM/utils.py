@@ -86,7 +86,7 @@ def get_SLURM_script(model_name, subfolder, maze_name, model_params, run_fn="run
 #SBATCH --cpus-per-task=4
 #SBATCH -p gpu
 #SBATCH --gres=gpu:1
-#SBATCH --mem=64GB
+#SBATCH --mem=32GB
 #SBATCH --time=72:00:00
 
 module load miniconda
