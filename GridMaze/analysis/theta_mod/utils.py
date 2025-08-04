@@ -9,7 +9,6 @@ import pandas as pd
 from matplotlib import pyplot as plt
 from matplotlib.colors import Normalize
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
-from scipy import cluster
 
 from GridMaze.analysis.core import convert
 
@@ -33,20 +32,29 @@ def test(session):
     trials = df.trial.unique()
     for trial in trials[-5:]:
         trial_df = df[df.trial == trial]
+        # filter for navigation period and less than 30 steps from goal
+        trial_df = trial_df[(trial_df.trial_phase == "navigation") & (trial_df.steps_to_goal.future.lt(20))]
         if trial_df.empty:
             continue
-        plot_trial_activity(trial_df, PCs=(0, 1, 2), dot_dt=0.5)
-        plt.show()
+        # plot
+        plot_neural_trajectory(trial_df, PCs=(0, 1, 2), dot_dt=0.5)
 
 
 def test2(session):
     """ """
-    df = get_theta_pc_df(
+    df = get_theta_peak_trough_df(
         session,
-        include_multi_unit=True,
+        smooth_SD=1,
         pc_kwargs={"sqrt_spikes": False, "zscore_spikes": False, "smooth_SD": False, "frac_var_exp": 0.9},
     )
     trials = df.trial.unique()
+    for trial in trials:
+        trial_df = df[df.trial == trial]
+        # filter for navigation period and less than 20 steps from goal
+        trial_df = trial_df[(trial_df.trial_phase == "navigation") & (trial_df.steps_to_goal.future.lt(20))]
+        if trial_df.empty:
+            continue
+        plot_theta_peak_trough_trajectory(trial_df, PCs=(0, 1, 2), dot_dt=0.5)
 
 
 # %% make useful datastructures
@@ -94,6 +102,7 @@ def get_neural_pc_df(
 def get_theta_pc_df(
     session,
     include_multi_unit=True,
+    smooth_SD=0.5,
     pc_kwargs={"sqrt_spikes": False, "zscore_spikes": False, "smooth_SD": False, "frac_var_exp": 0.9},
 ):
     """ """
@@ -137,9 +146,10 @@ def get_theta_pc_df(
 def get_theta_peak_trough_df(
     session,
     include_multi_unit=True,
+    smooth_SD=0.5,
     pc_kwargs={"sqrt_spikes": False, "zscore_spikes": False, "smooth_SD": False, "frac_var_exp": 0.9},
-    theta_peak_inds=[5, 6],
-    theta_trough_inds=[0, 11],
+    theta_peak_inds=[4, 5, 6, 7],
+    theta_trough_inds=[0, 1, 10, 11],
 ):
     """ """
     # load data
@@ -162,13 +172,18 @@ def get_theta_peak_trough_df(
     theta_trough_df = theta_spikes_df[cols[phase_cols.isin(theta_phases[theta_trough_inds])]]
 
     # sum spikes over theta phases
-    theta_peak_df = theta_peak_df.T.groupby(level=1).sum().T
-    theta_trough_df = theta_trough_df.T.groupby(level=1).sum().T
+    peak_spikes = (
+        theta_peak_df.T.groupby(level=1).sum().T.values.astype(float)
+    )  # n_samples (frames) x n_features (clusters)
+    trough_spikes = theta_trough_df.T.groupby(level=1).sum().T.values.astype(float)
 
-    # project spikes to PCs
+    # loop over peak and trough spikes
     dfs = []
-    for _df, label in zip([theta_peak_df, theta_trough_df], ["peak", "trough"]):
-        spikes_pca = pca.transform(_df.values)[:, :n_pcs]
+    for spikes, label in zip([peak_spikes, trough_spikes], ["peak", "trough"]):
+        if smooth_SD:
+            spikes = gaussian_filter1d(spikes, sigma=int(smooth_SD * FRAME_RATE), axis=0)
+        # project theta phase spikes onto PCs
+        spikes_pca = pca.transform(spikes)[:, :n_pcs]
         # output as navigation_df-style df
         pca_df = pd.DataFrame(
             index=nav_df.index,
@@ -232,17 +247,73 @@ def _keep_clusters(session, include_multi_unit=True):
 # %% plotting
 
 
-def plot_trial_activity(trial_df, PCs=(0, 1, 2), cmap="winter", dot_dt=0.5, ax=None):
+def plot_neural_trajectory(trial_df, PCs=(0, 1, 2), cmap="winter", dot_dt=0.5, ax=None):
     # set up fig
     if ax is None:
         f, ax = _init_3D_plot(PCs)
 
     # filter for navigation period
     _df = trial_df[trial_df.trial_phase == "navigation"]
+    # plot
     time = _df.time.values
     pcs = _df.pc[[*PCs]].values
+    _plot_neural_traj(pcs, time, dot_dt=dot_dt, cmap=cmap, ax=ax)
 
-    # plot
+
+def plot_theta_peak_trough_trajectory(
+    trial_df,
+    PCs=(0, 1, 2),
+    cmaps=("winter", "autumn"),
+    dot_dt=0.5,
+    arrow=True,
+    ax=None,
+):
+    """Plot peak and trough trajectories + optional arrows from trough→peak at matched times."""
+    # set up fig
+    if ax is None:
+        f, ax = _init_3D_plot(PCs)
+
+    # filter for navigation period
+    _df = trial_df[trial_df.trial_phase == "navigation"].sort_values("time")
+    time = _df.time.to_numpy()
+
+    # Plot each trajectory and keep the dots for arrow linking
+    dots_by_phase = {}
+    for phase, cmap in zip(["trough", "peak"], cmaps):  # plot trough first so arrows point to peak
+        pcs = _df[phase][[*PCs]].to_numpy()
+        dots = _plot_neural_traj(pcs, time, dot_dt=dot_dt, cmap=cmap, return_dots=True, ax=ax)
+        dots_by_phase[phase] = dots
+
+    # ---- arrows: trough → peak at matched times ----
+    if arrow and all(k in dots_by_phase for k in ("trough", "peak")):
+        trough_dots = dots_by_phase["trough"]
+        peak_dots = dots_by_phase["peak"]
+
+        # make sure the arrays align (same number of dots)
+        n = min(len(trough_dots), len(peak_dots))
+        P = trough_dots[:n]
+        Q = peak_dots[:n]
+        U, V, W = (Q - P).T  # direction vectors
+
+        # subsample arrows if desired
+        idx = slice(None, None, 1)
+        ax.quiver(
+            P[idx, 0],
+            P[idx, 1],
+            P[idx, 2],
+            U[idx],
+            V[idx],
+            W[idx],
+            normalize=False,
+            arrow_length_ratio=0.2,
+            linewidths=1.5,
+            alpha=0.5,
+            color="k",
+            length=1.0,  # leave at 1.0 to use raw U,V,W magnitudes
+        )
+
+
+def _plot_neural_traj(pcs, time, dot_dt=0.5, cmap="winter", return_dots=False, ax=None):
     # build segments between successive points
     P0 = pcs[:-1]
     P1 = pcs[1:]
@@ -273,6 +344,8 @@ def plot_trial_activity(trial_df, PCs=(0, 1, 2), cmap="winter", dot_dt=0.5, ax=N
         depthshade=False,
         linewidths=0,
     )
+    if return_dots:
+        return dots
 
 
 def _init_3D_plot(PCs, figsize=(5, 5)):
