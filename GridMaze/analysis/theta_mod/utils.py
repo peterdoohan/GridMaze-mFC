@@ -4,10 +4,12 @@ as behaviour unfolds?
 """
 
 # %% Imports
+from turtle import color
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
-from matplotlib.colors import Normalize
+from matplotlib.cm import ScalarMappable
+from matplotlib.colors import Normalize, TwoSlopeNorm
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
 
 from GridMaze.analysis.core import convert
@@ -60,31 +62,72 @@ def test2(session, smooth_SD=1):
         plot_theta_peak_trough_trajectory(trial_df, PCs=(0, 1, 2), dot_dt=0.5, cmaps=("winter", "winter"))
 
 
-def test3(session, smooth_SD=1, dot_dt=0.25):
+def test3(
+    session,
+    smooth_SD=1,
+    include_multi_unit=True,
+    sqrt_spikes=False,
+    zscore_spikes=False,
+    dot_dt=1,
+    dot_moving_only=False,
+):
     window_frames = int(dot_dt * FRAME_RATE)
     pca, n_pcs = get_pcs(
-        session, include_multi_unit=True, sqrt_spikes=False, zscore_spikes=False, smooth_SD=smooth_SD, frac_var_exp=0.9
+        session,
+        include_multi_unit=include_multi_unit,
+        sqrt_spikes=sqrt_spikes,
+        zscore_spikes=zscore_spikes,
+        smooth_SD=smooth_SD,
+        frac_var_exp=0.9,
     )
-    neural_pc_df = get_neural_pc_df(session, smooth_SD=smooth_SD, pca=pca, n_pcs=n_pcs)
-    theta_pc_df = get_theta_peak_trough_df(session, smooth_SD=smooth_SD, pca=pca, n_pcs=n_pcs)
+    neural_pc_df = get_neural_pc_df(
+        session,
+        include_multi_unit=include_multi_unit,
+        sqrt_spikes=sqrt_spikes,
+        zscore_spikes=zscore_spikes,
+        smooth_SD=smooth_SD,
+        pca=pca,
+        n_pcs=n_pcs,
+    )
+    theta_pc_df = get_theta_peak_trough_df(
+        session,
+        include_multi_unit=include_multi_unit,
+        sqrt_spikes=sqrt_spikes,
+        zscore_spikes=zscore_spikes,
+        smooth_SD=smooth_SD,
+        pca=pca,
+        n_pcs=n_pcs,
+    )
     trials = neural_pc_df.trial.unique()
     angles = []
     for trial in trials:
-        mask = (neural_pc_df.trial == trial) & (neural_pc_df.trial_phase == "navigation")
+        _masks = [
+            (neural_pc_df.trial == trial),
+            (neural_pc_df.trial_phase == "navigation"),
+            (neural_pc_df.steps_to_goal.future <= 30),
+        ]
+        mask = np.logical_and.reduce(_masks)
         _neural_df = neural_pc_df[mask]
         _theta_df = theta_pc_df[mask]
         if _neural_df.empty or _theta_df.empty:
             continue
-        neural_vector, theta_vector, bins = _get_alignment_vectors(_neural_df, _theta_df, window_frames)
-        _angles = _get_alignment_angles(neural_vector, theta_vector)
+        # neural_vector, theta_vector, bins = _get_alignment_vectors(_neural_df, _theta_df, window_frames)
+        # _angles = _get_alignment_angles(neural_vector, theta_vector)
+        goal_vector, theta_vector, bins = _get_goal_vectors(_neural_df, _theta_df, window_frames)
+        _angles = _get_alignment_angles(goal_vector, theta_vector)
         times = _neural_df.loc[bins].time.values
         moving_mask = _neural_df.loc[bins].moving
+        if dot_moving_only:
+            times = times[moving_mask]
+            theta_vector = theta_vector[moving_mask, :]
+            _angles = _angles[moving_mask]
         # plot
         plot_neural_trajectory(
             _neural_df,
             PCs=(0, 1, 2),
-            t_targets=times[moving_mask],
-            t_vectors=theta_vector[moving_mask, :],
+            t_targets=times,
+            t_vectors=theta_vector,
+            t_angles=_angles,
             dot_dt=dot_dt,
         )
         angles.append(_angles[moving_mask])
@@ -106,6 +149,19 @@ def _get_alignment_vectors(_neural_df, _theta_df, window_frames):
     return neural_vector, theta_vector, bin_mids[:-1]
 
 
+def _get_goal_vectors(_neural_df, _theta_df, window_frames):
+    """cal vector from nerual data at time t point to goal times[-1]"""
+    goal_pt = _neural_df.iloc[-1].pc.values.astype(float)
+    idx = _neural_df.index
+    bins = np.arange(idx[0], idx[-2], window_frames)
+    # behavioural timescale goal vector
+    goal_vector = goal_pt - _neural_df.loc[bins].pc.values
+    # theta timescale vector
+    __theta_df = _theta_df.loc[bins]
+    theta_vector = __theta_df.peak.values - __theta_df.trough.values
+    return goal_vector, theta_vector, bins
+
+
 def _get_alignment_angles(neural_vector, theta_vector):
     # get angle between neural vector and theta vector (cosine similarity)
     dots = np.einsum("ij,ij->i", neural_vector, theta_vector)  # dot products per timepoint
@@ -124,6 +180,8 @@ def get_neural_pc_df(
     session,
     include_multi_unit=True,
     spike_type="all",
+    sqrt_spikes=False,
+    zscore_spikes=False,
     smooth_SD=0.5,
     pc_kwargs={"sqrt_spikes": False, "zscore_spikes": False, "smooth_SD": False, "frac_var_exp": 0.9},
     pca=None,
@@ -144,6 +202,10 @@ def get_neural_pc_df(
     keep_clusters = _keep_clusters(session, include_multi_unit=include_multi_unit)
     spikes_df = spikes_df[keep_clusters]
     spikes = spikes_df.values.astype(float)  # n_samples (frame) x n_features (clusters)
+    if sqrt_spikes:
+        spikes = np.sqrt(spikes)
+    if zscore_spikes:
+        spikes = zscore(spikes, axis=0)
     if smooth_SD:
         # convert to n_frames
         spikes = gaussian_filter1d(spikes, sigma=int(smooth_SD * FRAME_RATE), axis=0)
@@ -167,6 +229,8 @@ def get_theta_peak_trough_df(
     session,
     include_multi_unit=True,
     smooth_SD=0.5,
+    sqrt_spikes=False,
+    zscore_spikes=False,
     pc_kwargs={"sqrt_spikes": False, "zscore_spikes": False, "smooth_SD": False, "frac_var_exp": 0.9},
     theta_peak_inds=[4, 5, 6, 7],
     theta_trough_inds=[0, 1, 10, 11],
@@ -203,6 +267,10 @@ def get_theta_peak_trough_df(
     # loop over peak and trough spikes
     dfs = []
     for spikes, label in zip([peak_spikes, trough_spikes], ["peak", "trough"]):
+        if sqrt_spikes:
+            spikes = np.sqrt(spikes)
+        if zscore_spikes:
+            spikes = zscore(spikes, axis=0)
         if smooth_SD:
             spikes = gaussian_filter1d(spikes, sigma=int(smooth_SD * FRAME_RATE), axis=0)
         # project theta phase spikes onto PCs
@@ -219,16 +287,15 @@ def get_theta_peak_trough_df(
     return pd.concat([nav_df] + dfs, axis=1)
 
 
-def get_theta_vectors(theta_pc_df):
-    """
-    Get the vector between theta peak and trough at every timepoint
-    vec = peak - trough
-    """
-    vec = theta_pc_df.peak.values - theta_pc_df.trough.values
-    return
-
-
-def get_pcs(session, include_multi_unit=True, sqrt_spikes=False, zscore_spikes=False, smooth_SD=0.5, frac_var_exp=0.9):
+def get_pcs(
+    session,
+    include_multi_unit=True,
+    max_steps_to_goal=30,
+    sqrt_spikes=False,
+    zscore_spikes=False,
+    smooth_SD=0.5,
+    frac_var_exp=0.9,
+):
     """
     get the PCs that explain x frac_var_exp (default == 0.8) of the variance in the spike counts
     during navigation (& when animal is moving). Use these PCs to project the spike counts later.
@@ -243,7 +310,10 @@ def get_pcs(session, include_multi_unit=True, sqrt_spikes=False, zscore_spikes=F
     if smooth_SD:
         spikes = gaussian_filter1d(spikes, sigma=int(smooth_SD * FRAME_RATE), axis=0)
     # filter for times during navigation & moving
-    data_mask = np.logical_and.reduce([(navigation_df.trial_phase == "navigation"), navigation_df.moving])
+    _masks = [(navigation_df.trial_phase == "navigation"), navigation_df.moving]
+    if max_steps_to_goal is not None:
+        _masks.append(navigation_df.steps_to_goal.future <= max_steps_to_goal)
+    data_mask = np.logical_and.reduce(_masks)
     spikes = spikes[data_mask, :]
     # run PCA on spike counts over time
     if sqrt_spikes:
@@ -279,7 +349,18 @@ def _keep_clusters(session, include_multi_unit=True):
 # %% plotting
 
 
-def plot_neural_trajectory(trial_df, PCs=(0, 1, 2), cmap="winter", t_targets=None, t_vectors=None, dot_dt=0.5, ax=None):
+def plot_neural_trajectory(
+    trial_df,
+    PCs=(0, 1, 2),
+    cmap="winter",
+    t_targets=None,
+    t_vectors=None,
+    t_angles=None,
+    t_cmap="RdGy",
+    dot_dt=0.5,
+    fig=None,
+    ax=None,
+):
     # set up fig
     if ax is None:
         f, ax = _init_3D_plot(PCs)
@@ -291,7 +372,18 @@ def plot_neural_trajectory(trial_df, PCs=(0, 1, 2), cmap="winter", t_targets=Non
     pcs = _df.pc[[*PCs]].values
     if t_vectors is not None:
         t_vectors = t_vectors[:, PCs]
-    _plot_neural_traj(pcs, time, t_targets=t_targets, t_vectors=t_vectors, dot_dt=dot_dt, cmap=cmap, ax=ax)
+    _plot_neural_traj(
+        pcs,
+        time,
+        t_targets=t_targets,
+        t_vectors=t_vectors,
+        t_angles=t_angles,
+        t_cmap=t_cmap,
+        dot_dt=dot_dt,
+        cmap=cmap,
+        fig=f,
+        ax=ax,
+    )
 
 
 def plot_theta_peak_trough_trajectory(
@@ -347,7 +439,21 @@ def plot_theta_peak_trough_trajectory(
         )
 
 
-def _plot_neural_traj(pcs, time, t_targets=None, t_vectors=None, dot_dt=0.5, cmap="winter", return_dots=False, ax=None):
+def _plot_neural_traj(
+    pcs,
+    time,
+    t_targets=None,
+    t_vectors=None,
+    t_angles=None,
+    t_cmap="RdGy",
+    dot_dt=0.5,
+    cmap="winter",
+    show_colorbars=True,
+    cue_goal_marker=False,
+    return_dots=False,
+    fig=None,
+    ax=None,
+):
     # build segments between successive points
     P0 = pcs[:-1]
     P1 = pcs[1:]
@@ -392,6 +498,19 @@ def _plot_neural_traj(pcs, time, t_targets=None, t_vectors=None, dot_dt=0.5, cma
         idx = np.arange(len(dots))
         arrow_scale = 1
         U, V, W = (t_vectors[idx] * arrow_scale).T
+
+        # --- arrow colors based on t_angles ---
+        if t_angles is not None:
+            t_angles = np.asarray(t_angles)
+            if t_angles.shape[0] != dots.shape[0]:
+                raise ValueError("t_angles must have same length as t_targets/dots.")
+            # Normalize angles from [-pi, pi] with center at 0
+            angle_norm = TwoSlopeNorm(vmin=0, vcenter=np.pi / 2, vmax=np.pi)
+            angle_cmap = plt.get_cmap(t_cmap)
+            arrow_colors = angle_cmap(angle_norm(t_angles))
+        else:
+            arrow_colors = "k"  # fallback if no t_angles provided
+
         ax.quiver(
             dots[idx, 0],
             dots[idx, 1],
@@ -401,11 +520,60 @@ def _plot_neural_traj(pcs, time, t_targets=None, t_vectors=None, dot_dt=0.5, cma
             W,  # vectors
             normalize=False,
             arrow_length_ratio=0.2,
-            linewidths=1.5,
-            alpha=0.5,
-            color="k",
+            linewidths=2,
+            alpha=1,
+            color=arrow_colors,
             length=1.0,  # leave at 1.0 to use raw U,V,W magnitudes
         )
+
+    # --- add start (C) and goal (G) labels ---
+    if cue_goal_marker:
+        start_pt = pcs[0]
+        end_pt = pcs[-1]
+        for marker, pt in zip(["C", "G"], [start_pt, end_pt]):
+            ax.text(
+                pt[0],
+                pt[1],
+                pt[2],
+                marker,
+                color="k",
+                fontsize=14,
+                weight="bold",
+                alpha=0.8,
+                horizontalalignment="center",
+                verticalalignment="center",
+            )
+
+    # --- add colorbars ---
+    if show_colorbars:
+        # Get figure size in normalized coordinates
+        box = ax.get_position()
+        fig_width = box.width
+        fig_left = box.x0
+        fig_right = box.x1
+
+        # --- time colorbar (top-left, horizontal, no ticks or labels) ---
+        sm_time = ScalarMappable(norm=norm, cmap=cmap_obj)
+        cbar_time_ax = fig.add_axes([fig_left, box.y1 + 0.03, fig_width * 0.4, 0.015])
+        cbar_time = fig.colorbar(sm_time, cax=cbar_time_ax, orientation="horizontal")
+        cbar_time.outline.set_visible(False)
+        cbar_time.set_ticks([time.min(), time.max()])
+        cbar_time.set_ticklabels(["cue", "goal"])
+        cbar_time.set_label("time", labelpad=4)
+
+        # --- angle colorbar (top-right, horizontal, labeled) ---
+        if t_angles is not None:
+            angle_norm = TwoSlopeNorm(vmin=0, vcenter=np.pi / 2, vmax=np.pi)
+            angle_cmap = plt.get_cmap(t_cmap)
+            sm_angle = ScalarMappable(norm=angle_norm, cmap=angle_cmap)
+
+            # place on top-right
+            cbar_angle_ax = fig.add_axes([fig_right - fig_width * 0.4, box.y1 + 0.03, fig_width * 0.4, 0.015])
+            cbar_angle = fig.colorbar(sm_angle, cax=cbar_angle_ax, orientation="horizontal")
+            cbar_angle.outline.set_visible(False)
+            cbar_angle.set_ticks([0, np.pi / 2, np.pi])
+            cbar_angle.set_ticklabels(["align.", "orthog.", "anti-align."])
+            cbar_angle.set_label("angle (rad)", labelpad=4)
     if return_dots:
         return dots
 
