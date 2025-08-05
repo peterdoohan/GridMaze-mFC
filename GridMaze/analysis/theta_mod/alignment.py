@@ -15,40 +15,68 @@ from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.theta_mod import utils as tmu
 
 # %% Global Variables
-from GridMaze.paths import EXPERIMENT_INFO_PATH
+from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
+
+RESULTS_DIR = RESULTS_PATH / "theta_mod" / "trajectory_alignment"
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
+
+MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
 
 FRAME_RATE = 60  # Hz
 
 # %% Run on all sessions
 
 
-def get_theta_alignment_summary_df(smooth_SD=2, vector_window=2, verbose=True):
+def get_theta_alignment_summary_df(smooth_SD=2, vector_window=2, verbose=True, save=False):
     """ """
-    for subject_ID in SUBJECT_IDS:
+    save_path = RESULTS_DIR / f"theta_alignment_summary.parquet"
+    if not save and save_path.exists():
         if verbose:
-            print(f"Loading data: {subject_ID}")
-        sessions = gs.get_maze_sessions(
-            subject_IDs=[subject_ID],
-            maze_names="all",
-            days_on_maze="all",
-            with_data=[
-                "navigation_df",
-                "navigation_spike_counts_df",
-                "navigation_theta_spike_counts_df",
-                "cluster_metrics",
-            ],
-            must_have_data=True,
-        )
-        results = []
-        for session in sessions:
+            print(f"Loading existing results from {save_path}")
+        return pd.read_parquet(save_path)
+    results = []
+    failed_sessions = []
+    for subject_ID in SUBJECT_IDS:
+        for maze in MAZE_NAMES:
+            # loop over subjects and mazes to not load too much data at once
             if verbose:
-                print(session.name)
-            alignment_df = get_session_alignment_angles(session, smooth_SD=smooth_SD, vector_window=vector_window)
-            results.append(alignment_df)
-    return pd.concat(results, axis=0).reset_index(drop=True)
+                print(f"Loading data: {subject_ID}, {maze}")
+            sessions = gs.get_maze_sessions(
+                subject_IDs=[subject_ID],
+                maze_names=[maze],
+                days_on_maze="all",
+                with_data=[
+                    "navigation_df",
+                    "navigation_spike_counts_df",
+                    "navigation_theta_spike_counts_df",
+                    "cluster_metrics",
+                ],
+                must_have_data=True,
+            )
+            for session in sessions:
+                if verbose:
+                    print(session.name)
+                try:
+                    alignment_df = get_session_alignment_angles(
+                        session, smooth_SD=smooth_SD, vector_window=vector_window
+                    )
+                    results.append(alignment_df)
+                except Exception as e:
+                    if verbose:
+                        print(f"Failed to process session {session.name}: {e}")
+                    failed_sessions.append(session.name)
+    results_df = pd.concat(results, axis=0).reset_index(drop=True)
+    if save:
+        if verbose:
+            print(f"Saving results to {save_path}")
+        if not save_path.parent.exists():
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+        results_df.to_parquet(save_path)
+    if verbose:
+        print(f"Failed sessions: {failed_sessions}")
+    return results_df
 
 
 # %% Functions
