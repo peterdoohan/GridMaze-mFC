@@ -287,6 +287,62 @@ def get_theta_peak_trough_df(
     return pd.concat([nav_df] + dfs, axis=1)
 
 
+def get_theta_pc_df(
+    session,
+    include_multi_unit=True,
+    smooth_SD=1,
+    sqrt_spikes=False,
+    zscore_spikes=False,
+    pc_kwargs={"sqrt_spikes": False, "zscore_spikes": False, "smooth_SD": False, "frac_var_exp": 0.9},
+    pca=None,
+    n_pcs=None,
+):
+    """ """
+    # load data
+    nav_df = session.navigation_df.copy()
+    theta_spikes_df = session.navigation_theta_spike_counts_df
+    # filter for clusters to keep
+    keep_clusters = _keep_clusters(session, include_multi_unit=include_multi_unit)
+    theta_spikes_df = theta_spikes_df[
+        theta_spikes_df.columns[[c in keep_clusters for c in theta_spikes_df.columns.get_level_values(1)]]
+    ]
+
+    # get PC subspace for spike projection
+    if pca is None or n_pcs is None:
+        pca, n_pcs = get_pcs(session, include_multi_unit=include_multi_unit, **pc_kwargs)
+
+    # get sep df for each theta phase (and average across theta phases)
+    theta_phases = list(theta_spikes_df.columns.get_level_values(2).unique())
+    phase_dfs = [theta_spikes_df.xs(phase, level=2, axis=1) for phase in theta_phases] + [
+        theta_spikes_df.T.groupby(level=1).mean().T
+    ]
+    theta_phases.append("theta_mean")  # add mean phase
+    dfs = []
+    for phase_df, phase in zip(phase_dfs, theta_phases):
+        spikes = phase_df.values.astype(float)
+        if sqrt_spikes:
+            spikes = np.sqrt(spikes)
+        if zscore_spikes:
+            spikes = zscore(spikes, axis=0)
+        if smooth_SD:
+            spikes = gaussian_filter1d(spikes, sigma=int(smooth_SD * FRAME_RATE), axis=0)
+        # project spikes to PCs
+        spikes_pca = pca.transform(spikes)[:, :n_pcs]
+        # output as navigation_df-style df
+        pca_df = pd.DataFrame(
+            index=nav_df.index,
+            data=spikes_pca,
+            columns=pd.MultiIndex.from_product([["pc"], np.arange(n_pcs)]),
+        )
+        pca_df.columns = pd.MultiIndex.from_tuples([(c[0], phase, c[1]) for c in pca_df.columns])
+        dfs.append(pca_df)
+
+    # combine all with navigation data
+    nav_df.columns = pd.MultiIndex.from_tuples([(*c, "") for c in nav_df.columns])
+    df = pd.concat([nav_df] + dfs, axis=1)
+    return df
+
+
 def get_pcs(
     session,
     include_multi_unit=True,
@@ -599,47 +655,3 @@ def _init_3D_plot(PCs, figsize=(5, 5)):
 
 
 # %% testing
-
-
-def get_theta_pc_df(
-    session,
-    include_multi_unit=True,
-    smooth_SD=0.5,
-    pc_kwargs={"sqrt_spikes": False, "zscore_spikes": False, "smooth_SD": False, "frac_var_exp": 0.9},
-):
-    """ """
-    # load data
-    nav_df = session.navigation_df.copy()
-    theta_spikes_df = session.navigation_theta_spike_counts_df
-    # filter for clusters to keep
-    keep_clusters = _keep_clusters(session, include_multi_unit=include_multi_unit)
-    theta_spikes_df = theta_spikes_df[
-        theta_spikes_df.columns[[c in keep_clusters for c in theta_spikes_df.columns.get_level_values(1)]]
-    ]
-
-    # get PC subspace for spike projection
-    pca, n_pcs = get_pcs(session, include_multi_unit=include_multi_unit, **pc_kwargs)
-
-    # get theta phase spike projections
-    theta_phases = list(theta_spikes_df.columns.get_level_values(2).unique())
-    phase_dfs = [theta_spikes_df.xs(phase, level=2, axis=1) for phase in theta_phases] + [
-        theta_spikes_df.T.groupby(level=1).mean().T
-    ]
-    theta_phases.append("theta_mean")  # add mean phase
-    dfs = []
-    for phase_df, phase in zip(phase_dfs, theta_phases):
-        # project spikes to PCs
-        spikes_pca = pca.transform(phase_df.values)[:, :n_pcs]
-        # output as navigation_df-style df
-        pca_df = pd.DataFrame(
-            index=nav_df.index,
-            data=spikes_pca,
-            columns=pd.MultiIndex.from_product([["pc"], np.arange(n_pcs)]),
-        )
-        pca_df.columns = pd.MultiIndex.from_tuples([(c[0], phase, c[1]) for c in pca_df.columns])
-        dfs.append(pca_df)
-
-    # combine all with navigation data
-    nav_df.columns = pd.MultiIndex.from_tuples([(*c, "") for c in nav_df.columns])
-    df = pd.concat([nav_df] + dfs, axis=1)
-    return df
