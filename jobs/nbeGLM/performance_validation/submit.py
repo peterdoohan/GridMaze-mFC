@@ -23,9 +23,11 @@ def submit_jobs(seed=0, subfolder="performance_validation"):
         json.dump(model_set_params, f, indent=4)
     # write slurm script for each job/model and submit to cluster
     for model_params in find_missing(model_set_params):
-        script_path = ju.get_SLURM_script(**model_params)
-        os.system(f"chmod +x {script_path}")
-        os.system(f"sbatch {script_path}")
+        if model_params["model_name"].split("_", 1)[0] == "baseline2":
+            print(model_params["model_name"])
+            script_path = ju.get_SLURM_script(**model_params)
+            os.system(f"chmod +x {script_path}")
+            os.system(f"sbatch {script_path}")
     return print("all jobs submitted to hpc")
 
 
@@ -130,6 +132,14 @@ def get_model_set_params(seed=0, subfolder="performance_validation", overwrite=F
                 ["place_direction_distance_to_goal_egocentric_action"],
                 {"place_direction_distance_to_goal_egocentric_action": {"keep_only_visited": True}},
                 "baseline_place_direction_distance_to_goal_egocentric_action",
+            ),
+            # combos as onehots: TODO: fix making after chaning results names
+            (["place", "direction"], {}, "baseline2_place_direction"),
+            (["place", "direction", "distance_to_goal"], {}, "baseline2_place_direction_distance_to_goal"),
+            (
+                ["place", "direction", "distance_to_goal", "egocentric_action"],
+                {},
+                "baseline2_place_direction_distance_to_goal_egocentric_action",
             ),
         ]:
             # update defualt input data kwargs
