@@ -8,8 +8,6 @@ from GridMaze.paths import RESULTS_PATH
 
 RESULTS_DIR = RESULTS_PATH / "nbeGLM"
 
-JOBS_PATH = Path("./jobs/nbeGLM")
-
 # %% Default Parameters
 
 DEFAULT_INPUT_DATA_KWARGS = {
@@ -39,14 +37,14 @@ DEFAULT_MODEL_TRAIN_KWARGS = {
     "lr": 1e-3,
     "nepochs": 3001,
     "eval_alpha": 1e-3,
-    "n_jobs": 32,
+    "n_jobs": 24,
     "verbose": True,
 }
 
 DEFAULT_SCORE_KWARGS = {
     "n_folds": 5,
     "optimal_alpha": True,
-    "n_jobs": 32,
+    "n_jobs": 24,
     "verbose": False,
 }
 
@@ -64,18 +62,25 @@ DEFAULT_NBEGLM_PARAMS = {
 # %% Functions
 
 
-def get_SLURM_script(model_name, subfolder, maze_name, model_params, run_fn="run_cv_nbeGLM"):
+def get_SLURM_script(
+    model_name, subfolder, maze_name, model_params, run_fn="run_cv_nbeGLM", resource_type="gpu", RAM="16G"
+):
     """Create SLURM script for running nbeGLM experiment."""
     # check jobs and results output folders exist
     _job_name = ".".join([maze_name, model_name])
-    jobs_output_path = JOBS_PATH / subfolder
-    for folder in ["out", "err", "slurm"]:
-        output_path = jobs_output_path / "jobs" / f"{folder}"
-        if not output_path.exists():
-            output_path.mkdir(parents=True, exist_ok=True)
     results_output_path = RESULTS_DIR / subfolder / maze_name / model_name
     if not results_output_path.exists():
         results_output_path.mkdir(parents=True, exist_ok=True)
+
+    # determine SLURM resource directives based on resource_type
+    if resource_type == "gpu":
+        partition = "gpu"
+        gres_directive = "#SBATCH --gres=gpu:1"
+    elif resource_type == "cpu":
+        partition = "cpu"
+        gres_directive = ""
+    else:
+        raise ValueError(f"Unknown resource_type: {resource_type}. Use 'gpu' or 'cpu'.")
 
     # create SLURM script
     script = f"""#!/bin/bash
@@ -83,10 +88,10 @@ def get_SLURM_script(model_name, subfolder, maze_name, model_params, run_fn="run
 #SBATCH --output=jobs/nbeGLM/{subfolder}/out/{_job_name}.out
 #SBATCH --error=jobs/nbeGLM/{subfolder}/err/{_job_name}.err
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=4
-#SBATCH -p gpu
-#SBATCH --gres=gpu:1
-#SBATCH --mem=64GB
+#SBATCH --cpus-per-task=24
+#SBATCH -p {partition}
+{gres_directive}
+#SBATCH --mem={RAM}
 #SBATCH --time=72:00:00
 
 module load miniconda
