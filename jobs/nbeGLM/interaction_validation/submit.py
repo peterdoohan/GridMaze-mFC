@@ -15,7 +15,7 @@ RESULTS_DIR = RESULTS_PATH / "nbeGLM"
 
 
 def submit_jobs(seed=0, subfolder="interaction_validation"):
-    model_set_params = get_model_set_params(seed=0, subfolder="interaction_validation")
+    model_set_params = get_model_set_params(seed, subfolder)
     # save model set params to json
     with open(RESULTS_DIR / subfolder / "model_set_params.json", "w") as f:
         json.dump(model_set_params, f, indent=4)
@@ -38,6 +38,17 @@ def get_model_set_params(seed=0, subfolder="interaction_validation", overwrite=F
             (["place", "direction"], [("place",), ("direction",)], "place_direction_linear"),
             (["place", "direction"], None, "place_direction_nonlinear"),
             (["place_direction"], None, "place_direction_conjunction"),
+            (
+                ["place_direction", "distance_to_goal"],
+                [("place_direction",), ("distance_to_goal",)],
+                "place_direction_distance_to_goal_linear",
+            ),
+            (
+                ["place_direction", "distance_to_goal"],
+                None,
+                "place_direction_distance_to_goal_nonlinear",
+            ),
+            (["place_direction_distance_to_goal"], None, "place_direction_distance_to_goal_conjunction"),
         ]:
             # update defualt input data kwargs
             input_data_kwargs = deepcopy(ju.DEFAULT_INPUT_DATA_KWARGS)
@@ -65,6 +76,7 @@ def get_model_set_params(seed=0, subfolder="interaction_validation", overwrite=F
                         "save_path": str(RESULTS_DIR / subfolder / maze_name / model_name),
                         "overwrite": overwrite,
                     },
+                    "resource_type": "gpu",
                     "run_fn": "run_cv_nbeGLM",
                 }
             )
