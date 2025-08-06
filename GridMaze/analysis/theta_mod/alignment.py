@@ -9,8 +9,11 @@ vectors between neural timepoints should be aligned (non-orthogoal as predicted 
 
 # %% Imports
 import json
+from matplotlib import pyplot as plt
 import numpy as np
 import pandas as pd
+import seaborn as sns
+from scipy.ndimage import gaussian_filter1d
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.theta_mod import utils as tmu
 
@@ -22,9 +25,74 @@ RESULTS_DIR = RESULTS_PATH / "theta_mod" / "trajectory_alignment"
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
 
-MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
+with open(EXPERIMENT_INFO_PATH / "maze_day2date.json", "r") as input_file:
+    MAZE_DAY2DATE = json.load(input_file)
+MAZE2LATE_DAYS = {maze: [int(d) for d in list(MAZE_DAY2DATE[maze].keys())[-7:]] for maze in MAZE_DAY2DATE.keys()}
+
 
 FRAME_RATE = 60  # Hz
+
+
+# %% plot results
+
+
+def plot_trajectory_theta_angles(
+    summary_df,
+    angle_type="goal_angle",
+    moving_only=True,
+    maze_names=["maze_1", "maze_2", "rooms_maze"],
+    late_sessions=False,
+    steps_to_goal=None,
+    subject_smooth_SD=1,
+    ax=None,
+):
+    """ """
+    # set up fig
+    if ax is None:
+        f, ax = plt.subplots(figsize=(3, 3))
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_xlabel("theta phase")
+    ax.set_ylabel(f"{angle_type} (rad)")
+    ax.set_xticks(np.arange(-np.pi, np.pi + 0.1, np.pi / 2))
+    ax.set_xticklabels(["-π", "-π/2", "0", "π/2", "π"])
+    ax.axhline(np.pi / 2, color="k", linestyle="--", alpha=0.5)
+
+    # filter data
+    df = summary_df.copy()
+    df = df[df.maze_name.isin(maze_names)]
+    if late_sessions:
+        df = df[df.apply(lambda row: row[("day_on_maze", "")] in MAZE2LATE_DAYS[row[("maze_name", "")]], axis=1)]
+    if moving_only:
+        df = df[df.moving]
+    if steps_to_goal is not None:
+        assert isinstance(steps_to_goal, tuple)
+        df = df[df[("steps_to_goal", "future")].between(*steps_to_goal)]
+    # average over filtered sample for each subject
+    subject_grouped = df.groupby("subject_ID")[angle_type]
+    subject_mean = subject_grouped.mean()[angle_type]
+    global_mean = subject_mean.mean()
+    global_sem = subject_mean.sem()
+    phases = global_mean.index.astype(float).values
+    # plot
+    subject_colors = sns.color_palette("hls", n_colors=len(SUBJECT_IDS))
+    # plot individual subjects
+    for subject_ID, color in zip(SUBJECT_IDS, subject_colors):
+        mean = subject_mean.loc[subject_ID].values
+        if subject_smooth_SD:
+            mean = gaussian_filter1d(mean, sigma=subject_smooth_SD)
+        ax.plot(phases, mean, color=color, linewidth=1, alpha=0.5)
+    ax.errorbar(
+        phases,
+        global_mean.values,
+        yerr=global_sem.values,
+        fmt="o-",
+        color="k",
+        markersize=6,
+        linewidth=2,
+        capsize=None,
+        elinewidth=2,
+    )
+
 
 # %% Run on all sessions
 
@@ -39,7 +107,7 @@ def get_theta_alignment_summary_df(smooth_SD=2, vector_window=2, verbose=True, s
     results = []
     failed_sessions = []
     for subject_ID in SUBJECT_IDS:
-        for maze in MAZE_NAMES:
+        for maze in MAZE_DAY2DATE.keys():
             # loop over subjects and mazes to not load too much data at once
             if verbose:
                 print(f"Loading data: {subject_ID}, {maze}")
