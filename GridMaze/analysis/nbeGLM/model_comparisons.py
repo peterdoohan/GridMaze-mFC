@@ -31,9 +31,9 @@ def plot_performance_validation(
     """ """
     # set up figure
     if ax is None:
-        f, ax = plt.subplots(figsize=(5, 3))
+        f, ax = plt.subplots(figsize=(3.5, 3))
     ax.spines[["top", "right"]].set_visible(False)
-    ax.set_xlabel("input features")
+    ax.set_xlabel("features groups")
     ax.set_ylabel("CV Poisson deviance")
     ax.axhline(0, color="k", linestyle="--", alpha=0.5)
 
@@ -65,7 +65,7 @@ def plot_performance_validation(
     n_models = len(models)
     x = np.arange(n_models)
     off = 0.15
-    jitter = 0.025
+    jitter = 0  # 0.025
 
     if plot_single_subjects:
         palette = sns.color_palette("hls", len(subjects))
@@ -85,7 +85,7 @@ def plot_performance_validation(
                         ecolor=subject_colors[subj],
                         markeredgecolor=subject_colors[subj],
                         markerfacecolor=subject_colors[subj],
-                        alpha=0.5,
+                        alpha=1,
                         markersize=5,
                         capsize=0,
                     )
@@ -102,13 +102,14 @@ def plot_performance_validation(
             yerr=sems,
             linestyle="",
             marker="_",
-            markersize=14,
+            markersize=16,
             markeredgewidth=3,
             color=version_colors[version],
             ecolor=version_colors[version],
-            elinewidth=2,
+            elinewidth=3,
             capsize=0,
             label=version.capitalize(),
+            zorder=5,
         )
 
     # Final formatting
