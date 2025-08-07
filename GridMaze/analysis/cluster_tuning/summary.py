@@ -88,10 +88,10 @@ def plot_tuning_summary_concise(Cluster):
     ax5 = fig.add_subplot(gsc[1:2, 3:4])  # action tuning
     # use Cluser Obj to plot tuning to asigned axes
     Cluster.plot_tuning("place_direction", ax=ax1)
-    Cluster.plot_tuning("distance_to_goal", ax=ax2)
+    Cluster.plot_tuning("distance_to_goal", ax=ax2, feature_kwargs={"smooth_SD": 1})
     Cluster.plot_tuning("trial_events", ax=ax3)
     Cluster.plot_tuning("angle_to_goal", feature_kwargs={"angle_metric": "summary"}, ax=ax4)
-    Cluster.plot_tuning("actions", ax=ax5, feature_kwargs={"concise": True, "action_type": "all"})
+    Cluster.plot_tuning("actions", ax=ax5, feature_kwargs={"concise": True, "action_type": "all", "smooth_SD": 16})
     fig.tight_layout()
     fig.subplots_adjust(hspace=0.5, wspace=0.3)
     fig.suptitle(f"{Cluster.cluster_unique_ID}", fontsize=16)
