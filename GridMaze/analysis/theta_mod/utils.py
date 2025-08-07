@@ -4,7 +4,6 @@ as behaviour unfolds?
 """
 
 # %% Imports
-from turtle import color
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
@@ -64,11 +63,11 @@ def test2(session, smooth_SD=1):
 
 def test3(
     session,
-    smooth_SD=1,
+    smooth_SD=2,
     include_multi_unit=True,
     sqrt_spikes=False,
     zscore_spikes=False,
-    dot_dt=1,
+    dot_dt=0.5,
     dot_moving_only=False,
 ):
     window_frames = int(dot_dt * FRAME_RATE)
@@ -78,8 +77,9 @@ def test3(
         sqrt_spikes=sqrt_spikes,
         zscore_spikes=zscore_spikes,
         smooth_SD=smooth_SD,
-        frac_var_exp=0.9,
+        frac_var_exp=0.70,
     )
+    print(n_pcs)
     neural_pc_df = get_neural_pc_df(
         session,
         include_multi_unit=include_multi_unit,
@@ -231,7 +231,7 @@ def get_theta_peak_trough_df(
     smooth_SD=0.5,
     sqrt_spikes=False,
     zscore_spikes=False,
-    pc_kwargs={"sqrt_spikes": False, "zscore_spikes": False, "smooth_SD": False, "frac_var_exp": 0.9},
+    pc_kwargs={"sqrt_spikes": False, "zscore_spikes": False, "smooth_SD": False, "frac_var_exp": 0.75},
     theta_peak_inds=[4, 5, 6, 7],
     theta_trough_inds=[0, 1, 10, 11],
     pca=None,
@@ -350,6 +350,7 @@ def get_pcs(
     sqrt_spikes=False,
     zscore_spikes=False,
     smooth_SD=0.5,
+    n_pcs=None,
     frac_var_exp=0.9,
 ):
     """
@@ -380,7 +381,8 @@ def get_pcs(
     pca = PCA(random_state=0)
     pca.fit(spikes)
     # get n_pcs to explain x pct_var
-    n_pcs = np.argmax(np.cumsum(pca.explained_variance_ratio_) >= frac_var_exp)
+    if n_pcs is None:
+        n_pcs = np.argmax(np.cumsum(pca.explained_variance_ratio_) >= frac_var_exp)
     return pca, n_pcs
 
 
@@ -400,258 +402,3 @@ def _keep_clusters(session, include_multi_unit=True):
     # convert to cluster_unique_IDs
     cluster_unique_IDs = convert.cluster_IDs2scluster_unique_IDs(session.session_info, cluster_IDs)
     return list(cluster_unique_IDs)
-
-
-# %% plotting
-
-
-def plot_neural_trajectory(
-    trial_df,
-    PCs=(0, 1, 2),
-    cmap="winter",
-    t_targets=None,
-    t_vectors=None,
-    t_angles=None,
-    t_cmap="RdGy",
-    dot_dt=0.5,
-    fig=None,
-    ax=None,
-):
-    # set up fig
-    if ax is None:
-        f, ax = _init_3D_plot(PCs)
-
-    # filter for navigation period
-    _df = trial_df[trial_df.trial_phase == "navigation"]
-    # plot
-    time = _df.time.values
-    pcs = _df.pc[[*PCs]].values
-    if t_vectors is not None:
-        t_vectors = t_vectors[:, PCs]
-    _plot_neural_traj(
-        pcs,
-        time,
-        t_targets=t_targets,
-        t_vectors=t_vectors,
-        t_angles=t_angles,
-        t_cmap=t_cmap,
-        dot_dt=dot_dt,
-        cmap=cmap,
-        fig=f,
-        ax=ax,
-    )
-
-
-def plot_theta_peak_trough_trajectory(
-    trial_df,
-    PCs=(0, 1, 2),
-    cmaps=("winter", "autumn"),
-    dot_dt=0.5,
-    arrow=True,
-    ax=None,
-):
-    """Plot peak and trough trajectories + optional arrows from trough→peak at matched times."""
-    # set up fig
-    if ax is None:
-        f, ax = _init_3D_plot(PCs)
-
-    # filter for navigation period
-    _df = trial_df[trial_df.trial_phase == "navigation"].sort_values("time")
-    time = _df.time.to_numpy()
-
-    # Plot each trajectory and keep the dots for arrow linking
-    dots_by_phase = {}
-    for phase, cmap in zip(["trough", "peak"], cmaps):  # plot trough first so arrows point to peak
-        pcs = _df[phase][[*PCs]].to_numpy()
-        dots = _plot_neural_traj(pcs, time, dot_dt=dot_dt, cmap=cmap, return_dots=True, ax=ax)
-        dots_by_phase[phase] = dots
-
-    # ---- arrows: trough → peak at matched times ----
-    if arrow and all(k in dots_by_phase for k in ("trough", "peak")):
-        trough_dots = dots_by_phase["trough"]
-        peak_dots = dots_by_phase["peak"]
-
-        # make sure the arrays align (same number of dots)
-        n = min(len(trough_dots), len(peak_dots))
-        P = trough_dots[:n]
-        Q = peak_dots[:n]
-        U, V, W = (Q - P).T  # direction vectors
-
-        # subsample arrows if desired
-        idx = slice(None, None, 1)
-        ax.quiver(
-            P[idx, 0],
-            P[idx, 1],
-            P[idx, 2],
-            U[idx],
-            V[idx],
-            W[idx],
-            normalize=False,
-            arrow_length_ratio=0.2,
-            linewidths=1.5,
-            alpha=0.5,
-            color="k",
-            length=1.0,  # leave at 1.0 to use raw U,V,W magnitudes
-        )
-
-
-def _plot_neural_traj(
-    pcs,
-    time,
-    t_targets=None,
-    t_vectors=None,
-    t_angles=None,
-    t_cmap="RdGy",
-    dot_dt=0.5,
-    cmap="winter",
-    show_colorbars=True,
-    cue_goal_marker=False,
-    return_dots=False,
-    fig=None,
-    ax=None,
-):
-    # build segments between successive points
-    P0 = pcs[:-1]
-    P1 = pcs[1:]
-    segments = np.stack([P0, P1], axis=1)
-
-    # color mapping by time (use segment midpoints)
-    t_mid = 0.5 * (time[:-1] + time[1:])
-    norm = Normalize(vmin=time.min(), vmax=time.max())
-    cmap_obj = plt.get_cmap(cmap)
-    lc = Line3DCollection(segments, cmap=cmap_obj, norm=norm)
-    lc.set_array(t_mid)
-    lc.set_linewidth(2.0)
-    ax.add_collection3d(lc)
-    ax.auto_scale_xyz(pcs[:, 0], pcs[:, 1], pcs[:, 2])
-
-    # plot time markers
-    t0 = time[0]
-    if t_targets is None:
-        t_targets = np.arange(t0, time[-1] + 1e-9, dot_dt)  # include endpoint if aligned
-    dots = np.vstack([np.interp(t_targets, time, pcs[:, d]) for d in range(pcs.shape[1])]).T
-    dot_colors = cmap_obj(norm(t_targets))
-    ax.scatter(
-        dots[:, 0],
-        dots[:, 1],
-        dots[:, 2],
-        s=30,
-        c=dot_colors,
-        alpha=0.9,
-        depthshade=False,
-        linewidths=0,
-    )
-
-    # --- arrows at dots (direction+magnitude from t_vectors) ---
-    if t_vectors is not None:
-        t_vectors = np.asarray(t_vectors)
-        if t_vectors.ndim != 2 or t_vectors.shape[1] != 3:
-            raise ValueError("t_vectors must have shape (n_targets, 3).")
-        if t_vectors.shape[0] != dots.shape[0]:
-            raise ValueError("t_vectors must have the same number of rows as t_targets/dots.")
-
-        # subsample arrows if desired
-        idx = np.arange(len(dots))
-        arrow_scale = 1
-        U, V, W = (t_vectors[idx] * arrow_scale).T
-
-        # --- arrow colors based on t_angles ---
-        if t_angles is not None:
-            t_angles = np.asarray(t_angles)
-            if t_angles.shape[0] != dots.shape[0]:
-                raise ValueError("t_angles must have same length as t_targets/dots.")
-            # Normalize angles from [-pi, pi] with center at 0
-            angle_norm = TwoSlopeNorm(vmin=0, vcenter=np.pi / 2, vmax=np.pi)
-            angle_cmap = plt.get_cmap(t_cmap)
-            arrow_colors = angle_cmap(angle_norm(t_angles))
-        else:
-            arrow_colors = "k"  # fallback if no t_angles provided
-
-        ax.quiver(
-            dots[idx, 0],
-            dots[idx, 1],
-            dots[idx, 2],  # starts
-            U,
-            V,
-            W,  # vectors
-            normalize=False,
-            arrow_length_ratio=0.2,
-            linewidths=2,
-            alpha=1,
-            color=arrow_colors,
-            length=1.0,  # leave at 1.0 to use raw U,V,W magnitudes
-        )
-
-    # --- add start (C) and goal (G) labels ---
-    if cue_goal_marker:
-        start_pt = pcs[0]
-        end_pt = pcs[-1]
-        for marker, pt in zip(["C", "G"], [start_pt, end_pt]):
-            ax.text(
-                pt[0],
-                pt[1],
-                pt[2],
-                marker,
-                color="k",
-                fontsize=14,
-                weight="bold",
-                alpha=0.8,
-                horizontalalignment="center",
-                verticalalignment="center",
-            )
-
-    # --- add colorbars ---
-    if show_colorbars:
-        # Get figure size in normalized coordinates
-        box = ax.get_position()
-        fig_width = box.width
-        fig_left = box.x0
-        fig_right = box.x1
-
-        # --- time colorbar (top-left, horizontal, no ticks or labels) ---
-        sm_time = ScalarMappable(norm=norm, cmap=cmap_obj)
-        cbar_time_ax = fig.add_axes([fig_left, box.y1 + 0.03, fig_width * 0.4, 0.015])
-        cbar_time = fig.colorbar(sm_time, cax=cbar_time_ax, orientation="horizontal")
-        cbar_time.outline.set_visible(False)
-        cbar_time.set_ticks([time.min(), time.max()])
-        cbar_time.set_ticklabels(["cue", "goal"])
-        cbar_time.set_label("time", labelpad=4)
-
-        # --- angle colorbar (top-right, horizontal, labeled) ---
-        if t_angles is not None:
-            angle_norm = TwoSlopeNorm(vmin=0, vcenter=np.pi / 2, vmax=np.pi)
-            angle_cmap = plt.get_cmap(t_cmap)
-            sm_angle = ScalarMappable(norm=angle_norm, cmap=angle_cmap)
-
-            # place on top-right
-            cbar_angle_ax = fig.add_axes([fig_right - fig_width * 0.4, box.y1 + 0.03, fig_width * 0.4, 0.015])
-            cbar_angle = fig.colorbar(sm_angle, cax=cbar_angle_ax, orientation="horizontal")
-            cbar_angle.outline.set_visible(False)
-            cbar_angle.set_ticks([0, np.pi / 2, np.pi])
-            cbar_angle.set_ticklabels(["align.", "orthog.", "anti-align."])
-            cbar_angle.set_label("angle (rad)", labelpad=4)
-    if return_dots:
-        return dots
-
-
-def _init_3D_plot(PCs, figsize=(5, 5)):
-    f = plt.figure(figsize=figsize)
-    ax = f.add_subplot(111, projection="3d")
-    # make the panes transparent
-    ax.xaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
-    ax.yaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
-    ax.zaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
-    # make the grid lines transparent
-    ax.xaxis._axinfo["grid"]["color"] = (1, 1, 1, 0)
-    ax.yaxis._axinfo["grid"]["color"] = (1, 1, 1, 0)
-    ax.zaxis._axinfo["grid"]["color"] = (1, 1, 1, 0)
-    ax.set_xticks([])
-    ax.set_yticks([])
-    ax.set_zticks([])
-    ax.set_xlabel(f"PC{PCs[0]}")
-    ax.set_ylabel(f"PC{PCs[1]}")
-    ax.set_zlabel(f"PC{PCs[2]}")
-    return f, ax
-
-
-# %% testing
