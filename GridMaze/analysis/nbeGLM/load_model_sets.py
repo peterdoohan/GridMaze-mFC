@@ -26,15 +26,16 @@ def load_model_set_cv_scores(model_set, maze_names=["maze_1"], all_completed=Tru
         results_dirs = [f for f in _dir.iterdir() if f.is_dir()]
         for results_dir in results_dirs:
             # check if results have been processed
-            if not (results_dir / "DONE.txt"):
+            if (results_dir / "DONE.txt").exists():
+                # load cv scores
+                cv_scores_path = results_dir / "cv_scores.csv"
+                df = pd.read_csv(cv_scores_path)
+                model_name = results_dir.name
+                df["model_name"] = model_name
+                dfs.append(df)
+            else:
                 if all_completed:
                     raise FileNotFoundError(f"Results directory not completed: {results_dir}")
                 else:
                     continue
-            # load cv scores
-            cv_scores_path = results_dir / "cv_scores.csv"
-            df = pd.read_csv(cv_scores_path)
-            model_name = results_dir.name
-            df["model_name"] = model_name
-            dfs.append(df)
     return pd.concat(dfs, ignore_index=True)

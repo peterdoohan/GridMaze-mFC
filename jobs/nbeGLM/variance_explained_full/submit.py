@@ -90,6 +90,7 @@ def get_model_set_params(seed=0, subfolder="variance_explained_full"):
                         "verbose": True,
                         "save_path": str(RESULTS_DIR / subfolder / maze_name / model_name),
                     },
+                    "resource_type": "gpu",
                     "run_fn": "run_cv_nbeGLM",
                 }
             )

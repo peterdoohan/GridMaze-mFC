@@ -46,7 +46,7 @@ def get_model_set_params(seed=0, subfolder="variance_explained"):
                 {
                     "egocentric_action": {"components": ["free_forced", "tower_bridge"]},
                 },
-                "remove_egocentric_action_free_forced",
+                "remove_egocentric_action_action",
             ),
         ]:
             # update defualt input data kwargs
@@ -74,6 +74,7 @@ def get_model_set_params(seed=0, subfolder="variance_explained"):
                         "verbose": True,
                         "save_path": str(RESULTS_DIR / subfolder / maze_name / model_name),
                     },
+                    "resource_type": "gpu",
                     "run_fn": "run_cv_nbeGLM",
                 }
             )
