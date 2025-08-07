@@ -17,6 +17,7 @@ from statsmodels.stats.multitest import multipletests
 
 def plot_performance_validation(
     results_df,
+    model_types=["baseline", "baseline2", "embedding"],
     input_features=[
         "place",
         "place_direction",
@@ -48,12 +49,13 @@ def plot_performance_validation(
     df = df[df.gt(outlier_threshold).all(axis=1)]  # (n_neurons, n_models)
     # set multiindex column for baseline vs emebedding comparison
     df.columns = pd.MultiIndex.from_tuples([tuple(c.split("_", 1)) for c in df.columns])
-
+    # filter for input features and model types
     df = df[df.columns[df.columns.get_level_values(1).isin(input_features)]]
+    df = df[df.columns[df.columns.get_level_values(0).isin(model_types)]]
     subj_mean = df.groupby("subject_ID").mean()
     if print_stats:
         print("baseline vs embedding:")
-        print(_performance_validation_stats(subj_mean))
+        # print(_performance_validation_stats(subj_mean))
 
     subj_sem = df.groupby("subject_ID").sem()
     grand_mean = subj_mean.mean()
@@ -67,17 +69,21 @@ def plot_performance_validation(
     off = 0.15
     jitter = 0  # 0.025
 
+    offset_map = {"baseline": -off, "baseline2": 0, "embedding": +off}
+
     if plot_single_subjects:
         palette = sns.color_palette("hls", len(subjects))
         subject_colors = dict(zip(subjects, palette))
         for subj in subjects:
             for i, model in enumerate(models):
-                for version in versions:
+                # which versions actually exist for this model?
+                available = [v for v in versions if (v, model) in subj_mean.columns]
+                for version in available:
                     y = subj_mean.loc[subj, (version, model)]
                     yerr = subj_sem.loc[subj, (version, model)]
-                    base = i + (-off if version == "baseline" else off)
+                    base = i + offset_map.get(version, 0)
                     xpos = base + np.random.uniform(-jitter, jitter)
-                    plt.errorbar(
+                    ax.errorbar(
                         xpos,
                         y,
                         yerr=yerr,
@@ -85,38 +91,42 @@ def plot_performance_validation(
                         ecolor=subject_colors[subj],
                         markeredgecolor=subject_colors[subj],
                         markerfacecolor=subject_colors[subj],
-                        alpha=1,
+                        alpha=0.3,
                         markersize=5,
                         capsize=0,
                     )
 
-    version_colors = {"baseline": "grey", "embedding": "purple"}
-    # Plot grand means ± SEM with flat '-' markers
-    for version in versions:
-        means = [grand_mean.loc[(version, m)] for m in models]
-        sems = [grand_sem.loc[(version, m)] for m in models]
-        xpos = x - off if version == "baseline" else x + off
-        ax.errorbar(
-            xpos,
-            means,
-            yerr=sems,
-            linestyle="",
-            marker="_",
-            markersize=16,
-            markeredgewidth=3,
-            color=version_colors[version],
-            ecolor=version_colors[version],
-            elinewidth=3,
-            capsize=0,
-            label=version.capitalize(),
-            zorder=5,
-        )
+    version_colors = {"baseline": "grey", "baseline2": "green", "embedding": "purple"}
 
-    # Final formatting
+    # plot grand means ± SEM
+    for i, model in enumerate(models):
+        available = [v for v in versions if (v, model) in grand_mean.index]
+        for version in available:
+            mean_val = grand_mean.loc[(version, model)]
+            sem_val = grand_sem.loc[(version, model)]
+            xpos = i + offset_map.get(version, 0)
+            ax.errorbar(
+                xpos,
+                mean_val,
+                yerr=sem_val,
+                linestyle="",
+                marker="_",
+                markersize=16,
+                markeredgewidth=3,
+                color=version_colors.get(version, "black"),
+                ecolor=version_colors.get(version, "black"),
+                elinewidth=3,
+                capsize=0,
+                label=version.capitalize() if i == 0 else None,
+                zorder=5,
+            )
+
+    # final formatting
     ax.set_xticks(x)
-    ax.set_xticklabels(models)
+    ax.set_xticklabels(models, rotation=45)
+    ax.set_xlabel("Model")
+    ax.set_ylabel("Score")
     ax.legend()
-    return
 
 
 def _performance_validation_stats(subject_mean_df):
