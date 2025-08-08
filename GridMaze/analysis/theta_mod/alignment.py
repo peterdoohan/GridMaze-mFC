@@ -157,6 +157,8 @@ def get_session_alignment_angles(
     sqrt_spikes=False,
     zscore_spikes=False,
     vector_window=2,  # s
+    n_pcs=5,
+    frac_var_exp=None,
 ):
     _kwargs = {
         "include_multi_unit": include_multi_unit,
@@ -165,7 +167,7 @@ def get_session_alignment_angles(
         "smooth_SD": smooth_SD,
     }
     # run PCA on on-task, navigation time data
-    pca, n_pcs = tmu.get_pcs(session, frac_var_exp=0.9, **_kwargs)
+    pca, n_pcs = tmu.get_pcs(session, n_pcs=n_pcs, frac_var_exp=frac_var_exp, **_kwargs)
     # project all spikes onto the PC basis defined above (organised in df)
     neural_pc_df = tmu.get_neural_pc_df(session, pca=pca, n_pcs=n_pcs, **_kwargs)
     # project spikes split by theta phase onto the same PC basis
@@ -207,9 +209,10 @@ def get_session_alignment_angles(
             [("subject_ID", ""), ("maze_name", ""), ("day_on_maze", ""), ("trial", ""), ("trial_unique_ID", "")]
         ].loc[window_mids]
         grouped_df = _neural_df.groupby(pd.cut(idx, bins=window_edges, labels=False, include_lowest=True))
-        info_df[("moving", "")] = grouped_df.moving.any().values
+        info_df[("moving", "")] = grouped_df.moving.mean().gt(0.5).values  # moving in more than half of frames
         info_df[("distance_to_goal", "geodesic")] = grouped_df.distance_to_goal.mean().distance_to_goal.geodesic.values
         info_df[("steps_to_goal", "future")] = grouped_df.steps_to_goal.mean().steps_to_goal.future.values
+        info_df[("speed", "")] = grouped_df.speed.mean().values
         assert all((goal_alignment_df.index == info_df.index)), ValueError("index mismatch")
         trial_output_df = pd.concat([info_df, trajectory_alignment_df, goal_alignment_df], axis=1)
         output_dfs.append(trial_output_df)
