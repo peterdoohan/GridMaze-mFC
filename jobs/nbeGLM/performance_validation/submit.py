@@ -22,22 +22,11 @@ def submit_jobs(seed=0, subfolder="performance_validation"):
     with open(model_set_path / "model_set_params.json", "w") as f:
         json.dump(model_set_params, f, indent=4)
     # write slurm script for each job/model and submit to cluster
-    for model_params in find_missing(model_set_params):
-        if model_params["model_name"].split("_", 1)[0] == "baseline2":
-            print(model_params["model_name"])
-            script_path = ju.get_SLURM_script(**model_params)
-            os.system(f"chmod +x {script_path}")
-            os.system(f"sbatch {script_path}")
+    for model_params in ju.find_missing(model_set_params):
+        script_path = ju.get_SLURM_script(**model_params)
+        os.system(f"chmod +x {script_path}")
+        os.system(f"sbatch {script_path}")
     return print("all jobs submitted to hpc")
-
-
-def find_missing(model_set_params):
-    missing = []
-    for model_params in model_set_params:
-        save_path = Path(model_params["model_params"]["save_path"])
-        if not (save_path / "DONE.txt").exists():
-            missing.append(model_params)
-    return missing
 
 
 def get_model_set_params(seed=0, subfolder="performance_validation", overwrite=False):

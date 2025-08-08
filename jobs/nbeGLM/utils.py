@@ -59,7 +59,17 @@ DEFAULT_NBEGLM_PARAMS = {
     "overwrite": False,
 }
 
+
 # %% Functions
+
+
+def find_missing(model_set_params):
+    missing = []
+    for model_params in model_set_params:
+        save_path = Path(model_params["model_params"]["save_path"])
+        if not (save_path / "DONE.txt").exists():
+            missing.append(model_params)
+    return missing
 
 
 def get_SLURM_script(

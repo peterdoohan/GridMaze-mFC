@@ -21,7 +21,7 @@ def submit_jobs(seed=0, subfolder="interaction_validation"):
         json.dump(model_set_params, f, indent=4)
 
     # write slurm script for each job/model and submit to cluster
-    for model_params in model_set_params:
+    for model_params in ju.find_missing(model_set_params):
         script_path = ju.get_SLURM_script(**model_params)
         os.system(f"chmod +x {script_path}")
         os.system(f"sbatch {script_path}")
@@ -43,12 +43,12 @@ def get_model_set_params(seed=0, subfolder="interaction_validation", overwrite=F
                 [("place_direction",), ("distance_to_goal",)],
                 "place_direction_distance_to_goal_linear",
             ),
+            (["distance_to_goal"], None, "distance_to_goal"),
             (
                 ["place_direction", "distance_to_goal"],
                 None,
                 "place_direction_distance_to_goal_nonlinear",
             ),
-            (["place_direction_distance_to_goal"], None, "place_direction_distance_to_goal_conjunction"),
         ]:
             # update defualt input data kwargs
             input_data_kwargs = deepcopy(ju.DEFAULT_INPUT_DATA_KWARGS)
@@ -80,5 +80,4 @@ def get_model_set_params(seed=0, subfolder="interaction_validation", overwrite=F
                     "run_fn": "run_cv_nbeGLM",
                 }
             )
-
     return model_set_params
