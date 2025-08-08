@@ -30,7 +30,9 @@ def plot_performance_validation(
 ):
     """ """
     # set up figure
-    f, ax = _init_fig(ax=ax)
+    if ax is None:
+        f, ax = plt.subplots(figsize=(4, 3))
+    ax = _init_fig(ax=ax)
     # process data
     df = _average_over_folds(results_df, outlier_threshold=outlier_threshold)
     # set multiindex column for baseline vs embedding comparison
@@ -98,7 +100,9 @@ def plot_interaction_validation(
 ):
     """ """
     # set up figure
-    f, ax = _init_fig(ax=ax, figsize=(1, 3))
+    if ax is None:
+        f, ax = plt.subplots(figsize=(4, 3))
+    ax = _init_fig(ax=ax)
     # process data
     df = _average_over_folds(results_df, outlier_threshold=outlier_threshold)
     # filter for input features and model types
@@ -137,12 +141,10 @@ def _average_over_folds(results_df, outlier_threshold=-0.3):
     return df
 
 
-def _init_fig(ax=None, figsize=(4, 3)):
+def _init_fig(ax):
     # set up figure
-    if ax is None:
-        f, ax = plt.subplots(figsize=figsize)
     ax.spines[["top", "right"]].set_visible(False)
     ax.set_xlabel("models")
     ax.set_ylabel("cv performance")
     ax.axhline(0, color="k", linestyle="--", alpha=0.5)
-    return f, ax
+    return ax
