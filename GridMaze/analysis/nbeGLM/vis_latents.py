@@ -7,8 +7,10 @@ Lib for visualising tuning of latent units in nbeGLM models
 import inspect
 import torch
 import pandas as pd
+from matplotlib import pyplot as plt
 
 from GridMaze.maze import representations as mr
+from GridMaze.maze import plotting as mp
 from GridMaze.analysis.nbeGLM import load_model_sets as lms
 from GridMaze.analysis.nbeGLM import get_input_data as gid
 from GridMaze.analysis.distance_to_goal import distributions as dd
@@ -18,6 +20,30 @@ from GridMaze.analysis.core import convert
 
 
 # %% plotting
+
+
+def test(model_name, maze_name):
+    latent_tuning_dfs = get_latent_tuning_dfs(model_name=model_name, maze_name=maze_name)
+    simple_maze = mr.get_simple_maze(maze_name)
+    plot_latent_place_direction_tuning(latent_tuning_dfs["place_direction"], simple_maze)
+
+
+def plot_latent_place_direction_tuning(latent_tuning_df, simple_maze, axes=None):
+    """"""
+    _df = latent_tuning_df.T
+    n = _df.shape[1]
+    # set up fig
+    if axes is None:
+        f, axes = plt.subplots(2, n // 2, figsize=(6 * n // 2, 12))
+    for i, ax in enumerate(axes.flat):
+        mp.plot_directed_heatmap(
+            simple_maze,
+            _df[i],
+            # colormap="bwr",
+            # allow_negative=True,
+            colormap="viridis",
+            ax=ax,
+        )
 
 
 # %% load latent unit tuning from saved model
