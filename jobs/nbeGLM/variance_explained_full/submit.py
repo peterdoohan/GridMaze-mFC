@@ -20,7 +20,7 @@ def submit_jobs(seed=0, subfolder="variance_explained_full"):
         json.dump(model_set_params, f, indent=4)
 
     # write slurm script for each job/model and submit to cluster
-    for model_params in model_set_params:
+    for model_params in ju.find_missing(model_set_params):
         script_path = ju.get_SLURM_script(**model_params)
         os.system(f"chmod +x {script_path}")
         os.system(f"sbatch {script_path}")
@@ -56,7 +56,7 @@ def get_model_set_params(seed=0, subfolder="variance_explained_full"):
                 {
                     "egocentric_action": {"components": ["free_forced", "tower_bridge"]},
                 },
-                "remove_egocentric_action_free_forced",
+                "remove_egocentric_action_action",
             ),
             (["goal"], {}, "remove_goal"),
             (["egocentric_angle_to_goal"], {}, "remove_egocentric_angle_to_goal"),
