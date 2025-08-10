@@ -4,6 +4,7 @@ Load nbeGLM mode set results (defined and run in jobs/nbeGLM/{model_set_name}/su
 """
 
 # %% Imports
+import json
 import pickle
 import pandas as pd
 
@@ -42,9 +43,20 @@ def load_model_set_cv_scores(model_set, maze_names=["maze_1"], all_completed=Tru
     return pd.concat(dfs, ignore_index=True)
 
 
-def load_model(model_set="full_models", model_name="full_model", maze_name="maze_1"):
+def load_model(
+    model_set="full_models",
+    model_name="full_model",
+    maze_name="maze_1",
+    with_model_params=False,
+):
     """ """
     model_path = RESULTS_DIR / model_set / maze_name / model_name / "model.pkl"
     with open(model_path, "rb") as f:
         model = pickle.load(f)
-    return model
+    if not with_model_params:
+        return model
+    else:
+        model_params_path = RESULTS_DIR / model_set / maze_name / model_name / "model_params.json"
+        with open(model_params_path, "r") as f:
+            model_params = json.load(f)
+    return model, model_params
