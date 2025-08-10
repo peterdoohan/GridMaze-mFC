@@ -171,7 +171,7 @@ class nbeGLM(torch.nn.Module):
             ) / np.sqrt(len(self.partition))
 
         if self.latent_nonlin == "relu":
-            z = torch.relu(z)
+            self.z = torch.relu(self.z)
 
         return self.z
 
