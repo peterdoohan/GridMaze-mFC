@@ -30,6 +30,7 @@ def plot_performance_validation(
         "place_direction_distance_to_goal_egocentric_action",
     ],
     outlier_threshold=-0.3,
+    plot_single_subjects=False,
     print_stats=True,
     ax=None,
 ):
@@ -59,6 +60,26 @@ def plot_performance_validation(
         .rename(columns={"level_2": "version", "level_3": "model_name"})
     )
     subj_avg = df_long.groupby(["subject_ID", "version", "model_name"])["score"].mean().reset_index()
+    # plot
+    if plot_single_subjects:
+        sns.pointplot(
+            data=df_long,
+            x="model_name",
+            y="score",
+            hue="subject_ID",
+            order=model_types,
+            palette=sns.color_palette("hls", n_colors=len(SUBJECT_IDS)),
+            markers="o",
+            markersize=7,
+            markeredgewidth=0,
+            errorbar=None,
+            dodge=0.3,
+            linestyle="none",
+            legend=False,
+            alpha=0.8,
+            ax=ax,
+        )
+    # plot
     sns.pointplot(
         data=subj_avg,
         x="model_name",
@@ -102,6 +123,7 @@ def plot_interaction_validation(
     outlier_threshold=-0.3,
     models=["place", "direction", "place_direction_linear", "place_direction_nonlinear"],
     colors=["grey", "grey", "lightgreen", "mediumslateblue"],
+    plot_single_subjects=False,
     print_stats=True,
     ax=None,
 ):
@@ -113,10 +135,32 @@ def plot_interaction_validation(
     # process data
     df = _average_over_folds(results_df, outlier_threshold=outlier_threshold)
     # filter for input features and model types
-    df = df[df.columns[df.columns.isin(models)]]
+    if models != "all":
+        df = df[df.columns[df.columns.isin(models)]]
+        order = models
+    else:
+        order = None
+
     df_long = df.stack().reset_index(name="score")
     subj_avg = df_long.groupby(["subject_ID", "model_name"])["score"].mean().reset_index()
-
+    if plot_single_subjects:
+        sns.pointplot(
+            data=df_long,
+            x="model_name",
+            y="score",
+            hue="subject_ID",
+            order=order,
+            palette=sns.color_palette("hls", n_colors=len(SUBJECT_IDS)),
+            markers="o",
+            markersize=7,
+            markeredgewidth=0,
+            errorbar=None,
+            dodge=0.3,
+            linestyle="none",
+            legend=False,
+            alpha=0.8,
+            ax=ax,
+        )
     sns.pointplot(
         data=subj_avg,
         x="model_name",
@@ -157,7 +201,7 @@ def plot_main_feature_interactions(
     outlier_threshold=-0.3,
     models="all",
     colors=["lightgreen", "grey", "mediumslateblue"],
-    plot_single_subject=True,
+    plot_single_subjects=True,
     print_stats=True,
     ax=None,
 ):
@@ -175,7 +219,7 @@ def plot_main_feature_interactions(
     df_long = df.stack().reset_index(name="score")
     subj_avg = df_long.groupby(["subject_ID", "model_name"])["score"].mean().reset_index()
     # plot
-    if plot_single_subject:
+    if plot_single_subjects:
         sns.pointplot(
             data=df_long,
             x="model_name",
@@ -208,9 +252,6 @@ def plot_main_feature_interactions(
         alpha=1,
         ax=ax,
     )
-    # Rotate the x-axis labels for better readability
-    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
-    ax.set_ylim(0.05, 0.1)
     if print_stats:
         stats_df = _main_feature_interaction_stats(subj_avg)
         print(stats_df)
