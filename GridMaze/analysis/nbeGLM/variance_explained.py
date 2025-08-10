@@ -183,7 +183,11 @@ def group_ttest(g):
 
 
 def plot_variance_explained(
-    cpd_df, features=["distance_to_goal", "place_direction", "egocentric_action_action"], print_stats=True, ax=None
+    cpd_df,
+    features=["distance_to_goal", "place_direction", "egocentric_action_action"],
+    print_stats=True,
+    plot_single_subject=False,
+    ax=None,
 ):
     """ """
     # set up fig
@@ -196,32 +200,38 @@ def plot_variance_explained(
 
     # process data
     df = cpd_df.copy()
-    if features is not None:
+    if features != "all":
         df = df[features]
+        order = features
+    else:
+        order = None
     long_df = df.stack().reset_index(name="score").rename(columns={"level_2": "feature"})
     subject_av = long_df.groupby(["subject_ID", "feature"])["score"].mean().reset_index()
     colors = sns.color_palette("hls", n_colors=len(SUBJECT_IDS))
-    sns.pointplot(
-        data=long_df,
-        x="feature",
-        y="score",
-        hue="subject_ID",
-        palette=colors,
-        markers="o",
-        markersize=7,
-        markeredgewidth=0,
-        errorbar=None,
-        dodge=0.1,
-        linestyle="none",
-        legend=False,
-        alpha=0.5,
-        ax=ax,
-    )
+    if plot_single_subject:
+        sns.pointplot(
+            data=long_df,
+            x="feature",
+            y="score",
+            hue="subject_ID",
+            order=order,
+            palette=colors,
+            markers="o",
+            markersize=7,
+            markeredgewidth=0,
+            errorbar=None,
+            dodge=0.1,
+            linestyle="none",
+            legend=False,
+            alpha=0.5,
+            ax=ax,
+        )
     sns.pointplot(
         data=subject_av,
         x="feature",
         y="score",
         marker="_",
+        order=order,
         color="k",
         markersize=15,
         markeredgewidth=3,

@@ -1,10 +1,9 @@
 """ """
 
 # %% Imports
-from pyexpat import model
+import json
 import numpy as np
 import pandas as pd
-from regex import P
 import seaborn as sns
 import matplotlib.pyplot as plt
 from scipy.stats import ttest_rel
@@ -12,6 +11,10 @@ from statsmodels.stats.multitest import multipletests
 
 
 # %% Globs
+from GridMaze.paths import EXPERIMENT_INFO_PATH
+
+with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
+    SUBJECT_IDS = json.load(input_file)
 
 
 # %% Performance validation
@@ -113,7 +116,7 @@ def plot_interaction_validation(
     df = df[df.columns[df.columns.isin(models)]]
     df_long = df.stack().reset_index(name="score")
     subj_avg = df_long.groupby(["subject_ID", "model_name"])["score"].mean().reset_index()
-    # plot
+
     sns.pointplot(
         data=subj_avg,
         x="model_name",
@@ -144,6 +147,89 @@ def _interaction_validation_stats(subj_avg):
     nonlin_model = [m for m in model_names if "nonlinear" in m][0]
     t_stat, p_val = ttest_rel(_df[lin_model], _df[nonlin_model])
     return t_stat, p_val, (lin_model, nonlin_model)
+
+
+# %% main variable interactions
+
+
+def plot_main_feature_interactions(
+    results_df,
+    outlier_threshold=-0.3,
+    models="all",
+    colors=["lightgreen", "grey", "mediumslateblue"],
+    plot_single_subject=True,
+    print_stats=True,
+    ax=None,
+):
+    if ax is None:
+        f, ax = plt.subplots(figsize=(1.5, 3))
+    ax = _init_fig(ax=ax)
+    # process data
+    df = _average_over_folds(results_df, outlier_threshold=outlier_threshold)
+    # filter for input features and model types
+    if models != "all":
+        df = df[df.columns[df.columns.isin(models)]]
+        order = models
+    else:
+        order = None
+    df_long = df.stack().reset_index(name="score")
+    subj_avg = df_long.groupby(["subject_ID", "model_name"])["score"].mean().reset_index()
+    # plot
+    if plot_single_subject:
+        sns.pointplot(
+            data=df_long,
+            x="model_name",
+            y="score",
+            hue="subject_ID",
+            order=order,
+            palette=sns.color_palette("hls", n_colors=len(SUBJECT_IDS)),
+            markers="o",
+            markersize=7,
+            markeredgewidth=0,
+            errorbar=None,
+            dodge=0.3,
+            linestyle="none",
+            legend=False,
+            alpha=0.8,
+            ax=ax,
+        )
+    # plot
+    sns.pointplot(
+        data=subj_avg,
+        x="model_name",
+        y="score",
+        hue="model_name",
+        marker="_",
+        markersize=10,
+        markeredgewidth=3,
+        errorbar="se",
+        palette=colors,
+        linestyle="none",
+        alpha=1,
+        ax=ax,
+    )
+    # Rotate the x-axis labels for better readability
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+    ax.set_ylim(0.05, 0.1)
+    if print_stats:
+        stats_df = _main_feature_interaction_stats(subj_avg)
+        print(stats_df)
+
+
+def _main_feature_interaction_stats(subj_avg):
+    """just do all pairwise model comparisons"""
+    _models = subj_avg.model_name.unique()
+    # get all unique pairs of models
+    pairwise = [(m1, m2) for i, m1 in enumerate(_models) for m2 in _models[i + 1 :]]
+    stats = []
+    for m1, m2 in pairwise:
+        t_stat, p_val = ttest_rel(subj_avg[subj_avg.model_name == m1].score, subj_avg[subj_avg.model_name == m2].score)
+        stats.append({"model_1": m1, "model_2": m2, "t_stat": t_stat, "p_val": p_val})
+
+    stats_df = pd.DataFrame(stats)
+    # account for muliple comparisons
+    stats_df["p_val_corr"] = multipletests(stats_df.p_val, method="fdr_bh")[1]
+    return stats_df
 
 
 # %% Utils
