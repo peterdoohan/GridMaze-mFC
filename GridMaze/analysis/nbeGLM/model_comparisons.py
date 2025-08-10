@@ -1,8 +1,10 @@
 """ """
 
 # %% Imports
+from pyexpat import model
 import numpy as np
 import pandas as pd
+from regex import P
 import seaborn as sns
 import matplotlib.pyplot as plt
 from scipy.stats import ttest_rel
@@ -96,6 +98,8 @@ def plot_interaction_validation(
     results_df,
     outlier_threshold=-0.3,
     models=["place", "direction", "place_direction_linear", "place_direction_nonlinear"],
+    colors=["grey", "grey", "lightgreen", "mediumslateblue"],
+    print_stats=True,
     ax=None,
 ):
     """ """
@@ -114,14 +118,32 @@ def plot_interaction_validation(
         data=subj_avg,
         x="model_name",
         y="score",
+        hue="model_name",
         marker="_",
         markersize=10,
         markeredgewidth=3,
         errorbar="se",
         linestyle="none",
+        palette=colors,
         alpha=1,
         ax=ax,
     )
+    if print_stats:
+        t_stat, p_val, models = _interaction_validation_stats(subj_avg)
+        print(f"{models[0]} vs {models[1]}")
+        print(f"t_stat: {t_stat}, p_val: {p_val}")
+
+
+def _interaction_validation_stats(subj_avg):
+    """
+    compare linear and nonlinear interaction cases
+    """
+    _df = subj_avg.set_index(["subject_ID", "model_name"]).unstack(level=1).score
+    model_names = _df.columns
+    lin_model = [m for m in model_names if "linear" in m][0]
+    nonlin_model = [m for m in model_names if "nonlinear" in m][0]
+    t_stat, p_val = ttest_rel(_df[lin_model], _df[nonlin_model])
+    return t_stat, p_val, (lin_model, nonlin_model)
 
 
 # %% Utils
