@@ -195,7 +195,9 @@ def plot_variance_explained(
     ax.set_ylabel("unique variance explained (%)")
 
     # process data
-    df = cpd_df[features]
+    df = cpd_df.copy()
+    if features is not None:
+        df = df[features]
     long_df = df.stack().reset_index(name="score").rename(columns={"level_2": "feature"})
     subject_av = long_df.groupby(["subject_ID", "feature"])["score"].mean().reset_index()
     colors = sns.color_palette("hls", n_colors=len(SUBJECT_IDS))
