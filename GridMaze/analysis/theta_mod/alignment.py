@@ -13,6 +13,7 @@ from matplotlib import pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from joblib import Parallel, delayed
 from scipy.ndimage import gaussian_filter1d
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.theta_mod import utils as tmu
@@ -97,7 +98,7 @@ def plot_trajectory_theta_angles(
 # %% Run on all sessions
 
 
-def get_theta_alignment_summary_df(smooth_SD=2, vector_window=2, verbose=True, save=False):
+def get_theta_alignment_summary_df(smooth_SD=2.5, vector_window=2.5, n_pcs=5, verbose=True, save=False):
     """ """
     save_path = RESULTS_DIR / f"theta_alignment_summary.parquet"
     if not save and save_path.exists():
@@ -128,7 +129,10 @@ def get_theta_alignment_summary_df(smooth_SD=2, vector_window=2, verbose=True, s
                     print(session.name)
                 try:
                     alignment_df = get_session_alignment_angles(
-                        session, smooth_SD=smooth_SD, vector_window=vector_window
+                        session,
+                        smooth_SD=smooth_SD,
+                        vector_window=vector_window,
+                        n_pcs=n_pcs,
                     )
                     results.append(alignment_df)
                 except Exception as e:
@@ -152,11 +156,11 @@ def get_theta_alignment_summary_df(smooth_SD=2, vector_window=2, verbose=True, s
 
 def get_session_alignment_angles(
     session,
-    smooth_SD=2,  # s
+    smooth_SD=2.5,  # s
     include_multi_unit=True,
     sqrt_spikes=False,
     zscore_spikes=False,
-    vector_window=2,  # s
+    vector_window=2.5,  # s
     n_pcs=5,
     frac_var_exp=None,
 ):
