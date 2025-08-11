@@ -39,11 +39,27 @@ def plot_latent_place_direction_tuning(latent_tuning_df, simple_maze, axes=None)
         mp.plot_directed_heatmap(
             simple_maze,
             _df[i],
-            # colormap="bwr",
-            # allow_negative=True,
-            colormap="viridis",
+            colormap="PuOr_r",
+            allow_negative=True,
             ax=ax,
         )
+
+
+def plot_latent_distance_to_goal_tuning(latent_tuning_df, axes=None):
+    """ """
+    _df = latent_tuning_df.T
+    distances = _df.index.values.astype(float)
+    n = _df.shape[1]
+    # set up fig
+    if axes is None:
+        f, axes = plt.subplots(2, n // 2, figsize=(n / 1.5, 3), sharex=True)
+    for ax in axes.flat:
+        ax.spines[["right", "top"]].set_visible(False)
+    axes[-1, 0].set_xlabel("Distance to goal (m)")
+    axes[-1, 0].set_ylabel("activation")
+    # plot tuning
+    for i, ax in enumerate(axes.flat):
+        ax.plot(distances, _df[i], color="purple", lw=2)
 
 
 # %% load latent unit tuning from saved model
