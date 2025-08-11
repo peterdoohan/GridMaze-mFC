@@ -5,11 +5,15 @@ OR do we need to know all theta phases to decode the goal?
 """
 
 # %% Imports
+from re import X
 import pandas as pd
 import numpy as np
 import networkx as nx
 
-from GridMaze.maze import representations as mr
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+
+from GridMaze.analysis.goal_coding import decoding_utils as du
 from GridMaze.analysis.core import get_clusters as gc
 from GridMaze.analysis.core import downsample as ds
 from GridMaze.analysis.core import convert
@@ -26,13 +30,106 @@ def get_session_theta_phase_goal_decoding():
     return
 
 
-def get_session_theta_mod_goal_decoding():
+def get_session_theta_mod_goal_decoding(
+    session, event="cue", resolution=0.5, window=(-10, 10), include_multi_units=True, zscore=True
+):
     """
     Within session compare goal decoding from feature = n_neurons OR
     features = n_neurons x n_theta_phases. Need xval per fold opt regularisation
     bc of different number of features
     """
-    return
+    input_data = get_input_data(session, event, resolution, window, include_multi_units)
+    timepoints = sorted(input_data.event_aligned_time[event].unique())
+    folds_df = du.get_folds_df(session, goal_stratified=True, return_unique_IDs=True, n_test_trials=None)
+    results = []
+    for fold in folds_df.columns.levels[0].unique():
+        print(fold)
+        fold_df = folds_df[fold]
+        test_trials = [t for t in fold_df.test.values.flatten() if isinstance(t, str)]
+        train_trials = [t for t in fold_df.train.values.flatten() if isinstance(t, str)]
+        train_df = input_data[input_data.trial_unique_ID.isin(train_trials)]
+        test_df = input_data[input_data.trial_unique_ID.isin(test_trials)]
+        for t in timepoints:
+            _train_df = train_df[train_df.event_aligned_time[event] == t]
+            _test_df = test_df[test_df.event_aligned_time[event] == t]
+            if _train_df.empty or _test_df.empty:
+                continue  # rare cases when no trials for that timepoint (eg, end of session trial)
+            y_train, y_test = _train_df.goal.values, _test_df.goal.values
+            # all spikes data (collect spikes across theta phases), shape = n_samples, n_neurons
+            Xall_train, Xall_test = [df.spike_count.T.groupby(level=0).sum().T.values for df in [_train_df, _test_df]]
+            # theta spikes data (shape = n_samples, n_neurons, n_theta_phases)
+            Xtheta_train, Xtheta_test = [df.spike_count.values for df in [_train_df, _test_df]]
+            # zscore features
+            if zscore:
+                norm_Xs = []
+                for X_train, X_test in zip([Xall_train, Xtheta_train], [Xall_test, Xtheta_test]):
+                    scaler = StandardScaler()  # mean=0, std=1 per column
+                    scaler.fit(X_train)  # learn stats on train
+                    norm_Xs.append((scaler.transform(X_train), scaler.transform(X_test)))
+                (Xall_train, Xall_test), (Xtheta_train, Xtheta_test) = norm_Xs
+            # get optimal regularisation under each condition
+            alpha_all, alpha_theta = _get_opt_regularisation(train_df, fold_df, zscore=zscore)
+            # predict goal from feature sets: Xall, Xtheta
+            print(Xall_train.shape, Xtheta_train.shape, y_train.shape)
+            print(Xall_test.shape, Xtheta_test.shape, y_test.shape)
+            for (X_train, X_test), alpha, label in zip(
+                [(Xall_train, Xall_test), (Xtheta_train, Xtheta_test)], [alpha_all, alpha_theta], ["all", "theta"]
+            ):
+                model = LogisticRegression(max_iter=10000, random_state=0, class_weight="balanced", C=alpha)
+                model.fit(X_train, y_train)
+                y_pred = model.predict(X_test)
+                acc = np.mean(y_pred == y_test)
+                results.append(
+                    pd.DataFrame(
+                        {"fold": fold, "timepoint": t, "feature_set": label, "alpha": alpha, "accuracy": acc}, index=[0]
+                    )
+                )
+    results_df = pd.concat(results, axis=0)
+    return results_df
+
+
+def _get_opt_regularisation(train_df, fold_df, zscore=True):
+    """ """
+    _fold_df = fold_df["train"]
+    _folds = _fold_df.columns
+    reg_dfs = []
+    for val_fold in _folds:
+        print(val_fold)
+        test_trials = _fold_df[val_fold].dropna().values
+        val_trials = _fold_df[[f for f in _folds if f != val_fold]].stack().dropna().values
+        test_df = train_df[train_df.trial_unique_ID.isin(test_trials)]
+        val_df = train_df[train_df.trial_unique_ID.isin(val_trials)]
+        y_val, y_test = val_df.goal.values, test_df.goal.values
+        Xall_val, Xall_test = [df.spike_count.T.groupby(level=0).sum().T.values for df in [val_df, test_df]]
+        Xtheta_val, Xtheta_test = [df.spike_count.values for df in [val_df, test_df]]
+        # search for optimal regularisation for Xall and Xtheta
+        for (X_train, X_test), label in zip([(Xall_val, Xall_test), (Xtheta_val, Xtheta_test)], ["all", "theta"]):
+            # zscore features
+            if zscore:
+                scaler = StandardScaler()  # mean=0, std=1 per column
+                scaler.fit(X_train)  # learn stats on train
+                X_train, X_test = scaler.transform(X_train), scaler.transform(X_test)
+            search_df = _search_regularisations(X_train, X_test, y_val, y_test)
+            search_df["fold"] = val_fold
+            search_df["feature_set"] = label
+            reg_dfs.append(search_df)
+    reg_df = pd.concat(reg_dfs, axis=0)
+    # get alpha value with best average accuracy across validation splits of training data
+    best_regs = reg_df.groupby(["feature_set", "alpha"]).accuracy.mean().unstack(level=0).idxmax()
+    return best_regs.values  # opt all, opt theta
+
+
+def _search_regularisations(X_train, X_test, y_train, y_test, reg_range=np.logspace(-4, 4, 10)):
+    """ """
+    search_res = []
+    for alpha in reg_range:
+        model = LogisticRegression(max_iter=10_000, random_state=0, class_weight="balanced", C=alpha)
+        model.fit(X_train, y_train)
+        y_predict = model.predict(X_test)
+        acc = np.mean(y_predict == y_test)
+        search_res.append({"alpha": alpha, "accuracy": acc})
+
+    return pd.DataFrame(search_res)
 
 
 # %% Functions
@@ -102,3 +199,64 @@ def get_input_data(
     nav_info_df.columns = pd.MultiIndex.from_tuples([(*c, "") for c in nav_info_df.columns])
     event_aligned_nav_rates_df = pd.concat([nav_info_df, spike_count_df], axis=1)
     return event_aligned_nav_rates_df
+
+
+# %% version from analysis/goal_decoding
+
+
+def get_event_aligned_goal_decoding(
+    session,
+    event="cue",
+    resolution=0.5,
+    window=(-10, 10),
+    goal_stratified_validation=True,
+    n_test_trials=None,
+    include_multi_units=True,
+    whiten_features=True,
+):
+    """
+    Chance is always 1 / n_goals.
+    """
+    input_data = du.get_event_aligned_input_data(session, event, resolution, window, include_multi_units)
+    timepoints = sorted(input_data.event_aligned_time[event].unique())
+    folds_df = du.get_folds_df(session, goal_stratified_validation, return_unique_IDs=True, n_test_trials=n_test_trials)
+    results_dfs = []
+    for fold in folds_df.columns.levels[0].unique():
+        fold_df = folds_df[fold]
+        test_trials = [t for t in fold_df.test.values.flatten() if isinstance(t, str)]
+        train_trials = [t for t in fold_df.train.values.flatten() if isinstance(t, str)]
+        train_df = input_data[input_data.trial_unique_ID.isin(train_trials)]
+        test_df = input_data[input_data.trial_unique_ID.isin(test_trials)]
+        decoder = LogisticRegression(penalty=None, max_iter=10000, random_state=0, class_weight="balanced")
+        for t in timepoints:
+            _train_df = train_df[train_df.event_aligned_time[event] == t]
+            _test_df = test_df[test_df.event_aligned_time[event] == t]
+            if _train_df.empty or _test_df.empty:
+                continue  # rare cases when no trials for that timepoint (eg, end of session trial)
+            X_train, y_train = _train_df.spike_count.values, _train_df.goal.values
+            X_test, y_test = _test_df.spike_count.values, _test_df.goal.values
+            if whiten_features:  # zscore features
+                scaler = StandardScaler()  # mean=0, std=1 per column
+                scaler.fit(X_train)  # learn stats on train
+                X_train = scaler.transform(X_train)
+                X_test = scaler.transform(X_test)
+            # fit model
+            decoder.fit(X_train, y_train)
+            # out_df
+            Gprobs = decoder.predict_proba(X_test)
+            n_samples, n_goals = Gprobs.shape
+            goals = list(decoder.classes_)
+            df = pd.DataFrame(
+                {
+                    "timepoint": np.repeat(t, n_samples * n_goals),
+                    "true_goal": np.repeat(y_test, n_goals),
+                    "trial_unique_ID": np.repeat(_test_df.trial_unique_ID.values, n_goals),
+                    "predicted_goal": np.tile(goals, n_samples),
+                    "predicted_goal_prob": Gprobs.ravel(),
+                }
+            )
+            df["fold"] = fold
+            results_dfs.append(df)
+    results_df = pd.concat(results_dfs, axis=0)
+    results_df.reset_index(drop=True, inplace=True)
+    return results_df
