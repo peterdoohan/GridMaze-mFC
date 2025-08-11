@@ -25,14 +25,14 @@ FRAME_RATE = 60
 # %%
 
 
-def get_session_theta_phase_goal_decoding():
-    """ """
-
-    return
-
-
 def get_session_theta_mod_goal_decoding(
-    session, event="cue", resolution=0.5, window=(-3, 3), include_multi_units=True, zscore=True
+    session,
+    event="cue",
+    resolution=0.5,
+    window=(-3, 3),
+    include_multi_units=True,
+    zscore=True,
+    max_jobs=-1,
 ):
     """
     Within session compare goal decoding from feature = n_neurons OR
@@ -50,15 +50,22 @@ def get_session_theta_mod_goal_decoding(
         train_trials = [t for t in fold_df.train.values.flatten() if isinstance(t, str)]
         train_df = input_data[input_data.trial_unique_ID.isin(train_trials)]
         test_df = input_data[input_data.trial_unique_ID.isin(test_trials)]
-        fold_results = Parallel(n_jobs=-1, verbose=10)(
-            delayed(_process_timepoint)(train_df, test_df, event, t, zscore, fold_df, fold) for t in timepoints
-        )
-    return fold_results
-    results_df = pd.concat(results, axis=0)
+        if max_jobs is not None:
+            fold_results = Parallel(n_jobs=max_jobs, verbose=10)(
+                delayed(_process_theta_mod_timepoint)(train_df, test_df, event, t, zscore, fold_df, fold)
+                for t in timepoints
+            )
+        else:
+            fold_results = [
+                _process_theta_mod_timepoint(train_df, test_df, event, t, zscore, fold_df, fold) for t in timepoints
+            ]
+        results.append(fold_results)
+    # unravel results into a list of dicts and transform to df
+    results_df = pd.DataFrame([d for level1 in results for level2 in level1 for d in level2 if d is not None])
     return results_df
 
 
-def _process_timepoint(train_df, test_df, event, t, zscore, fold_df, fold):
+def _process_theta_mod_timepoint(train_df, test_df, event, t, zscore, fold_df, fold):
     """pull out of session level fn for parallelisation"""
     _train_df = train_df[train_df.event_aligned_time[event] == t]
     _test_df = test_df[test_df.event_aligned_time[event] == t]
@@ -131,7 +138,6 @@ def _search_regularisations(X_train, X_test, y_train, y_test, reg_range=np.logsp
         y_predict = model.predict(X_test)
         acc = np.mean(y_predict == y_test)
         search_res.append({"alpha": alpha, "accuracy": acc})
-
     return pd.DataFrame(search_res)
 
 
