@@ -64,6 +64,31 @@ def get_model_set_params(seed=0, subfolder="variance_explained_full"):
             (["speed"], {}, "remove_speed"),
             (["acceleration"], {}, "remove_acceleration"),
             (["head_direction"], {}, "remove_head_direction"),
+            ### remove distance + other variables ###
+            (["distance_to_goal", "place_direction"], {}, "remove_distance_to_goal_place_direction"),
+            (["distance_to_goal", "egocentric_action"], {}, "remove_distance_to_goal_egocentric_action_all"),
+            (
+                ["distance_to_goal"],
+                {"egocentric_action": {"components": ["action", "tower_bridge"]}},
+                "remove_distance_to_goal_egocentric_action_free_forced",
+            ),
+            (
+                ["distance_to_goal"],
+                {
+                    "egocentric_action": {"components": ["free_forced", "tower_bridge"]},
+                },
+                "remove_distance_to_goal_egocentric_action_action",
+            ),
+            (["distance_to_goal", "goal"], {}, "remove_goal"),
+            (["distance_to_goal", "egocentric_angle_to_goal"], {}, "remove_distance_to_goal_egocentric_angle_to_goal"),
+            (
+                ["distance_to_goal", "allocentric_angle_to_goal"],
+                {},
+                "remove_distance_to_goal_allocentric_angle_to_goal",
+            ),
+            (["distance_to_goal", "speed"], {}, "remove_distance_to_goal_speed"),
+            (["distance_to_goal", "acceleration"], {}, "remove_distance_to_goal_acceleration"),
+            (["distance_to_goal", "head_direction"], {}, "remove_distance_to_goal_head_direction"),
         ]:
             # update defualt input data kwargs
             input_data_kwargs = deepcopy(ju.DEFAULT_INPUT_DATA_KWARGS)
