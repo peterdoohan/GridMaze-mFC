@@ -5,10 +5,9 @@ OR do we need to know all theta phases to decode the goal?
 """
 
 # %% Imports
-from re import X
 import pandas as pd
 import numpy as np
-import networkx as nx
+from joblib import Parallel, delayed
 
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
@@ -27,11 +26,13 @@ FRAME_RATE = 60
 
 
 def get_session_theta_phase_goal_decoding():
+    """ """
+
     return
 
 
 def get_session_theta_mod_goal_decoding(
-    session, event="cue", resolution=0.5, window=(-10, 10), include_multi_units=True, zscore=True
+    session, event="cue", resolution=0.5, window=(-3, 3), include_multi_units=True, zscore=True
 ):
     """
     Within session compare goal decoding from feature = n_neurons OR
@@ -49,43 +50,46 @@ def get_session_theta_mod_goal_decoding(
         train_trials = [t for t in fold_df.train.values.flatten() if isinstance(t, str)]
         train_df = input_data[input_data.trial_unique_ID.isin(train_trials)]
         test_df = input_data[input_data.trial_unique_ID.isin(test_trials)]
-        for t in timepoints:
-            _train_df = train_df[train_df.event_aligned_time[event] == t]
-            _test_df = test_df[test_df.event_aligned_time[event] == t]
-            if _train_df.empty or _test_df.empty:
-                continue  # rare cases when no trials for that timepoint (eg, end of session trial)
-            y_train, y_test = _train_df.goal.values, _test_df.goal.values
-            # all spikes data (collect spikes across theta phases), shape = n_samples, n_neurons
-            Xall_train, Xall_test = [df.spike_count.T.groupby(level=0).sum().T.values for df in [_train_df, _test_df]]
-            # theta spikes data (shape = n_samples, n_neurons, n_theta_phases)
-            Xtheta_train, Xtheta_test = [df.spike_count.values for df in [_train_df, _test_df]]
-            # zscore features
-            if zscore:
-                norm_Xs = []
-                for X_train, X_test in zip([Xall_train, Xtheta_train], [Xall_test, Xtheta_test]):
-                    scaler = StandardScaler()  # mean=0, std=1 per column
-                    scaler.fit(X_train)  # learn stats on train
-                    norm_Xs.append((scaler.transform(X_train), scaler.transform(X_test)))
-                (Xall_train, Xall_test), (Xtheta_train, Xtheta_test) = norm_Xs
-            # get optimal regularisation under each condition
-            alpha_all, alpha_theta = _get_opt_regularisation(train_df, fold_df, zscore=zscore)
-            # predict goal from feature sets: Xall, Xtheta
-            print(Xall_train.shape, Xtheta_train.shape, y_train.shape)
-            print(Xall_test.shape, Xtheta_test.shape, y_test.shape)
-            for (X_train, X_test), alpha, label in zip(
-                [(Xall_train, Xall_test), (Xtheta_train, Xtheta_test)], [alpha_all, alpha_theta], ["all", "theta"]
-            ):
-                model = LogisticRegression(max_iter=10000, random_state=0, class_weight="balanced", C=alpha)
-                model.fit(X_train, y_train)
-                y_pred = model.predict(X_test)
-                acc = np.mean(y_pred == y_test)
-                results.append(
-                    pd.DataFrame(
-                        {"fold": fold, "timepoint": t, "feature_set": label, "alpha": alpha, "accuracy": acc}, index=[0]
-                    )
-                )
+        fold_results = Parallel(n_jobs=-1, verbose=10)(
+            delayed(_process_timepoint)(train_df, test_df, event, t, zscore, fold_df, fold) for t in timepoints
+        )
+    return fold_results
     results_df = pd.concat(results, axis=0)
     return results_df
+
+
+def _process_timepoint(train_df, test_df, event, t, zscore, fold_df, fold):
+    """pull out of session level fn for parallelisation"""
+    _train_df = train_df[train_df.event_aligned_time[event] == t]
+    _test_df = test_df[test_df.event_aligned_time[event] == t]
+    if _train_df.empty or _test_df.empty:
+        return  # rare cases when no trials for that timepoint (eg, end of session trial)
+    y_train, y_test = _train_df.goal.values, _test_df.goal.values
+    # all spikes data (collect spikes across theta phases), shape = n_samples, n_neurons
+    Xall_train, Xall_test = [df.spike_count.T.groupby(level=0).sum().T.values for df in [_train_df, _test_df]]
+    # theta spikes data (shape = n_samples, n_neurons, n_theta_phases)
+    Xtheta_train, Xtheta_test = [df.spike_count.values for df in [_train_df, _test_df]]
+    # zscore features
+    if zscore:
+        norm_Xs = []
+        for X_train, X_test in zip([Xall_train, Xtheta_train], [Xall_test, Xtheta_test]):
+            scaler = StandardScaler()  # mean=0, std=1 per column
+            scaler.fit(X_train)  # learn stats on train
+            norm_Xs.append((scaler.transform(X_train), scaler.transform(X_test)))
+        (Xall_train, Xall_test), (Xtheta_train, Xtheta_test) = norm_Xs
+    # get optimal regularisation under each condition
+    alpha_all, alpha_theta = _get_opt_regularisation(train_df, fold_df, zscore=zscore)
+    # predict goal from feature sets: Xall, Xtheta
+    timepoint_results = []
+    for (X_train, X_test), alpha, label in zip(
+        [(Xall_train, Xall_test), (Xtheta_train, Xtheta_test)], [alpha_all, alpha_theta], ["all", "theta"]
+    ):
+        model = LogisticRegression(max_iter=10000, random_state=0, class_weight="balanced", C=alpha)
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_test)
+        acc = np.mean(y_pred == y_test)
+        timepoint_results.append({"fold": fold, "timepoint": t, "feature_set": label, "alpha": alpha, "accuracy": acc})
+    return timepoint_results
 
 
 def _get_opt_regularisation(train_df, fold_df, zscore=True):
@@ -94,7 +98,6 @@ def _get_opt_regularisation(train_df, fold_df, zscore=True):
     _folds = _fold_df.columns
     reg_dfs = []
     for val_fold in _folds:
-        print(val_fold)
         test_trials = _fold_df[val_fold].dropna().values
         val_trials = _fold_df[[f for f in _folds if f != val_fold]].stack().dropna().values
         test_df = train_df[train_df.trial_unique_ID.isin(test_trials)]
