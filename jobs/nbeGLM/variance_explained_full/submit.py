@@ -79,7 +79,7 @@ def get_model_set_params(seed=0, subfolder="variance_explained_full"):
                 },
                 "remove_distance_to_goal_egocentric_action_action",
             ),
-            (["distance_to_goal", "goal"], {}, "remove_goal"),
+            (["distance_to_goal", "goal"], {}, "remove_distance_to_goal_goal"),
             (["distance_to_goal", "egocentric_angle_to_goal"], {}, "remove_distance_to_goal_egocentric_angle_to_goal"),
             (
                 ["distance_to_goal", "allocentric_angle_to_goal"],

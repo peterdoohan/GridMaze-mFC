@@ -14,7 +14,7 @@ RESULTS_DIR = RESULTS_PATH / "nbeGLM"
 # %% Functions
 
 
-def submit_jobs(seed=0, subfolder="performance_validation"):
+def submit_jobs(seed=0, subfolder="performance_validation2"):
     model_set_params = get_model_set_params(seed, subfolder)
     model_set_path = RESULTS_DIR / subfolder
     model_set_path.mkdir(parents=True, exist_ok=True)
@@ -29,7 +29,7 @@ def submit_jobs(seed=0, subfolder="performance_validation"):
     return print("all jobs submitted to hpc")
 
 
-def get_model_set_params(seed=0, subfolder="performance_validation", overwrite=False):
+def get_model_set_params(seed=0, subfolder="performance_validation2", overwrite=False):
     """
     generate a list of dicts (.jsons) that define all the models to compare for the nbeGLM validation figure
     """

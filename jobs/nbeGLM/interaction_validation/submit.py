@@ -14,7 +14,7 @@ RESULTS_DIR = RESULTS_PATH / "nbeGLM"
 # %% Functions
 
 
-def submit_jobs(seed=0, subfolder="interaction_validation"):
+def submit_jobs(seed=0, subfolder="interaction_validation2"):
     model_set_params = get_model_set_params(seed, subfolder)
     # save model set params to json
     with open(RESULTS_DIR / subfolder / "model_set_params.json", "w") as f:
@@ -28,7 +28,7 @@ def submit_jobs(seed=0, subfolder="interaction_validation"):
     return print("all jobs submitted to hpc")
 
 
-def get_model_set_params(seed=0, subfolder="interaction_validation", overwrite=False):
+def get_model_set_params(seed=0, subfolder="interaction_validation2", overwrite=False):
     """ """
     model_set_params = []
     for maze_name in ["maze_1", "maze_2", "rooms_maze"]:

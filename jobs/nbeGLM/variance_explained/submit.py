@@ -13,7 +13,7 @@ RESULTS_DIR = RESULTS_PATH / "nbeGLM"
 # %% Functions
 
 
-def submit_jobs(seed=0, subfolder="variance_explained"):
+def submit_jobs(seed=0, subfolder="variance_explained2"):
     model_set_params = get_model_set_params(seed, subfolder)
     # save model set params to json
     with open(RESULTS_DIR / subfolder / "model_set_params.json", "w") as f:
@@ -27,7 +27,7 @@ def submit_jobs(seed=0, subfolder="variance_explained"):
     return print("all jobs submitted to hpc")
 
 
-def get_model_set_params(seed=0, subfolder="variance_explained"):
+def get_model_set_params(seed=0, subfolder="variance_explained2"):
     model_set_params = []
     all_input_groups = ["place_direction", "distance_to_goal", "egocentric_action"]
     for maze_name in ["maze_1", "maze_2", "rooms_maze"]:
@@ -54,12 +54,14 @@ def get_model_set_params(seed=0, subfolder="variance_explained"):
             input_data_kwargs["maze_name"] = maze_name
             input_data_kwargs["input_groups"] = [group for group in all_input_groups if group not in remove_groups]
             input_data_kwargs["input_group_kwargs"] = input_group_kwargs
+            input_data_kwargs["min_spike_count"] = 150  # half defualt bc we are doubling n_folds
             # use defualt model init kwargs
             model_init_kwargs = deepcopy(ju.DEFAULT_MODEL_INIT_KWARGS)
             # use defualt model train kwargs
             model_train_kwargs = deepcopy(ju.DEFAULT_MODEL_TRAIN_KWARGS)
             # use defualt score kwargs
             score_kwargs = deepcopy(ju.DEFAULT_SCORE_KWARGS)
+            score_kwargs["n_folds"] = 10  # double default for more power in t-tests across folds
             model_set_params.append(
                 {
                     "model_name": model_name,
