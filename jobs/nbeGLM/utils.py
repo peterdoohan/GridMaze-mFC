@@ -16,15 +16,15 @@ DEFAULT_INPUT_DATA_KWARGS = {
     "days_on_maze": "late",
     "input_groups": ["place_direction", "distance_to_goal", "egocentric_action"],
     "input_group_kwargs": {},
-    "resolution": 0.1,
+    "resolution": 0.2,
     "max_steps_to_goal": 30,
     "min_spike_count": 300,
-    "moving_only": False,
+    "moving_only": True,
 }
 
 DEFAULT_MODEL_INIT_KWARGS = {
     "Nhid": [100, 50],
-    "Nlat": 20,
+    "Nlat": 15,
     "beta_act": 1e-1,
     "beta_weight": 1e-1,
     "partition": None,
