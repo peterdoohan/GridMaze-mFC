@@ -14,7 +14,7 @@ RESULTS_DIR = RESULTS_PATH / "nbeGLM"
 # %% Functions
 
 
-def submit_jobs(seed=0, subfolder="full_models"):
+def submit_jobs(seed=0, subfolder="full_models2"):
     model_set_params = get_model_set_params(seed, subfolder)
     # save model set params to json
     with open(RESULTS_DIR / subfolder / "model_set_params.json", "w") as f:
@@ -28,7 +28,7 @@ def submit_jobs(seed=0, subfolder="full_models"):
     return print("all jobs submitted to hpc")
 
 
-def get_model_set_params(seed=0, subfolder="full_models"):
+def get_model_set_params(seed=0, subfolder="full_models2"):
     """ """
     model_set_params = []
     input_groups = ["place_direction", "distance_to_goal", "egocentric_action"]
