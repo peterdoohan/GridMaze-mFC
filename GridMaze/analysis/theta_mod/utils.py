@@ -1,16 +1,17 @@
 """
 Wouldn't it be cool if we could measure theta modulation over the abitraty neural representations
 as behaviour unfolds?
+@peterdoohan
 """
 
 # %% Imports
 import numpy as np
 import pandas as pd
-from polars import exclude
 
 from GridMaze.analysis.core import convert
 from GridMaze.analysis.distance_to_goal.population_tuning import _get_session_distance_tuning
 from GridMaze.analysis.place_direction.dimensionality_reduction import get_session_place_direction_tuning
+from GridMaze.analysis.egocentric_action.population_tuning import get_session_egocentric_action_tuning
 
 from sklearn.decomposition import PCA
 from scipy.stats import zscore
@@ -189,6 +190,9 @@ def get_theta_pc_df(
     return df
 
 
+# %% get pc functions
+
+
 def get_pcs(
     session,
     include_multi_unit=True,
@@ -197,7 +201,6 @@ def get_pcs(
     zscore_spikes=False,
     smooth_SD=0.5,
     n_pcs=None,
-    frac_var_exp=0.9,
 ):
     """
     get the PCs that explain x frac_var_exp (default == 0.8) of the variance in the spike counts
@@ -224,15 +227,9 @@ def get_pcs(
     if zscore_spikes:
         spikes = zscore(spikes, axis=0)
     # run PCA
-    pca = PCA(random_state=0)
+    pca = PCA(random_state=0, n_components=n_pcs)
     pca.fit(spikes)
-    # get n_pcs to explain x pct_var
-    if n_pcs is None:
-        n_pcs = np.argmax(np.cumsum(pca.explained_variance_ratio_) >= frac_var_exp)
-    return pca, n_pcs
-
-
-# %% test
+    return pca
 
 
 def get_distance_to_goal_pcs(
@@ -242,7 +239,6 @@ def get_distance_to_goal_pcs(
     max_steps_to_goal=30,
     moving_only=True,
     n_pcs=5,
-    frac_var_exp=None,
 ):
     """ """
     # get distance tuning curves
@@ -256,12 +252,9 @@ def get_distance_to_goal_pcs(
         return_as="tuning_curves",
     )
     # do PCA on tuning curves to get loadings over neurons
-    pca = PCA(random_state=0)
+    pca = PCA(random_state=0, n_components=n_pcs)
     pca.fit(distance_tuning.values.T)  # [samples = distances, features=neurons]
-    # get n_pcs to explain x pct_var
-    if n_pcs is None:
-        n_pcs = np.argmax(np.cumsum(pca.explained_variance_ratio_) >= frac_var_exp)
-    return pca, n_pcs
+    return pca
 
 
 def get_place_direction_pcs(
@@ -270,7 +263,6 @@ def get_place_direction_pcs(
     min_occupancy=0.5,
     max_steps_to_goal=30,
     n_pcs=5,
-    frac_var_exp=None,
 ):
     """ """
     # get place_direction tuning
@@ -288,12 +280,37 @@ def get_place_direction_pcs(
         max_steps_from_goal=max_steps_to_goal,
     )
     # do PCA on tuning curves to get loadings over neurons
-    pca = PCA(random_state=0)
+    pca = PCA(random_state=0, n_components=n_pcs)
     pca.fit(place_direction_tuning.values.T)  # [samples = place_directions, features=neurons]
-    # get n_pcs to explain x pct_var
-    if n_pcs is None:
-        n_pcs = np.argmax(np.cumsum(pca.explained_variance_ratio_) >= frac_var_exp)
-    return pca, n_pcs
+    return pca
+
+
+def get_egocentric_action_pcs(
+    session,
+    include_action_type=True,
+    include_multi_unit=True,
+    window=(-3, 3),
+    n_pcs=5,
+):
+    """ """
+    # get egocentric_action tuning
+    ego_action_tuning = get_session_egocentric_action_tuning(
+        session,
+        actions=["turn_left", "turn_right", "go_forward", "go_back"],
+        include_action_type=include_action_type,
+        min_split_half_corr=None,
+        window=window,
+        include_multi_units=include_multi_unit,
+    )
+    # do PCA on tuning curves to get loadings over neurons
+    pca = PCA(random_state=0, n_components=n_pcs)
+    reshape_tuning = (
+        ego_action_tuning.action_aligned_rates.T.stack(level=[1, 2], future_stack=True)
+        .swaplevel(0, 2, axis=0)
+        .sort_index()  # [samples = timepoints x n_actions x 2 (free, forced), features=neurons]
+    )
+    pca.fit(reshape_tuning.values)
+    return pca
 
 
 # %% other
