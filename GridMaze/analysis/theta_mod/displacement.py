@@ -3,173 +3,198 @@ meausre displacement in time across high-d theta trajectories
 """
 
 # %% Imports
+import json
 import numpy as np
+import pandas as pd
 
 from GridMaze.analysis.core import get_sessions as gs
-from GridMaze.analysis.theta_mod import utils
-from sklearn.metrics import mean_squared_error
-from scipy.ndimage import gaussian_filter1d
+from GridMaze.analysis.theta_mod import utils as tmu
 
 # %% Global Variables
+from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
+
+RESULTS_DIR = RESULTS_PATH / "theta_mod" / "trajectory_displacement"
+
+with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
+    SUBJECT_IDS = json.load(input_file)
+
+with open(EXPERIMENT_INFO_PATH / "maze_day2date.json", "r") as input_file:
+    MAZE_DAY2DATE = json.load(input_file)
+MAZE2LATE_DAYS = {maze: [int(d) for d in list(MAZE_DAY2DATE[maze].keys())[-7:]] for maze in MAZE_DAY2DATE.keys()}
+
+
 FRAME_RATE = 60
-# %% Functions
+# %% aggregate data over sessions function
+
+
+def get_theta_alignment_summary_df(
+    smooth_SD=2.5, vector_window=2.5, n_pcs=5, pcs_from="all_spikes", verbose=True, save=False
+):
+    """ """
+    save_path = RESULTS_DIR / f"theta_alignment_summary_{pcs_from}.parquet"
+    if not save and save_path.exists():
+        if verbose:
+            print(f"Loading existing results from {save_path}")
+        return pd.read_parquet(save_path)
+    results = []
+    failed_sessions = []
+    for subject_ID in SUBJECT_IDS:
+        for maze in MAZE_DAY2DATE.keys():
+            # loop over subjects and mazes to not load too much data at once
+            if verbose:
+                print(f"Loading data: {subject_ID}, {maze}")
+            sessions = gs.get_maze_sessions(
+                subject_IDs=[subject_ID],
+                maze_names=[maze],
+                days_on_maze="late",
+                with_data=[
+                    "navigation_df",
+                    "navigation_spike_counts_df",
+                    "navigation_theta_spike_counts_df",
+                    "cluster_metrics",
+                    "navigation_spike_rates_df",  # need these for tuning curves when getting PCs
+                    "cluster_place_direction_tuning_metrics",
+                    "cluster_egocentric_action_tuning_metrics",
+                    "cluster_distance_tuning_metrics",
+                ],
+                must_have_data=True,
+            )
+            for session in sessions:
+                if verbose:
+                    print(session.name)
+                try:
+                    alignment_df = get_session_theta_time_displacement(
+                        session,
+                        smooth_SD=smooth_SD,
+                        vector_window=vector_window,
+                        n_pcs=n_pcs,
+                    )
+                    results.append(alignment_df)
+                except Exception as e:
+                    if verbose:
+                        print(f"Failed to process session {session.name}: {e}")
+                    failed_sessions.append(session.name)
+    results_df = pd.concat(results, axis=0).reset_index(drop=True)
+    if save:
+        if verbose:
+            print(f"Saving results to {save_path}")
+        if not save_path.parent.exists():
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+        results_df.to_parquet(save_path)
+    if verbose:
+        print(f"Failed sessions: {failed_sessions}")
+    return results_df
+
+
+# %% main fn
 
 
 def get_session_theta_time_displacement(
     session,
-    smooth_SD=2,  # s
+    smooth_SD=2.5,  # s
     include_multi_unit=True,
     sqrt_spikes=False,
     zscore_spikes=False,
     n_pcs=5,
-    frac_var_exp=None,
+    pcs_from="all_spikes",
     time_shift_range=(-1, 1),
     min_comparison_time=2,  # s
 ):
-    timeshift_frames = (time_shift_range[0] * FRAME_RATE, time_shift_range[1] * FRAME_RATE)
-    timeshifts = np.arange(*timeshift_frames)
-    min_comparison_frames = min_comparison_time * FRAME_RATE
     _kwargs = {
         "include_multi_unit": include_multi_unit,
         "sqrt_spikes": sqrt_spikes,
         "zscore_spikes": zscore_spikes,
         "smooth_SD": smooth_SD,
     }
-    # run PCA on on-task, navigation time data
-    pca, n_pcs = utils.get_pcs(session, n_pcs=n_pcs, frac_var_exp=frac_var_exp, **_kwargs)
+    if pcs_from == "all_spikes":
+        # # run PCA on on-task, navigation time data
+        pca = tmu.get_pcs(session, n_pcs=n_pcs, **_kwargs)
+    elif pcs_from == "distance_to_goal_tuning":
+        # try PCs generated from distance tuning curves
+        pca = tmu.get_distance_to_goal_pcs(session, n_pcs=n_pcs, include_multi_unit=include_multi_unit)
+    elif pcs_from == "place_direction_tuning":
+        # try on PCs generate from place_direction tuning curves
+        pca = tmu.get_place_direction_pcs(session, n_pcs=n_pcs, include_multi_unit=include_multi_unit)
+    elif pcs_from == "egocentric_action_tuning":
+        # try on PCs generated from egocentric_action tuning curves
+        pca = tmu.get_egocentric_action_pcs(session, include_multi_unit=include_multi_unit, n_pcs=n_pcs)
+    else:
+        raise ValueError("Invalid pcs_from input")
+
     # project spikes split by theta phase onto the same PC basis
-    theta_pc_df = utils.get_theta_pc_df(session, pca=pca, n_pcs=n_pcs, **_kwargs)
+    theta_pc_df = tmu.get_theta_pc_df(session, pca=pca, **_kwargs)
     phases = np.array(sorted([c for c in theta_pc_df.pc.columns.get_level_values(0).unique() if c != "theta_mean"]))
     trials = theta_pc_df.trial.dropna().unique()
-    # loop over trials, optimal displacement
-    mses = np.full((len(trials), len(phases), len(timeshifts)), np.nan)
+
+    # measure displacement (mse) from mean theta traj at diff theta phases across diff timeshifts
+    timeshift_frames = (time_shift_range[0] * FRAME_RATE, time_shift_range[1] * FRAME_RATE)
+    timeshifts = np.arange(*timeshift_frames)
+    min_comparison_frames = min_comparison_time * FRAME_RATE
+    mses = np.full((len(trials), len(phases), len(timeshifts)), np.nan, dtype=float)
     for i, trial in enumerate(trials):
-        print(trial)
         _mask = (theta_pc_df.trial == trial) & (theta_pc_df.trial_phase == "navigation")
         _theta_df = theta_pc_df[_mask]
         if _theta_df.empty:
             continue
-        # get average trajectory
-        mean_traj = _theta_df.pc.theta_mean
-        for j, phase in enumerate(phases):
-            phase_traj = _theta_df.pc[phase]
-            # calculate displacement under differnt time shifts
-            for k, time_shift in enumerate(timeshifts):
-                shift_phase_traj = phase_traj.shift(time_shift)
-                nan_mask = shift_phase_traj.isna().any(axis=1)
-                _mean_traj = mean_traj[~nan_mask].values
-                _shift_traj = shift_phase_traj[~nan_mask].values
-                if not _mean_traj.shape[0] > min_comparison_frames:
-                    continue
-                mses[i, j, k] = mean_squared_error(_mean_traj, _shift_traj)
-    return mses
 
-
-def get_mse(trials, timeshifts, phases, theta_pc_df, min_comparison_frames):
-    mses = np.full((len(trials), len(phases), len(timeshifts)), np.nan)
-    for i, trial in enumerate(trials):
-        print(trial)
-        _mask = (theta_pc_df.trial == trial) & (theta_pc_df.trial_phase == "navigation")
-        _theta_df = theta_pc_df[_mask]
-        if _theta_df.empty:
-            continue
-        # get average trajectory
-        mean_traj = _theta_df.pc.theta_mean
-        for j, phase in enumerate(phases):
-            phase_traj = _theta_df.pc[phase]
-            # calculate displacement under differnt time shifts
-            for k, time_shift in enumerate(timeshifts):
-                shift_phase_traj = phase_traj.shift(time_shift)
-                nan_mask = shift_phase_traj.isna().any(axis=1)
-                _mean_traj = mean_traj[~nan_mask].values
-                _shift_traj = shift_phase_traj[~nan_mask].values
-                if not _mean_traj.shape[0] > min_comparison_frames:
-                    continue
-                mses[i, j, k] = mean_squared_error(_mean_traj, _shift_traj)
-    return
-
-
-def get_mse2(trials, timeshifts, phases, theta_pc_df, min_comparison_frames):
-    # Pre‐allocate output:
-    n_trials = len(trials)
-    n_phases = len(phases)
-    n_shifts = len(timeshifts)
-    mses = np.full((n_trials, n_phases, n_shifts), np.nan)
-
-    for i, trial in enumerate(trials):
-        # extract once per trial
-        df_trial = theta_pc_df[theta_pc_df.trial == trial]
-        if df_trial.empty:
-            continue
-
-        # pre‐compute mean trajectory (T, D)
-        mean_traj = df_trial.pc.theta_mean.values
-        mask_mean = np.isnan(mean_traj).any(axis=1)
+        mean_traj = _theta_df.pc.theta_mean.to_numpy(copy=False)
+        if mean_traj.ndim == 1:
+            mean_traj = mean_traj[:, None]
 
         for j, phase in enumerate(phases):
-            X = df_trial.pc[phase].values  # shape (T, D)
-            mask_X = np.isnan(X).any(axis=1)
+            phase_traj = _theta_df.pc[phase].to_numpy(copy=False)
+            # compute all shifts' MSEs in one shot
+            mses[i, j, :] = mse_over_shifts(phase_traj, mean_traj, timeshifts, min_comparison_frames)
 
-            for k, shift in enumerate(timeshifts):
-                if shift >= 0:
-                    A = mean_traj[: -shift or None]
-                    B = X[shift:]
-                    mask = mask_mean[: -shift or None] | mask_X[shift:]
-                else:
-                    A = mean_traj[-shift:]
-                    B = X[: shift or None]
-                    mask = mask_mean[-shift:] | mask_X[:-shift]
-
-                # only keep rows where neither is masked
-                valid = ~mask
-                if valid.sum() <= min_comparison_frames:
-                    continue
-
-                diff = (A[valid] - B[valid]) ** 2
-                mses[i, j, k] = diff.mean()
-    return mses
+    # return as df cols = x_shift, rows = phase x trial
+    mses_rs = mses.reshape(-1, mses.shape[-1])
+    time_shifts_seconds = timeshifts / FRAME_RATE
+    df = pd.DataFrame(
+        index=pd.MultiIndex.from_product([trials, phases], names=["trial", "phase"]),
+        columns=pd.Index(time_shifts_seconds, name="time_shift"),
+        data=mses_rs,
+    )
+    return df
 
 
-def get_mse3(trials, timeshifts, phases, theta_pc_df, min_comparison_frames):
-    # Pre‐allocate output:
-    n_trials = len(trials)
-    n_phases = len(phases)
-    n_shifts = len(timeshifts)
-    mses = np.full((n_trials, n_phases, n_shifts), np.nan)
+def mse_over_shifts(X, M, timeshifts, min_frames):
+    """
+    X: (n, d) phase trajectory (float, can contain NaN)
+    M: (n, d) mean trajectory aligned to X (same shape)
+    timeshifts: 1D iterable of ints (positive = shift down)
+    returns: 1D array of length len(timeshifts) with MSEs (NaN if < min_frames)
+    """
+    X = np.asarray(X, dtype=float)
+    M = np.asarray(M, dtype=float)
+    if X.ndim == 1:
+        X = X[:, None]
+    if M.ndim == 1:
+        M = M[:, None]
+    n, d = X.shape
+    S = len(timeshifts)
 
-    for i, trial in enumerate(trials):
-        # extract once per trial
-        df_trial = theta_pc_df[theta_pc_df.trial == trial]
-        if df_trial.empty:
-            continue
+    # allocate all shifted versions at once: (S, n, d)
+    shifted = np.full((S, n, d), np.nan, dtype=float)
 
-        # pre‐compute mean trajectory (T, D)
-        mean_traj = df_trial.pc.theta_mean.values
-        mask_mean = np.isnan(mean_traj).any(axis=1)
+    for k, s in enumerate(timeshifts):
+        if s >= 0:
+            if s < n:
+                shifted[k, s:, :] = X[: n - s, :]
+            # else: whole plane stays NaN
+        else:
+            s_abs = -s
+            if s_abs < n:
+                shifted[k, : n - s_abs, :] = X[s_abs:, :]
 
-        for j, phase in enumerate(phases):
-            X = df_trial.pc[phase].values  # shape (T, D)
-            shifted = []
-            for shift in timeshifts:
-                if shift >= 0:
-                    pad = np.full((shift, X.shape[1]), np.nan)
-                    shifted.append(np.vstack([pad, X[:-shift]]))
-                else:
-                    pad = np.full((-shift, X.shape[1]), np.nan)
-                    shifted.append(np.vstack([X[-shift:], pad]))
-            shifted = np.stack(shifted)  # (K, T, D)
+    # rows valid for a given shift: no NaN in any channel after shifting
+    valid = ~np.isnan(shifted).any(axis=2)  # (S, n)
 
-            # Now compute squared errors broadcasted:
-            #   mean_traj      -> shape (1, T, D)
-            #   shifted        -> shape (K, T, D)
-            err2 = (mean_traj[None] - shifted) ** 2  # (K, T, D)
+    # squared diffs, masked where rows invalid for that shift
+    diffs2 = (shifted - M[None, :, :]) ** 2  # (S, n, d)
+    diffs2[~valid, :] = np.nan
 
-            # mask out any row with nan in either
-            mask_mean = np.isnan(mean_traj).any(axis=1)  # (T,)
-            mask_shift = np.isnan(shifted).any(axis=2)  # (K, T)
-            valid = ~(mask_mean[None] | mask_shift)  # (K, T)
-
-    # flatten time+dim:
-    err2[~valid[..., None]] = np.nan
-    mse_all = err2.reshape(len(timeshifts), -1).mean(axis=1)
-    return
+    # require at least min_frames valid rows before averaging
+    counts = valid.sum(axis=1)  # (S,)
+    mse = np.nanmean(diffs2, axis=(1, 2))  # (S,)
+    mse[counts <= min_frames] = np.nan
+    return mse
