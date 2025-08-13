@@ -27,11 +27,17 @@ FRAME_RATE = 60
 # %% aggregate data over sessions function
 
 
-def get_theta_alignment_summary_df(
-    smooth_SD=2.5, vector_window=2.5, n_pcs=5, pcs_from="all_spikes", verbose=True, save=False
+def get_theta_displacement_summary_df(
+    smooth_SD=2.5,
+    time_shift_range=(-1, 1),
+    min_comparison_time=2,
+    n_pcs=5,
+    pcs_from="all_spikes",
+    verbose=True,
+    save=False,
 ):
     """ """
-    save_path = RESULTS_DIR / f"theta_alignment_summary_{pcs_from}.parquet"
+    save_path = RESULTS_DIR / f"theta_displacement_summary_{pcs_from}.parquet"
     if not save and save_path.exists():
         if verbose:
             print(f"Loading existing results from {save_path}")
@@ -66,7 +72,8 @@ def get_theta_alignment_summary_df(
                     alignment_df = get_session_theta_time_displacement(
                         session,
                         smooth_SD=smooth_SD,
-                        vector_window=vector_window,
+                        time_shift_range=time_shift_range,
+                        min_comparison_time=min_comparison_time,
                         n_pcs=n_pcs,
                     )
                     results.append(alignment_df)
@@ -150,10 +157,15 @@ def get_session_theta_time_displacement(
     mses_rs = mses.reshape(-1, mses.shape[-1])
     time_shifts_seconds = timeshifts / FRAME_RATE
     df = pd.DataFrame(
-        index=pd.MultiIndex.from_product([trials, phases], names=["trial", "phase"]),
-        columns=pd.Index(time_shifts_seconds, name="time_shift"),
+        index=pd.MultiIndex.from_product([trials, phases], names=["trial", "theta_phase"]),
+        columns=pd.MultiIndex.from_product([["mse"], time_shifts_seconds]),
         data=mses_rs,
     )
+    # add other info
+    df["subject_ID"] = session.subject_ID
+    df["maze_name"] = session.maze_name
+    df["day_on_maze"] = session.day_on_maze
+    df.reset_index(inplace=True)
     return df
 
 
