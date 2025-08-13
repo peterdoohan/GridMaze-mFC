@@ -81,7 +81,7 @@ def get_population_unique_distance_to_goal_tuning_df():
         min_split_half_corr=None,
     )
     # get clusters only tuned to distance-to-goal
-    single_tuned_clusters = get_single_tuned_clusters("distance_to_goal")
+    single_tuned_clusters = get_single_tuned_clusters("distance_to_goal", maze_names=["maze_1", "maze_2", "rooms_maze"])
     # filter population tuning df
     pop_dist_tuning = population_distance_tuning.set_index("cluster_unique_ID").loc[single_tuned_clusters]
     return pop_dist_tuning
