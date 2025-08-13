@@ -30,9 +30,8 @@ def get_neural_pc_df(
     sqrt_spikes=False,
     zscore_spikes=False,
     smooth_SD=0.5,
-    pc_kwargs={"sqrt_spikes": False, "zscore_spikes": False, "smooth_SD": False, "frac_var_exp": 0.9},
+    pc_kwargs={"sqrt_spikes": False, "zscore_spikes": False, "smooth_SD": False, "n_pcs": 5},
     pca=None,
-    n_pcs=None,
 ):
     """ """
 
@@ -57,10 +56,10 @@ def get_neural_pc_df(
         # convert to n_frames
         spikes = gaussian_filter1d(spikes, sigma=int(smooth_SD * FRAME_RATE), axis=0)
     # get PC subspace for spike projection
-    if pca is None or n_pcs is None:
-        pca, n_pcs = get_pcs(session, include_multi_unit=include_multi_unit, **pc_kwargs)
+    if pca is None:
+        pca = get_pcs(session, include_multi_unit=include_multi_unit, **pc_kwargs)
     # project spikes to PCs
-    spikes_pca = pca.transform(spikes)[:, :n_pcs]
+    spikes_pca = pca.transform(spikes)
     # output as navigation_df-style df
     pca_df = pd.DataFrame(
         index=navigation_df.index,
@@ -78,11 +77,10 @@ def get_theta_peak_trough_df(
     smooth_SD=0.5,
     sqrt_spikes=False,
     zscore_spikes=False,
-    pc_kwargs={"sqrt_spikes": False, "zscore_spikes": False, "smooth_SD": False, "frac_var_exp": 0.75},
+    pc_kwargs={"sqrt_spikes": False, "zscore_spikes": False, "smooth_SD": False, "n_pcs": 5},
     theta_peak_inds=[4, 5, 6, 7],
     theta_trough_inds=[0, 1, 10, 11],
     pca=None,
-    n_pcs=None,
 ):
     """ """
     # load data
@@ -95,8 +93,8 @@ def get_theta_peak_trough_df(
     ]
 
     # get PC subspace for spike projection
-    if pca is None or n_pcs is None:
-        pca, n_pcs = get_pcs(session, include_multi_unit=include_multi_unit, **pc_kwargs)
+    if pca is None:
+        pca = get_pcs(session, include_multi_unit=include_multi_unit, **pc_kwargs)
 
     # separate theta phases into peak and trough
     cols = theta_spikes_df.columns
@@ -121,7 +119,8 @@ def get_theta_peak_trough_df(
         if smooth_SD:
             spikes = gaussian_filter1d(spikes, sigma=int(smooth_SD * FRAME_RATE), axis=0)
         # project theta phase spikes onto PCs
-        spikes_pca = pca.transform(spikes)[:, :n_pcs]
+        spikes_pca = pca.transform(spikes)
+        n_pcs = spikes_pca.shape[1]
         # output as navigation_df-style df
         pca_df = pd.DataFrame(
             index=nav_df.index,
@@ -140,9 +139,8 @@ def get_theta_pc_df(
     smooth_SD=1,
     sqrt_spikes=False,
     zscore_spikes=False,
-    pc_kwargs={"sqrt_spikes": False, "zscore_spikes": False, "smooth_SD": False, "frac_var_exp": 0.9},
+    pc_kwargs={"sqrt_spikes": False, "zscore_spikes": False, "smooth_SD": False, "n_pcs": 5},
     pca=None,
-    n_pcs=None,
 ):
     """ """
     # load data
@@ -155,8 +153,8 @@ def get_theta_pc_df(
     ]
 
     # get PC subspace for spike projection
-    if pca is None or n_pcs is None:
-        pca, n_pcs = get_pcs(session, include_multi_unit=include_multi_unit, **pc_kwargs)
+    if pca is None:
+        pca = get_pcs(session, include_multi_unit=include_multi_unit, **pc_kwargs)
 
     # get sep df for each theta phase (and average across theta phases)
     theta_phases = list(theta_spikes_df.columns.get_level_values(2).unique())
@@ -174,7 +172,8 @@ def get_theta_pc_df(
         if smooth_SD:
             spikes = gaussian_filter1d(spikes, sigma=int(smooth_SD * FRAME_RATE), axis=0)
         # project spikes to PCs
-        spikes_pca = pca.transform(spikes)[:, :n_pcs]
+        spikes_pca = pca.transform(spikes)
+        n_pcs = spikes_pca.shape[1]
         # output as navigation_df-style df
         pca_df = pd.DataFrame(
             index=nav_df.index,
