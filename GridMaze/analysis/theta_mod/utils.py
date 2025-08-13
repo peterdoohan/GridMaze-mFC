@@ -6,18 +6,15 @@ as behaviour unfolds?
 # %% Imports
 import numpy as np
 import pandas as pd
-from matplotlib import pyplot as plt
-from matplotlib.cm import ScalarMappable
-from matplotlib.colors import Normalize, TwoSlopeNorm
-from mpl_toolkits.mplot3d.art3d import Line3DCollection
+from polars import exclude
 
 from GridMaze.analysis.core import convert
+from GridMaze.analysis.distance_to_goal.population_tuning import _get_session_distance_tuning
+from GridMaze.analysis.place_direction.dimensionality_reduction import get_session_place_direction_tuning
 
 from sklearn.decomposition import PCA
 from scipy.stats import zscore
 from scipy.ndimage import gaussian_filter1d
-from sklearn.metrics.pairwise import cosine_similarity
-from scipy.stats import circmean
 
 # %% Global Variables
 FRAME_RATE = 60
@@ -229,6 +226,70 @@ def get_pcs(
     # run PCA
     pca = PCA(random_state=0)
     pca.fit(spikes)
+    # get n_pcs to explain x pct_var
+    if n_pcs is None:
+        n_pcs = np.argmax(np.cumsum(pca.explained_variance_ratio_) >= frac_var_exp)
+    return pca, n_pcs
+
+
+# %% test
+
+
+def get_distance_to_goal_pcs(
+    session,
+    include_multi_unit=True,
+    bin_spacing=0.05,
+    max_steps_to_goal=30,
+    moving_only=True,
+    n_pcs=5,
+    frac_var_exp=None,
+):
+    """ """
+    # get distance tuning curves
+    distance_tuning = _get_session_distance_tuning(
+        session,
+        include_multi_unit=include_multi_unit,
+        metrics=("distance_to_goal", "geodesic"),
+        bin_spacing=bin_spacing,
+        max_steps_to_goal=max_steps_to_goal,
+        moving_only=moving_only,
+        return_as="tuning_curves",
+    )
+    # do PCA on tuning curves to get loadings over neurons
+    pca = PCA(random_state=0)
+    pca.fit(distance_tuning.values.T)  # [samples = distances, features=neurons]
+    # get n_pcs to explain x pct_var
+    if n_pcs is None:
+        n_pcs = np.argmax(np.cumsum(pca.explained_variance_ratio_) >= frac_var_exp)
+    return pca, n_pcs
+
+
+def get_place_direction_pcs(
+    session,
+    include_multi_unit=True,
+    min_occupancy=0.5,
+    max_steps_to_goal=30,
+    n_pcs=5,
+    frac_var_exp=None,
+):
+    """ """
+    # get place_direction tuning
+    place_direction_tuning = get_session_place_direction_tuning(
+        session,
+        include_multi_unit=include_multi_unit,
+        fill_nans="mean",
+        normalisation=False,
+        place_direction_tuned=False,
+        min_split_corr=None,
+        navigation_only=True,
+        moving_only=True,
+        exclude_time_at_goal=True,
+        minimum_occupancy=min_occupancy,
+        max_steps_from_goal=max_steps_to_goal,
+    )
+    # do PCA on tuning curves to get loadings over neurons
+    pca = PCA(random_state=0)
+    pca.fit(place_direction_tuning.values.T)  # [samples = place_directions, features=neurons]
     # get n_pcs to explain x pct_var
     if n_pcs is None:
         n_pcs = np.argmax(np.cumsum(pca.explained_variance_ratio_) >= frac_var_exp)

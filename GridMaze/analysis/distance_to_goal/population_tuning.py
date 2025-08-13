@@ -228,6 +228,7 @@ def get_population_tuning_df(
 
 def _get_session_distance_tuning(
     session,
+    include_multi_unit=False,
     metrics=("distance_to_goal", "geodesic"),
     bin_spacing=0.05,
     max_steps_to_goal=30,
@@ -236,7 +237,9 @@ def _get_session_distance_tuning(
     return_as="tuning_curves",
 ):
     """ """
-    navigation_rates_df = session.get_navigation_activity_df(type="rates", cluster_kwargs={"single_units": True})
+    navigation_rates_df = session.get_navigation_activity_df(
+        type="rates", cluster_kwargs={"single_units": True, "multi_units": include_multi_unit}
+    )
     # deal with moving only
     if moving_only:
         navigation_rates_df = navigation_rates_df[navigation_rates_df.moving]

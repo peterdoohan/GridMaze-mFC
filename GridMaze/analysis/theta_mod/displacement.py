@@ -23,7 +23,7 @@ def get_session_theta_time_displacement(
     zscore_spikes=False,
     n_pcs=5,
     frac_var_exp=None,
-    time_shift_range=(-5, 5),
+    time_shift_range=(-1, 1),
     min_comparison_time=2,  # s
 ):
     timeshift_frames = (time_shift_range[0] * FRAME_RATE, time_shift_range[1] * FRAME_RATE)

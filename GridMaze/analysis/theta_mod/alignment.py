@@ -170,8 +170,16 @@ def get_session_alignment_angles(
         "zscore_spikes": zscore_spikes,
         "smooth_SD": smooth_SD,
     }
-    # run PCA on on-task, navigation time data
-    pca, n_pcs = tmu.get_pcs(session, n_pcs=n_pcs, frac_var_exp=frac_var_exp, **_kwargs)
+    # # run PCA on on-task, navigation time data
+    # pca, n_pcs = tmu.get_pcs(session, n_pcs=n_pcs, frac_var_exp=frac_var_exp, **_kwargs)
+    # try PCs generated from distance tuning curves
+    # pca, n_pcs = tmu.get_distance_to_goal_pcs(
+    #     session, n_pcs=n_pcs, frac_var_exp=frac_var_exp, include_multi_unit=include_multi_unit
+    # )
+    # try on PCs generate from place_direction tuning curves
+    pca, n_pcs = tmu.get_place_direction_pcs(
+        session, n_pcs=n_pcs, frac_var_exp=frac_var_exp, include_multi_unit=include_multi_unit
+    )
     # project all spikes onto the PC basis defined above (organised in df)
     neural_pc_df = tmu.get_neural_pc_df(session, pca=pca, n_pcs=n_pcs, **_kwargs)
     # project spikes split by theta phase onto the same PC basis
