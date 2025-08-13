@@ -269,6 +269,8 @@ def get_session_egocentric_action_tuning(
         keep_clusters = egocentric_metrics_df[
             egocentric_metrics_df.split_half_corr.all_action.value.gt(min_split_half_corr)
         ].cluster_unique_ID.values
+    else:
+        keep_clusters = egocentric_metrics_df.cluster_unique_ID.values
     if len(keep_clusters) == 0:
         if verbose:
             print(f"No clusters with egocentric action tuning for {session.name}")
