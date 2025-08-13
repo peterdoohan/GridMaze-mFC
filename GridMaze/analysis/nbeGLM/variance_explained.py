@@ -194,7 +194,7 @@ def plot_variance_explained(
     if ax is None:
         f, ax = plt.subplots(figsize=(2, 3))
     ax.spines[["top", "right"]].set_visible(False)
-    ax.axhline(0, color="k", linestyle="--", alpha=0.5)
+    ax.axvline(0, color="k", linestyle="--", alpha=0.5)
     ax.set_xlabel("features")
     ax.set_ylabel("unique variance explained (%)")
 
@@ -211,8 +211,8 @@ def plot_variance_explained(
     if plot_single_subject:
         sns.pointplot(
             data=long_df,
-            x="feature",
-            y="score",
+            x="score",
+            y="feature",
             hue="subject_ID",
             order=order,
             palette=colors,
@@ -228,9 +228,9 @@ def plot_variance_explained(
         )
     sns.pointplot(
         data=subject_av,
-        x="feature",
-        y="score",
-        marker="_",
+        x="score",
+        y="feature",
+        marker="|",
         order=order,
         color="k",
         markersize=15,
@@ -270,6 +270,7 @@ def _variance_explained_stats(cpd_df):
 def get_cpd_df(
     results_df,
     outlier_threshold=-0.3,
+    full_model_thres=0,
     reduced_models=[
         "remove_distance_to_goal",
         "remove_place_direction",
@@ -279,6 +280,8 @@ def get_cpd_df(
     """ """
     # average over folds & remove neurons with large negative scores
     df = mc._average_over_folds(results_df, outlier_threshold=outlier_threshold)
+    if full_model_thres:
+        df = df[df["full_model"] > full_model_thres]
     # filter for reduced models
     if reduced_models != "all":
         df = df[df.columns[df.columns.isin(reduced_models + ["full_model"])]]
