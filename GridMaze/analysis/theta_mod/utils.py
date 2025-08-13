@@ -60,6 +60,7 @@ def get_neural_pc_df(
         pca = get_pcs(session, include_multi_unit=include_multi_unit, **pc_kwargs)
     # project spikes to PCs
     spikes_pca = pca.transform(spikes)
+    n_pcs = spikes_pca.shape[1]
     # output as navigation_df-style df
     pca_df = pd.DataFrame(
         index=navigation_df.index,
@@ -286,7 +287,7 @@ def get_place_direction_pcs(
 
 def get_egocentric_action_pcs(
     session,
-    include_action_type=True,
+    include_action_type=False,
     include_multi_unit=True,
     window=(-3, 3),
     n_pcs=5,
@@ -295,7 +296,7 @@ def get_egocentric_action_pcs(
     # get egocentric_action tuning
     ego_action_tuning = get_session_egocentric_action_tuning(
         session,
-        actions=["turn_left", "turn_right", "go_forward", "go_back"],
+        actions=["turn_left", "turn_right", "go_forward"],
         include_action_type=include_action_type,
         min_split_half_corr=None,
         window=window,
@@ -304,8 +305,8 @@ def get_egocentric_action_pcs(
     # do PCA on tuning curves to get loadings over neurons
     pca = PCA(random_state=0, n_components=n_pcs)
     reshape_tuning = (
-        ego_action_tuning.action_aligned_rates.T.stack(level=[1, 2], future_stack=True)
-        .swaplevel(0, 2, axis=0)
+        ego_action_tuning.action_aligned_rates.T.stack(level=1, future_stack=True)
+        .swaplevel(0, 1, axis=0)
         .sort_index()  # [samples = timepoints x n_actions x 2 (free, forced), features=neurons]
     )
     pca.fit(reshape_tuning.values)

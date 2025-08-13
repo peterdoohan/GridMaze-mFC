@@ -13,7 +13,6 @@ from matplotlib import pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from joblib import Parallel, delayed
 from scipy.ndimage import gaussian_filter1d
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.theta_mod import utils as tmu
@@ -98,9 +97,11 @@ def plot_trajectory_theta_angles(
 # %% Run on all sessions
 
 
-def get_theta_alignment_summary_df(smooth_SD=2.5, vector_window=2.5, n_pcs=5, verbose=True, save=False):
+def get_theta_alignment_summary_df(
+    smooth_SD=2.5, vector_window=2.5, n_pcs=5, pcs_from="all_spikes", verbose=True, save=False
+):
     """ """
-    save_path = RESULTS_DIR / f"theta_alignment_summary.parquet"
+    save_path = RESULTS_DIR / f"theta_alignment_summary_{pcs_from}.parquet"
     if not save and save_path.exists():
         if verbose:
             print(f"Loading existing results from {save_path}")
@@ -115,12 +116,16 @@ def get_theta_alignment_summary_df(smooth_SD=2.5, vector_window=2.5, n_pcs=5, ve
             sessions = gs.get_maze_sessions(
                 subject_IDs=[subject_ID],
                 maze_names=[maze],
-                days_on_maze="all",
+                days_on_maze="late",
                 with_data=[
                     "navigation_df",
                     "navigation_spike_counts_df",
                     "navigation_theta_spike_counts_df",
                     "cluster_metrics",
+                    "navigation_spike_rates_df",  # need these for tuning curves when getting PCs
+                    "cluster_place_direction_tuning_metrics",
+                    "cluster_egocentric_action_tuning_metrics",
+                    "cluster_distance_tuning_metrics",
                 ],
                 must_have_data=True,
             )
@@ -161,8 +166,8 @@ def get_session_alignment_angles(
     sqrt_spikes=False,
     zscore_spikes=False,
     vector_window=2.5,  # s
+    pcs_from="all_spikes",
     n_pcs=5,
-    frac_var_exp=None,
 ):
     _kwargs = {
         "include_multi_unit": include_multi_unit,
@@ -170,20 +175,25 @@ def get_session_alignment_angles(
         "zscore_spikes": zscore_spikes,
         "smooth_SD": smooth_SD,
     }
-    # # run PCA on on-task, navigation time data
-    # pca, n_pcs = tmu.get_pcs(session, n_pcs=n_pcs, frac_var_exp=frac_var_exp, **_kwargs)
-    # try PCs generated from distance tuning curves
-    # pca, n_pcs = tmu.get_distance_to_goal_pcs(
-    #     session, n_pcs=n_pcs, frac_var_exp=frac_var_exp, include_multi_unit=include_multi_unit
-    # )
-    # try on PCs generate from place_direction tuning curves
-    pca, n_pcs = tmu.get_place_direction_pcs(
-        session, n_pcs=n_pcs, frac_var_exp=frac_var_exp, include_multi_unit=include_multi_unit
-    )
+    if pcs_from == "all_spikes":
+        # # run PCA on on-task, navigation time data
+        pca = tmu.get_pcs(session, n_pcs=n_pcs, **_kwargs)
+    elif pcs_from == "distance_to_goal_tuning":
+        # try PCs generated from distance tuning curves
+        pca = tmu.get_distance_to_goal_pcs(session, n_pcs=n_pcs, include_multi_unit=include_multi_unit)
+    elif pcs_from == "place_direction_tuning":
+        # try on PCs generate from place_direction tuning curves
+        pca = tmu.get_place_direction_pcs(session, n_pcs=n_pcs, include_multi_unit=include_multi_unit)
+    elif pcs_from == "egocentric_action_tuning":
+        # try on PCs generated from egocentric_action tuning curves
+        pca = tmu.get_egocentric_action_pcs(session, include_multi_unit=include_multi_unit, n_pcs=n_pcs)
+    else:
+        raise ValueError("Invalid pcs_from input")
+
     # project all spikes onto the PC basis defined above (organised in df)
-    neural_pc_df = tmu.get_neural_pc_df(session, pca=pca, n_pcs=n_pcs, **_kwargs)
+    neural_pc_df = tmu.get_neural_pc_df(session, pca=pca, **_kwargs)
     # project spikes split by theta phase onto the same PC basis
-    theta_pc_df = tmu.get_theta_pc_df(session, pca=pca, n_pcs=n_pcs, **_kwargs)
+    theta_pc_df = tmu.get_theta_pc_df(session, pca=pca, **_kwargs)
     # theta phases not including "theta_mean"
     phases = np.array(sorted([c for c in theta_pc_df.pc.columns.get_level_values(0).unique() if c != "theta_mean"]))
     trials = neural_pc_df.trial.dropna().unique()
