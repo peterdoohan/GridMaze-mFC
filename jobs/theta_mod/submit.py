@@ -7,7 +7,7 @@ Sumbit theta-modulation analyses to cluster :)
 import os
 
 # %% Global Variances
-from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
+from GridMaze.paths import RESULTS_PATH
 
 RESULTS_DIR = RESULTS_PATH / "theta_mod" / "trajectory_alignment"
 # %% Functions
