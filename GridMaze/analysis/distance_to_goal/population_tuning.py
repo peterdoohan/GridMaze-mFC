@@ -208,7 +208,7 @@ def get_population_tuning_df(
         distance_metrics_df = session.cluster_distance_tuning_metrics
         if distance_metrics_df.index.name == "cluster_unique_ID":
             distance_metrics_df = distance_metrics_df.reset_index()
-        distance_metrics_df = distance_metrics_df[distance_metrics_df.single_unit & distance_metrics_df.distance_tuned]
+        distance_metrics_df = distance_metrics_df[distance_metrics_df.single_unit]
         distance_tuning_df = distance_tuning_df[
             distance_tuning_df.cluster_unique_ID.isin(distance_metrics_df.cluster_unique_ID)
         ]
@@ -220,7 +220,8 @@ def get_population_tuning_df(
             how="inner",
         )
         # filter for distance tuned, split half corr, and r2
-        df = df[(df.distance_tuned) & (df.split_half_corr.value.gt(min_split_half_corr))]
+        if min_split_half_corr is not None:
+            df = df[df.split_half_corr.value.gt(min_split_half_corr)]
         tuning_dfs.append(df)
     population_tuning_df = pd.concat(tuning_dfs, axis=0).reset_index(drop=True)
     return population_tuning_df
