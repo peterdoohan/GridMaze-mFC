@@ -249,6 +249,7 @@ def get_population_egocentric_action_tuning(
 
 def get_session_egocentric_action_tuning(
     session,
+    include_multi_units=False,
     actions=["turn_left", "turn_right", "go_forward"],
     include_action_type=False,
     min_split_half_corr=0.4,
@@ -259,7 +260,9 @@ def get_session_egocentric_action_tuning(
     if verbose:
         print(session.name)
     # load data
-    navigation_rates_df = session.get_navigation_activity_df(type="rates", cluster_kwargs={"single_units": True})
+    navigation_rates_df = session.get_navigation_activity_df(
+        type="rates", cluster_kwargs={"single_units": True, "multi_units": include_multi_units}
+    )
     egocentric_metrics_df = session.cluster_egocentric_action_tuning_metrics
     # keep only clusters with some egocentric aciton tuning
     keep_clusters = egocentric_metrics_df[
