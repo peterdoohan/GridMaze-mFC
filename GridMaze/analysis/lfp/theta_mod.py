@@ -8,6 +8,7 @@ import json
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
+from joblib import delayed, Parallel
 
 from GridMaze.analysis.core import convert
 from GridMaze.analysis.core import filter as filt
@@ -107,20 +108,11 @@ def plot_population_theta_pref(population_theta_df, ax=None):
 
 def get_population_theta_mod(verbose=False, save=False):
     """ """
-    save_path = RESULTS_DIR / "population_theta_mod.csv"
+    save_path = RESULTS_DIR / "population_theta_mod2.csv"
     if save_path.exists() and not save:
         if verbose:
             print(f"Loading population theta modulation from {save_path}")
         return pd.read_csv(save_path, index_col=[0, 1])
-
-    def _process_session(session):
-        if verbose:
-            print(session.name)
-        subject_ID = session.subject_ID
-        theta_mod = get_session_theta_mod(session)
-        # add subject id to index
-        theta_mod.index = pd.MultiIndex.from_tuples([(subject_ID, c) for c in theta_mod.index])
-        return theta_mod
 
     dfs = []
     for subject_ID in SUBJECT_IDS:
@@ -138,8 +130,10 @@ def get_population_theta_mod(verbose=False, save=False):
             ],
             must_have_data=True,
         )
-        for session in sessions:
-            dfs.append(_process_session(session))
+        subject_dfs = Parallel(n_jobs=-1, verbose=verbose)(
+            delayed(get_session_theta_mod)(session) for session in sessions
+        )
+        dfs.extend(subject_dfs)
 
     pop_theta_mod = pd.concat(dfs, axis=0)
     if save:
@@ -149,7 +143,9 @@ def get_population_theta_mod(verbose=False, save=False):
     return pop_theta_mod
 
 
-def get_session_theta_mod(session, navigation_only=True, moving_only=True, max_steps_to_goal=30, min_spikes=300):
+def get_session_theta_mod(
+    session, navigation_only=True, include_multi_unit=True, moving_only=True, max_steps_to_goal=30, min_spikes=300
+):
     """ """
     # load data
     session_info = session.session_info
@@ -157,10 +153,13 @@ def get_session_theta_mod(session, navigation_only=True, moving_only=True, max_s
     navigation_df = session.navigation_df.copy()
     theta_spike_counts_df = session.navigation_theta_spike_counts_df.reset_index(drop=True)
     # filter for single units
-    single_units = cluster_metrics[cluster_metrics.single_unit].cluster_ID
-    single_units = convert.cluster_IDs2scluster_unique_IDs(session_info, single_units)
+    if not include_multi_unit:
+        keep_units = cluster_metrics[cluster_metrics.single_unit].cluster_ID
+    else:
+        keep_units = cluster_metrics[cluster_metrics.single_unit | cluster_metrics.multi_unit].cluster_ID
+    keep_units = convert.cluster_IDs2scluster_unique_IDs(session_info, keep_units)
     theta_spike_counts_df = theta_spike_counts_df[
-        theta_spike_counts_df.columns[[c in single_units for c in theta_spike_counts_df.columns.get_level_values(1)]]
+        theta_spike_counts_df.columns[[c in keep_units for c in theta_spike_counts_df.columns.get_level_values(1)]]
     ]
     # combine nav and spikes
     navigation_df.columns = pd.MultiIndex.from_tuples([(*c, "") for c in navigation_df.columns])
@@ -173,8 +172,15 @@ def get_session_theta_mod(session, navigation_only=True, moving_only=True, max_s
     # filter for cluster with few spikes in filtered data (eg, non-navigation tuned)
     cluster_phase_spike_counts = cluster_phase_spike_counts[cluster_phase_spike_counts.sum(axis=1) > min_spikes]
     # normalise each to prop (sum =1) of spikes in each phase
-    cluster_phase_prop = cluster_phase_spike_counts.div(cluster_phase_spike_counts.sum(axis=1), axis=0)
-    return cluster_phase_prop
+    df = cluster_phase_spike_counts.div(cluster_phase_spike_counts.sum(axis=1), axis=0)
+    df.columns = pd.MultiIndex.from_product([["prop_spikes"], df.columns])
+    # add other info
+    df[("subject_ID", "")] = session.subject_ID
+    df[("maze_name", "")] = session.maze_name
+    df[("day_on_maze", "")] = session.day_on_maze
+    df[("tissue_sample", "")] = session.tissue_sample
+    df[("probe_depth", "")] = session.probe_depth
+    return df
 
 
 # %% get average theta aligend lfp
