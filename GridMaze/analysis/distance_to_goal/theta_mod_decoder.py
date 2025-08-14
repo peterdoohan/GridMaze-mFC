@@ -172,7 +172,7 @@ def _get_decoding_bias_stats(phase_mean_decoding):
 # %% populate and load data
 
 
-def load_decoding_results(lfp_type="theta"):
+def load_decoding_results(lfp_type="theta_mid"):
     """ """
     results_paths = list((RESULTS_DIR / lfp_type).iterdir())
     dfs = []

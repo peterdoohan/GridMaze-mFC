@@ -86,10 +86,11 @@ EOF
     return script_path
 
 
-def submit_jobs(fn=get_theta_displacement_SLURM_script):
+def submit_jobs():
     """ """
-    for subspace in ["all_spikes", "place_direction_tuning", "distance_to_goal_tuning", "egocentric_action_tuning"]:
-        script_path = fn(pcs_from=subspace)
-        os.system(f"chmod +x {script_path}")
-        os.system(f"sbatch {script_path}")
+    for fn in [get_theta_alignment_SLURM_script, get_theta_displacement_SLURM_script]:
+        for subspace in ["all_spikes", "place_direction_tuning", "distance_to_goal_tuning", "egocentric_action_tuning"]:
+            script_path = fn(pcs_from=subspace)
+            os.system(f"chmod +x {script_path}")
+            os.system(f"sbatch {script_path}")
     return print("all jobs submitted to hpc")

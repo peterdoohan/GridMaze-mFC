@@ -32,6 +32,54 @@ MAZE2LATE_DAYS = {maze: [int(d) for d in list(MAZE_DAY2DATE[maze].keys())[-7:]] 
 
 FRAME_RATE = 60  # Hz
 
+PROBE_DEPTHS_DF = pd.read_csv(EXPERIMENT_INFO_PATH / "probe_depths.htsv", sep="\t")
+PROBE_DEPTHS_DF["date"] = pd.to_datetime(PROBE_DEPTHS_DF["date"])
+
+
+# %% dev
+
+
+def test(summary_df, angle_type="goal_angle"):
+    df = summary_df.groupby(["subject_ID", "maze_name", "day_on_maze"])[angle_type].mean().reset_index()
+    df["tissue_sample"] = df.apply(_get_tissue_sample, axis=1)
+    # average over samples per subject per tissue sample (mFC layer?)
+    df = df.groupby(["subject_ID", "tissue_sample"])[angle_type].mean()[angle_type]
+    phis = df.columns.values.astype(float)
+    for subject_ID in SUBJECT_IDS:
+        # subject fig
+        fig = plt.figure(figsize=(6, 3))
+        ax1 = fig.add_subplot(1, 2, 1, polar=True)
+        ax2 = fig.add_subplot(1, 2, 2)
+        ax2.spines[["right", "top"]].set_visible(False)
+        # plot
+        _df = df.loc[subject_ID].loc[["A", "B", "C", "D"]]
+        data = _df.values
+        beta_cos = data.dot(np.cos(phis))
+        beta_sin = data.dot(np.sin(phis))
+        # convert to polar coords
+        radii = np.sqrt(beta_cos**2 + beta_sin**2)
+        angles = np.arctan2(beta_sin, beta_cos)
+        samples_in_order = ["A", "B", "C", "D"]
+        # Plot points and connect in order
+        for s, ang, rad in zip(_df.index, angles, radii):
+            ax1.scatter(ang, rad, label=s, s=100)
+            ax1.text(ang, rad + 0.005, s, fontsize=12, ha="center", va="bottom")
+
+        # Connect A->B->C->D
+        order_idx = [list(_df.index).index(s) for s in samples_in_order]
+        ax1.plot(angles[order_idx], radii[order_idx], linewidth=2, alpha=0.5, c="k")
+        # plot non polar
+        _df.T.plot(ax=ax2, legend=False)
+
+
+def _get_tissue_sample(row):
+    date_str = MAZE_DAY2DATE[row[("maze_name", "")]][str(row[("day_on_maze", "")])]
+    query_date = pd.to_datetime(date_str)
+    probe_data = PROBE_DEPTHS_DF[
+        (PROBE_DEPTHS_DF["subject"] == row[("subject_ID", "")]) & (PROBE_DEPTHS_DF["date"] <= query_date)
+    ]
+    return probe_data.sort_values("date").iloc[-1]["tissue_sample"]
+
 
 # %% plot results
 
@@ -40,10 +88,10 @@ def plot_trajectory_theta_angles(
     summary_df,
     angle_type="goal_angle",
     moving_only=True,
-    maze_names=["maze_1", "maze_2", "rooms_maze"],
+    maze_names=["rooms_maze"],
     late_sessions=False,
     steps_to_goal=None,
-    subject_smooth_SD=1,
+    subject_smooth_SD=False,
     ax=None,
 ):
     """ """
@@ -137,6 +185,7 @@ def get_theta_alignment_summary_df(
                         session,
                         smooth_SD=smooth_SD,
                         vector_window=vector_window,
+                        pcs_from=pcs_from,
                         n_pcs=n_pcs,
                     )
                     results.append(alignment_df)

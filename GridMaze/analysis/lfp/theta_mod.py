@@ -106,6 +106,76 @@ def plot_population_theta_pref(population_theta_df, ax=None):
     return
 
 
+# %% Dev
+
+
+def test(pop_theta_mod):
+    df = pop_theta_mod.groupby(["subject_ID", "tissue_sample"]).prop_spikes.mean().prop_spikes
+    phis = df.columns.values.astype(float)
+    for subject_ID in SUBJECT_IDS:
+        # subject fig
+        fig = plt.figure(figsize=(6, 3))
+        ax1 = fig.add_subplot(1, 2, 1, polar=True)
+        ax2 = fig.add_subplot(1, 2, 2)
+        ax2.spines[["right", "top"]].set_visible(False)
+        # plot
+        _df = df.loc[subject_ID].loc[["A", "B", "C", "D"]]
+        data = _df.values
+        beta_cos = data.dot(np.cos(phis))
+        beta_sin = data.dot(np.sin(phis))
+        # convert to polar coords
+        radii = np.sqrt(beta_cos**2 + beta_sin**2)
+        angles = np.arctan2(beta_sin, beta_cos)
+        samples_in_order = ["A", "B", "C", "D"]
+        # Plot points and connect in order
+        for s, ang, rad in zip(_df.index, angles, radii):
+            ax1.scatter(ang, rad, label=s, s=100)
+            ax1.text(ang, rad + 0.005, s, fontsize=12, ha="center", va="bottom")
+
+        # Connect A->B->C->D
+        order_idx = [list(_df.index).index(s) for s in samples_in_order]
+        ax1.plot(angles[order_idx], radii[order_idx], linewidth=2, alpha=0.5, c="k")
+        # plot non polar
+        _df.T.plot(ax=ax2, legend=False)
+
+
+def test2(pop_theta_mod):
+    """ """
+    df = pop_theta_mod.copy()
+    df[("phase_pref", "")] = pop_theta_mod.prop_spikes.idxmax(axis=1)
+    phase_pref_df = df.groupby(["subject_ID", "tissue_sample"]).phase_pref.value_counts().unstack()
+    phase_pref_df = phase_pref_df.div(phase_pref_df.sum(axis=1), axis=0)
+    phis = phase_pref_df.columns.values.astype(float)
+    for subject_ID in SUBJECT_IDS:
+        # subject fig
+        fig = plt.figure(figsize=(6, 3))
+        ax1 = fig.add_subplot(1, 2, 1, polar=True)
+        ax2 = fig.add_subplot(1, 2, 2)
+        ax2.spines[["right", "top"]].set_visible(False)
+        # plot
+        _df = phase_pref_df.loc[subject_ID].loc[["A", "B", "C", "D"]]
+        data = _df.values
+        beta_cos = data.dot(np.cos(phis))
+        beta_sin = data.dot(np.sin(phis))
+        # convert to polar coords
+        radii = np.sqrt(beta_cos**2 + beta_sin**2)
+        angles = np.arctan2(beta_sin, beta_cos)
+        samples_in_order = ["A", "B", "C", "D"]
+        # Plot points and connect in order
+        for s, ang, rad in zip(_df.index, angles, radii):
+            ax1.scatter(ang, rad, label=s, s=100)
+            ax1.text(ang, rad + 0.005, s, fontsize=12, ha="center", va="bottom")
+
+        # Connect A->B->C->D
+        order_idx = [list(_df.index).index(s) for s in samples_in_order]
+        ax1.plot(angles[order_idx], radii[order_idx], linewidth=2, alpha=0.5, c="k")
+        # plot non polar
+        _df.T.plot(ax=ax2, legend=False)
+
+
+# %%
+
+
 def get_population_theta_mod(verbose=False, save=False):
     """ """
     save_path = RESULTS_DIR / "population_theta_mod2.csv"

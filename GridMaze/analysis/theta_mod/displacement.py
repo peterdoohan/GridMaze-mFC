@@ -74,6 +74,7 @@ def get_theta_displacement_summary_df(
                         smooth_SD=smooth_SD,
                         time_shift_range=time_shift_range,
                         min_comparison_time=min_comparison_time,
+                        pcs_from=pcs_from,
                         n_pcs=n_pcs,
                     )
                     results.append(alignment_df)
