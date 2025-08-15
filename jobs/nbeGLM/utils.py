@@ -29,6 +29,7 @@ DEFAULT_MODEL_INIT_KWARGS = {
     "beta_weight": 1e-1,
     "partition": None,
     "latent_nonlin": None,
+    "latent_split": None,
 }
 
 DEFAULT_MODEL_TRAIN_KWARGS = {
