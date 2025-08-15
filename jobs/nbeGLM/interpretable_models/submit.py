@@ -34,9 +34,14 @@ def get_model_set_params(seed=0, subfolder="interpretable_models"):
     input_groups = ["place_direction", "distance_to_goal", "egocentric_action"]
     partition = [("place_direction",), ("distance_to_goal",), ("egocentric_action",)]
     for maze_name in ["maze_1", "maze_2", "rooms_maze"]:
-        for latent_nonlin, model_name in [
-            (None, "standard"),
-            ("relu", "relu"),
+        for (
+            latent_nonlin,
+            latent_split,
+            model_name,
+        ) in [
+            (None, (8, 6, 1), "large"),
+            (None, (6, 5, 1), "medium"),
+            (None, (5, 4, 1), "small"),
         ]:
             # update defualt input data kwargs
             input_data_kwargs = deepcopy(ju.DEFAULT_INPUT_DATA_KWARGS)
@@ -45,9 +50,9 @@ def get_model_set_params(seed=0, subfolder="interpretable_models"):
             # update defualt model init kwargs
             model_init_kwargs = deepcopy(ju.DEFAULT_MODEL_INIT_KWARGS)
             model_init_kwargs["partition"] = partition  # each var in its own partition
-            model_init_kwargs["latent_nonlin"] = latent_nonlin  # try relu latents on no activation
-            model_init_kwargs["Nlat"] = 18
-            model_init_kwargs["latent_split"] = (8, 8, 2)  # pd, dtg, ea
+            model_init_kwargs["latent_nonlin"] = None
+            model_init_kwargs["Nlat"] = sum(latent_split)
+            model_init_kwargs["latent_split"] = latent_split  # pd, dtg, ea
             # use defualt model train kwargs
             model_train_kwargs = deepcopy(ju.DEFAULT_MODEL_TRAIN_KWARGS)
             model_set_params.append(

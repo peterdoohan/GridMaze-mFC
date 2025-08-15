@@ -65,15 +65,16 @@ def plot_latent_distance_to_goal_tuning(latent_tuning_df, axes=None):
 # %% load latent unit tuning from saved model
 
 
-def get_latent_tuning_dfs(model_name="full_model", maze_name="maze_1"):
+def get_latent_tuning_dfs(model_set="interpretable_models", model_name="standard", maze_name="maze_1"):
     """ """
     model, params = lms.load_model(
-        model_set="full_models",
+        model_set=model_set,
         model_name=model_name,
         maze_name=maze_name,
         with_model_params=True,
     )
-    Nlat = model.Nlat
+    _Nlat = model.Nlat
+
     # map out tuning of latent units
     tuning = get_latent_tuning(model)
     # get input group labels
@@ -88,12 +89,11 @@ def get_latent_tuning_dfs(model_name="full_model", maze_name="maze_1"):
     assert len(egocentric_action_labels) == len(ego_inputs)
     # output as dataframe
     pd_df = pd.DataFrame(
-        index=range(Nlat),
         columns=pd.MultiIndex.from_tuples(place_direction_labels),
         data=tuning["place_direction"],
     )
-    dist_df = pd.DataFrame(index=range(Nlat), columns=distances_to_goal_labels, data=tuning["distance_to_goal"])
-    ego_df = pd.DataFrame(index=range(Nlat), columns=egocentric_action_labels, data=tuning["egocentric_action"])
+    dist_df = pd.DataFrame(columns=distances_to_goal_labels, data=tuning["distance_to_goal"])
+    ego_df = pd.DataFrame(columns=egocentric_action_labels, data=tuning["egocentric_action"])
 
     return {"place_direction": pd_df, "distance_to_goal": dist_df, "egocentric_action": ego_df}
 
@@ -106,20 +106,32 @@ def get_latent_tuning(model):
     """
     device = next(model.parameters()).device
     model.to(device)
+    _input_group_names = model.input_group_names
+    _input_group_indices = model.input_group_indices
+    try:
+        _latent_split_inds = model.latent_split_inds
+    except AttributeError:
+        _latent_split_inds = None
+    _latent_split_inds = (
+        [None for _ in range(len(_input_group_names))] if _latent_split_inds is None else _latent_split_inds
+    )
 
     Nin, Nlat = model.Nin, model.Nlat
     tuning = {}
 
     with torch.no_grad():
-        for name, inds in zip(model.input_group_names, model.input_group_indices):
+        for name, inds, latent_inds in zip(_input_group_names, _input_group_indices, _latent_split_inds):
             # Build set of onehot inputs
             k = len(inds)
             X = torch.zeros(Nin, k, device=device, dtype=torch.float32)
             cols = torch.arange(k, device=device)
             X[inds, cols] = 1.0
             # encode
-            Z = model.encode(X)
-            tuning[name] = Z.cpu().numpy()  # shape [Nlat, n_features]
+            Z = model.encode(X).cpu().numpy()
+            if latent_inds is None:
+                tuning[name] = Z  # shape [Nlat, k]
+            else:
+                tuning[name] = Z[latent_inds.astype(int)]  # shape [Nlat, n_features]
 
     return tuning
 

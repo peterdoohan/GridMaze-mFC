@@ -187,6 +187,7 @@ def plot_variance_explained(
     features=["distance_to_goal", "place_direction", "egocentric_action_action"],
     print_stats=True,
     plot_single_subject=False,
+    orientation="vertical",
     ax=None,
 ):
     """ """
@@ -194,7 +195,10 @@ def plot_variance_explained(
     if ax is None:
         f, ax = plt.subplots(figsize=(2, 3))
     ax.spines[["top", "right"]].set_visible(False)
-    ax.axvline(0, color="k", linestyle="--", alpha=0.5)
+    if orientation == "vertical":
+        ax.axhline(0, color="k", linestyle="--", alpha=0.5)
+    else:
+        ax.axvline(0, color="k", linestyle="--", alpha=0.5)
     ax.set_xlabel("features")
     ax.set_ylabel("unique variance explained (%)")
 
@@ -208,11 +212,19 @@ def plot_variance_explained(
     long_df = df.stack().reset_index(name="score").rename(columns={"level_2": "feature"})
     subject_av = long_df.groupby(["subject_ID", "feature"])["score"].mean().reset_index()
     colors = sns.color_palette("hls", n_colors=len(SUBJECT_IDS))
+    if orientation == "vertical":
+        x = "feature"
+        y = "score"
+        marker = "_"
+    else:
+        x = "score"
+        y = "feature"
+        marker = "|"
     if plot_single_subject:
         sns.pointplot(
             data=long_df,
-            x="score",
-            y="feature",
+            x=x,
+            y=y,
             hue="subject_ID",
             order=order,
             palette=colors,
@@ -228,9 +240,9 @@ def plot_variance_explained(
         )
     sns.pointplot(
         data=subject_av,
-        x="score",
-        y="feature",
-        marker="|",
+        x=x,
+        y=y,
+        marker=marker,
         order=order,
         color="k",
         markersize=15,
