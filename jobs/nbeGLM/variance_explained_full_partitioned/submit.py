@@ -10,10 +10,11 @@ from jobs.nbeGLM import utils as ju
 from GridMaze.paths import RESULTS_PATH
 
 RESULTS_DIR = RESULTS_PATH / "nbeGLM"
-# %% Functions
+
+# %%
 
 
-def submit_jobs(seed=0, subfolder="variance_explained_full2"):
+def submit_jobs(seed=0, subfolder="variance_explained_full_partitioned"):
     model_set_params = get_model_set_params(seed, subfolder)
     # save model set params to json
     with open(RESULTS_DIR / subfolder / "model_set_params.json", "w") as f:
@@ -27,12 +28,14 @@ def submit_jobs(seed=0, subfolder="variance_explained_full2"):
     return print("all jobs submitted to hpc")
 
 
-def get_model_set_params(seed=0, subfolder="variance_explained_full2"):
+def get_model_set_params(seed=0, subfolder="variance_explained_full_partitioned"):
     model_set_params = []
-    all_input_groups = [
+    main_input_groups = [
         "place_direction",
         "distance_to_goal",
         "egocentric_action",
+    ]
+    other_input_groups = [
         "goal",
         "egocentric_angle_to_goal",
         "allocentric_angle_to_goal",
@@ -40,6 +43,7 @@ def get_model_set_params(seed=0, subfolder="variance_explained_full2"):
         "acceleration",
         "head_direction",
     ]
+    all_input_groups = main_input_groups + other_input_groups
     for maze_name in ["maze_1", "maze_2", "rooms_maze"]:
         for remove_groups, input_group_kwargs, model_name in [
             ([], {}, "full_model"),
@@ -64,31 +68,6 @@ def get_model_set_params(seed=0, subfolder="variance_explained_full2"):
             (["speed"], {}, "remove_speed"),
             (["acceleration"], {}, "remove_acceleration"),
             (["head_direction"], {}, "remove_head_direction"),
-            ### remove distance + other variables ###
-            (["distance_to_goal", "place_direction"], {}, "remove_distance_to_goal_place_direction"),
-            (["distance_to_goal", "egocentric_action"], {}, "remove_distance_to_goal_egocentric_action_all"),
-            (
-                ["distance_to_goal"],
-                {"egocentric_action": {"components": ["action", "tower_bridge"]}},
-                "remove_distance_to_goal_egocentric_action_free_forced",
-            ),
-            (
-                ["distance_to_goal"],
-                {
-                    "egocentric_action": {"components": ["free_forced", "tower_bridge"]},
-                },
-                "remove_distance_to_goal_egocentric_action_action",
-            ),
-            (["distance_to_goal", "goal"], {}, "remove_distance_to_goal_goal"),
-            (["distance_to_goal", "egocentric_angle_to_goal"], {}, "remove_distance_to_goal_egocentric_angle_to_goal"),
-            (
-                ["distance_to_goal", "allocentric_angle_to_goal"],
-                {},
-                "remove_distance_to_goal_allocentric_angle_to_goal",
-            ),
-            (["distance_to_goal", "speed"], {}, "remove_distance_to_goal_speed"),
-            (["distance_to_goal", "acceleration"], {}, "remove_distance_to_goal_acceleration"),
-            (["distance_to_goal", "head_direction"], {}, "remove_distance_to_goal_head_direction"),
         ]:
             # update defualt input data kwargs
             input_data_kwargs = deepcopy(ju.DEFAULT_INPUT_DATA_KWARGS)
@@ -97,6 +76,11 @@ def get_model_set_params(seed=0, subfolder="variance_explained_full2"):
             input_data_kwargs["input_group_kwargs"] = input_group_kwargs
             # use defualt model init kwargs
             model_init_kwargs = deepcopy(ju.DEFAULT_MODEL_INIT_KWARGS)
+            # set up parititions
+            main_group_partition = [(group,) for group in main_input_groups if group not in remove_groups]
+            other_group_partition = tuple([group for group in other_input_groups if group not in remove_groups])
+            partition = main_group_partition + [other_group_partition]
+            model_init_kwargs["partition"] = partition
             # use defualt model train kwargs
             model_train_kwargs = deepcopy(ju.DEFAULT_MODEL_TRAIN_KWARGS)
             # use defualt score kwargs
