@@ -1,5 +1,6 @@
 """
 Test theta amplitude at different depths and shanks (A->P) across subjects
+@peterdoohan
 """
 
 # %% Imports
@@ -27,34 +28,44 @@ RESULTS_DIR = RESULTS_PATH / "lfp"
 # %% Functions
 
 
-def get_all_channel_av_theta_powers(verbose=False, save=False):
+def get_all_channel_av_theta_powers(verbose=False, save=False, n_jobs=-1):
     """ """
     save_path = RESULTS_DIR / "channel_avg_theta_powers.csv"
     if save_path.exists() and not save:
         if verbose:
             print(f"Loading population theta modulation from {save_path}")
-        return pd.read_csv(save_path, index_col=[0, 1])
+        df = pd.read_csv(save_path, index_col=0, header=[0, 1])
+        df.columns = pd.MultiIndex.from_tuples([c if not "Unnamed" in c[1] else (c[0], "") for c in df.columns])
+        return df
 
     dfs = []
     for subject_ID in SUBJECT_IDS:
         if verbose:
-            print(f"Loading sessions for {subject_ID}")
-        sessions = gs.get_maze_sessions(
-            subject_IDs=[subject_ID],
-            maze_names="all",
-            days_on_maze="late",
-            with_data=[
-                "navigation_df",
-                "lfp_signal",
-                "lfp_times",
-                "lfp_metrics",
-            ],
-            must_have_data=True,
-        )
-        subject_dfs = Parallel(n_jobs=-1, verbose=verbose)(
-            delayed(get_session_channel_theta_powers)(session) for session in sessions
-        )
-        dfs.extend(subject_dfs)
+            for maze in ["maze_1", "maze_2", "rooms_maze"]:
+                print(f"Loading sessions for {subject_ID} {maze}")
+                sessions = gs.get_maze_sessions(
+                    subject_IDs=[subject_ID],
+                    maze_names=[maze],
+                    days_on_maze="all",
+                    with_data=[
+                        "navigation_df",
+                        "lfp_signal",
+                        "lfp_times",
+                        "lfp_metrics",
+                    ],
+                    must_have_data=True,
+                )
+                if n_jobs is not None:
+                    subject_dfs = Parallel(n_jobs=n_jobs, verbose=verbose)(
+                        delayed(get_session_channel_theta_powers)(session, verbose=verbose) for session in sessions
+                    )
+                else:
+                    subject_dfs = []
+                    for session in sessions:
+                        if verbose:
+                            print(session.name)
+                        subject_dfs.append(get_session_channel_theta_powers(session, verbose=verbose))
+                dfs.extend(subject_dfs)
 
     theta_powers_df = pd.concat(dfs, axis=0)
     if save:
@@ -68,12 +79,18 @@ def get_session_channel_theta_powers(
     session,
     freq_range=THETA_RANGE,
     N=4,
+    verbose=True,
 ):
     """ """
+    if verbose:
+        print(session.name)
     # load data
     lfp_signal = session.lfp_signal
     lfp_metrics = session.lfp_metrics
     lfp_times = session.lfp_times
+    # catch rare inst where times is one sample too long
+    if lfp_signal.shape[0] != lfp_times.shape[0]:
+        lfp_times = lfp_times[:-1]
     navigation_df = session.navigation_df
     # get mask for moving and navigation times
     nav_moving_mask = _mask_lfp(lfp_times, navigation_df)
@@ -92,6 +109,9 @@ def get_session_channel_theta_powers(
             amplitude_envelope = np.abs(analytic_signal)
             av_theta_powers[i] = np.mean(amplitude_envelope[nav_moving_mask])
     lfp_metrics[("av_theta_power", "")] = av_theta_powers
+    lfp_metrics[("subject_ID", "")] = session.subject_ID
+    lfp_metrics[("maze_name", "")] = session.maze_name
+    lfp_metrics[("day_on_maze", "")] = session.day_on_maze
     return lfp_metrics
 
 
