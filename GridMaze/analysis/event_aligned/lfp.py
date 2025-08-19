@@ -4,22 +4,18 @@ Library for event aligned LFP analysis.
 """
 
 # %% Imports
+import json
 import pandas as pd
 import numpy as np
-import json
-import mne
+import matplotlib.pyplot as plt
+from statsmodels.stats.anova import AnovaRM
+from statsmodels.stats.weightstats import ttest_ind
+from statsmodels.stats.multitest import multipletests
+from itertools import combinations
+
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import load_data
-from scipy.stats import zscore
-import matplotlib.pyplot as plt
-from scipy.signal import fftconvolve
-from scipy.ndimage import gaussian_filter
-from scipy.signal import welch
-from mne.time_frequency import psd_array_welch
-from mne.time_frequency import psd_array_multitaper
-
 from GridMaze.analysis.event_aligned import delta_distance_to_goal as ddtg
-
 from GridMaze.analysis.event_aligned import lfp_utils as lu
 
 # %% Global Variables
@@ -182,6 +178,39 @@ def plot_PSD(
         ax.legend()
     if fmax:
         ax.set_xlim(1, fmax)
+
+
+def _get_PSD_stats(
+    PSD_df,
+    freq_ranges={"1-3Hz": (2, 3), "4-5Hz": (3, 5), "theta": (7, 10)},
+):
+    """
+    compare fequency ranges between trial phases.
+    """
+    for name, fr in freq_ranges.items():
+        _df = PSD_df[PSD_df.frequency.between(*fr)]
+        trial_phase_mean_psd = _df.groupby("subject_ID").power.mean().power[["navigation", "RC", "ITI"]]
+        # run anova
+        df_long = trial_phase_mean_psd.reset_index().melt(
+            id_vars="subject_ID", var_name="condition", value_name="value"
+        )
+        # Repeated-measures ANOVA
+        aov = AnovaRM(data=df_long, depvar="value", subject="subject_ID", within=["condition"]).fit()
+        print(aov.summary())
+        # Parametric post-hoc (paired t-tests) with Holm correction
+        pairs = list(combinations(trial_phase_mean_psd.columns, 2))
+        t_results = []
+        pvals = []
+        for c1, c2 in pairs:
+            # statsmodels' ttest_ind returns (tstat, pvalue, df)
+            tstat, pval, dof = ttest_ind(
+                trial_phase_mean_psd[c1].values, trial_phase_mean_psd[c2].values, usevar="pooled"
+            )
+            t_results.append({"contrast": f"{c1} vs {c2}", "t": tstat, "df": dof, "p_raw": pval})
+            pvals.append(pval)
+        p_df = pd.DataFrame(t_results)
+        p_df["p_corrected"] = multipletests(pvals, method="holm")[1]
+        print(p_df)
 
 
 # %% Event aligned signal plots

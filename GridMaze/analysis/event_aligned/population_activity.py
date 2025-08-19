@@ -39,7 +39,9 @@ DDTG_WINDOW = (1, 3)  # seconds post cue to calculate ddtg
 # %% single main fn for all population activity analysis
 
 
-def get_aligned_population_activity(aligned_to="trial", cue_moving_window=(-0.2, 0.5)):
+def get_aligned_population_activity(
+    aligned_to="trial", split_by_goal_directed_at_cue=False, cue_moving_window=(-0.2, 0.5)
+):
     """ """
     data_structure = aligned_to + "_aligned_rates_df"
     _lvl = 1 if aligned_to == "trial" else 2
@@ -62,27 +64,28 @@ def get_aligned_population_activity(aligned_to="trial", cue_moving_window=(-0.2,
             .firing_rate.reset_index("trial")
             .pivot(columns="trial")  # stack trials [neurons, timepoints x trials]
             .sort_index(axis=1, level=_lvl)
-            .apply(zscore, axis=1)
+            .apply(zscore, axis=1, raw=True)
         )
         pop_activity_df = norm_aligned_rates_df.stack(future_stack=True).groupby("trial").mean(0)
         if aligned_to == "trial":
             pop_activity_df.columns = pd.MultiIndex.from_product([["time"], pop_activity_df.columns])
-        # split trials into goal_direced, non_goal_directed and not_moving
-        ddtg_df = ddtg.get_session_delta_dtg(session, DDTG_WINDOW)
-        trial2condition = {}
-        window2ddtg = ddtg_df.set_index("trial").cue_aligned_time.mean(1)
-        trial2condition = {}
-        for trial, _ddtg in window2ddtg.items():
-            trial = int(trial)
-            if _ddtg <= DDTG_LOWER_THRES:
-                trial2condition[trial] = "goal_directed"
-            elif _ddtg >= DDTG_UPPER_THRES:
-                trial2condition[trial] = "non_goal_directed"
-            else:
-                trial2condition[trial] = "not_moving"
-        trial2cue_moving = _get_trial2cue_moving(session, window=cue_moving_window)
-        pop_activity_df[("condition", "")] = pop_activity_df.index.map(trial2condition)
-        pop_activity_df[("moving", "")] = pop_activity_df.index.map(trial2cue_moving)
+        if split_by_goal_directed_at_cue:
+            # split trials into goal_direced, non_goal_directed and not_moving
+            ddtg_df = ddtg.get_session_delta_dtg(session, DDTG_WINDOW)
+            trial2condition = {}
+            window2ddtg = ddtg_df.set_index("trial").cue_aligned_time.mean(1)
+            trial2condition = {}
+            for trial, _ddtg in window2ddtg.items():
+                trial = int(trial)
+                if _ddtg <= DDTG_LOWER_THRES:
+                    trial2condition[trial] = "goal_directed"
+                elif _ddtg >= DDTG_UPPER_THRES:
+                    trial2condition[trial] = "non_goal_directed"
+                else:
+                    trial2condition[trial] = "not_moving"
+            trial2cue_moving = _get_trial2cue_moving(session, window=cue_moving_window)
+            pop_activity_df[("condition", "")] = pop_activity_df.index.map(trial2condition)
+            pop_activity_df[("moving", "")] = pop_activity_df.index.map(trial2cue_moving)
         pop_activity_df[("subject_ID", "")] = session.subject_ID
         pop_activity_df[("trial_unique_ID", "")] = convert.trial2trial_unique_ID(
             session.session_info, pop_activity_df.index
@@ -106,17 +109,19 @@ def _get_trial2cue_moving(session, window=(-0.5, 0.5)):
     return trial2cue_moving
 
 
-def _plot_population_aligned_activity(results_df, smooth_SD=3, t_min=-2, color="slategrey", ax=None):
+def _plot_population_aligned_activity(
+    results_df, smooth_SD=3, t_min=-2, plot_single_subjects=False, color="slategrey", ax=None
+):
     """ """
     # prepare axes
     if ax is None:
         f, ax = plt.subplots(1, 1, figsize=(6, 2), clear=True)
+    ax.spines[["right", "top"]].set_visible(False)
     # process data
     df = results_df.groupby(["subject_ID"]).time.mean().time
     time = df.columns.to_numpy(dtype=float)
     if smooth_SD:
         df = df.apply(lambda x: gaussian_filter1d(x, smooth_SD), axis=1).apply(pd.Series)
-    ax.spines[["right", "top"]].set_visible(False)
     mask = time > t_min
     time = time[mask]
     y = df.mean(axis=0).to_numpy()
@@ -126,6 +131,11 @@ def _plot_population_aligned_activity(results_df, smooth_SD=3, t_min=-2, color="
     # plot
     ax.plot(time, y, color=color, lw=2)
     ax.fill_between(time, y - sem, y + sem, color=color, alpha=0.3)
+    if plot_single_subjects:
+        for subject in results_df.subject_ID.unique():
+            subject_df = df.loc[subject]
+            y_sub = subject_df.to_numpy()[mask]
+            ax.plot(time, y_sub, color=color, lw=0.5, alpha=0.5)
     for x in INTRA_TRIAL_INTERVAL_TIMES.values():
         ax.axvline(x, color="k", ls="--", alpha=0.2, zorder=0)
     ax.set_xlabel("Time (s)")
