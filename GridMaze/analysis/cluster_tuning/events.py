@@ -8,8 +8,8 @@ import numpy as np
 from matplotlib import pyplot as plt
 from scipy.ndimage import gaussian_filter1d
 
-from ..core import get_clusters as gc
-from ...maze import plotting as mp
+from GridMaze.analysis.core import get_clusters as gc
+from GridMaze.maze import plotting as mp
 
 # %% Global Varibales
 from ...paths import ANALYSIS_INFO_PATH
@@ -30,7 +30,7 @@ def plot_session_trial_aligned_rates(session, goal_stratified=False):
         return_unique_IDs=True,
         single_units=True,
     )
-    for cluster_unique_ID in keep_clusters:
+    for cluster_unique_ID in keep_clusters[:1]:
         cluster_trial_aligned_rates = trial_aligned_rates_df[
             trial_aligned_rates_df.cluster_unique_ID == cluster_unique_ID
         ]
@@ -61,8 +61,9 @@ def plot_trial_aligned_rates(trial_aligned_rates, goal_stratified=False, smooth_
             sem = gaussian_filter1d(sem, smooth_SD)
         _plot_trial_aligned_rates(mean, sem, time, ax, color)
     else:
-        goal2color = mp.get_goal2standard_color()
-        for goal in trial_aligned_rates.goal.unique():
+        goals = trial_aligned_rates.goal.unique()
+        goal2color = mp._get_goal2color(goals, cmap="hls")
+        for goal in goals:
             aligned_rates_mean = trial_aligned_rates[trial_aligned_rates.goal == goal].firing_rate.mean(axis=0)
             aligned_rates_sem = trial_aligned_rates[trial_aligned_rates.goal == goal].firing_rate.sem(axis=0)
             time = aligned_rates_mean.index.to_numpy().astype(float)
@@ -80,7 +81,7 @@ def _plot_trial_aligned_rates(mean, sem, time, ax, color):
         ax.plot(time, mean, color=color)
         ax.fill_between(time, mean - sem, mean + sem, color=color, alpha=0.2)
     else:
-        ax.plot(time, mean, color=color, alpha=0.8, lw=1.5)
+        ax.plot(time, mean, color=color, alpha=1, lw=1.5)
     return
 
 

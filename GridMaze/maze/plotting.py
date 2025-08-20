@@ -1,11 +1,13 @@
 """This module contains functions for visualising maze representations."""
 
 # %% Imports
+from calendar import c
 import json
 import numpy as np
 import pandas as pd
 import networkx as nx
 import matplotlib as mpl
+import seaborn as sns
 import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
@@ -528,13 +530,11 @@ def get_coords2value(maze, nodes_and_edges2value):
 # %% Figure legend plotting
 
 
-def plot_maze_legend(simple_maze, goals, node_size=30, edge_size=3, cmap="gist_rainbow", ax=None):
+def plot_maze_legend(simple_maze, goals, node_size=30, edge_size=3, cmap="hls", ax=None):
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=(1.5, 1.6))
     node_labels = np.array([i for i in nx.get_node_attributes(simple_maze, "label").values()])
-    cmap = cm.get_cmap(cmap, len(goals))
-    color_list = [mcolors.rgb2hex(cmap(i)) for i in range(len(goals))]
-    goal2color = {goal: color for goal, color in zip(goals, color_list)}
+    goal2color = _get_goal2color(goals, cmap)
     node2color = {node_label: goal2color[node_label] if node_label in goals else "silver" for node_label in node_labels}
     plot_simple_maze_silhouette(
         simple_maze,
@@ -544,6 +544,12 @@ def plot_maze_legend(simple_maze, goals, node_size=30, edge_size=3, cmap="gist_r
         edge_size=edge_size,
         special_location2color=node2color,
     )
+
+
+def _get_goal2color(goals, cmap="hls"):
+    colors = sns.color_palette(cmap, len(goals))
+    color_list = [mcolors.rgb2hex(colors[i]) for i in range(len(goals))]
+    return {goal: color for goal, color in zip(goals, color_list)}
 
 
 # %% Other functions (some depreciated)
