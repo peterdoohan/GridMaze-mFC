@@ -34,7 +34,7 @@ if not RESULTS_DIR.exists():
 
 def get_spatial_goal_decoding_control_summary(save=False, verbose=True):
     # load cached results if already processed
-    save_path = RESULTS_DIR / "event_aligned_decoding_summary.parquet"
+    save_path = RESULTS_DIR / "spatial_control_goal_decoding_summary.parquet"
     if save_path.exists() and not save:
         if verbose:
             print(f"Loading existing results from {save_path}")
@@ -76,6 +76,8 @@ def get_spatial_goal_decoding_control_summary(save=False, verbose=True):
             print(f"Saving results to {save_path}")
         save_path.parent.mkdir(parents=True, exist_ok=True)
         summary_df.to_parquet(save_path)
+    if len(failed_sessions) > 0:
+        print(f"Failed sessions: {', '.join(failed_sessions)}")
     return summary_df
 
 
@@ -114,7 +116,7 @@ def get_session_spatial_goal_decoding_control(
             simple_maze,
             input_type="spikes",
             output_type=spatial_output,
-            training_trial_phases=["navigation"],
+            training_trial_phases=["navigation", "reward_consumption"],
             n_jobs=n_jobs,
             verbose=False,
         )

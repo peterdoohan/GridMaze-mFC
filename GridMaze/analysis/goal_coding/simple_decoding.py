@@ -24,6 +24,8 @@ RESULTS_DIR = RESULTS_PATH / "simple_decoding"
 
 TRIAL_ALIGNED_RATES_FS = 0.04
 
+# %%  plotting
+
 # %% pop level functions
 
 
@@ -97,11 +99,18 @@ def get_trial_aligned_decoding_summary(
         must_have_data=True,
     )
     dfs = []
+    failed_sessions = []
     for session in sessions:
         if verbose:
             print(session.name)
-        results_df = get_trial_aligned_goal_decoding(session, resolution=resolution)
-        dfs.append(results_df)
+        try:
+            results_df = get_trial_aligned_goal_decoding(session, resolution=resolution)
+            dfs.append(results_df)
+        except Exception as e:
+            if verbose:
+                print(f"Failed to process session {session.name}: {e}")
+            failed_sessions.append(session.name)
+            continue
     summary_df = pd.concat(dfs, axis=0)
     summary_df.reset_index(drop=True, inplace=True)
     if save:
@@ -109,6 +118,8 @@ def get_trial_aligned_decoding_summary(
             print(f"Saving results to {save_path}")
         save_path.parent.mkdir(parents=True, exist_ok=True)
         summary_df.to_parquet(save_path)
+    if len(failed_sessions) > 0:
+        print(f"Failed sessions: {', '.join(failed_sessions)}")
     return summary_df
 
 
@@ -220,8 +231,13 @@ def get_trial_aligned_goal_decoding(
     results_dfs = []
     for fold in folds:
         fold_df = folds_df[fold]
-        test_trials = fold_df.test.dropna().values
-        train_trials = fold_df.train.stack().dropna().values
+        try:
+            test_trials = fold_df.test.stack().dropna().values
+            train_trials = fold_df.train.stack().dropna().values
+        except AttributeError:
+            # non goal strat too few trials
+            test_trials = fold_df.test.dropna().values
+            train_trials = fold_df.train.dropna().values
         train_df = input_data[input_data.trial.isin(train_trials)]
         test_df = input_data[input_data.trial.isin(test_trials)]
         train_df.set_index(["cluster_ID", "trial"], inplace=True)
