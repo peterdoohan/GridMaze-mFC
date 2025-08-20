@@ -846,6 +846,8 @@ def get_event_aligned_input_data(
         ds_nav_aligned_df[("goal", "")] = trial2goal[trial]
         outside_trial_mask = (ds_nav_aligned_df.trial != trial) | (ds_nav_aligned_df.trial_phase != "navigation")
         pos_coords = ds_nav_aligned_df.loc[outside_trial_mask, ("maze_position", "simple")].map(label2coord)
+        if any(pos_coords.isna()):
+            continue  # skip trial if some positions not defined
         goal_coords = ds_nav_aligned_df.loc[outside_trial_mask, ("goal", "")].map(label2coord)
         ds_nav_aligned_df.loc[outside_trial_mask, ("steps_to_goal", "future")] = [
             path_distances[src][dst] for src, dst in zip(pos_coords, goal_coords)
@@ -886,7 +888,9 @@ def get_folds_df(session, goal_stratified=True, valid_trials=None, return_unique
         # check there are are enogh trials to stratify by goals if not split trials randomly
         # only applies to early sessions
         if n_trials < len(session.goals) * 2:
-            folds_df = _get_folds_non_stratified(session, valid_trials, n_test_trials=(n_trials // 5))
+            folds_df = _get_folds_non_stratified(
+                session, valid_trials, n_test_trials=(n_trials // 5), return_unique_IDs=return_unique_IDs
+            )
         else:
             folds_df = _get_folds_goal_stratified(session, valid_trials, return_unique_IDs)
     else:

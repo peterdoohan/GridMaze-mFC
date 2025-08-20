@@ -7,6 +7,7 @@ import random
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from py import std
 from sklearn.linear_model import LogisticRegression
 from scipy.ndimage import gaussian_filter1d
 from joblib import Parallel, delayed
@@ -303,12 +304,11 @@ def _plot_trial_aligned_decoding_acc(
     ax.axhline(chance, color="black", linestyle="--", alpha=0.5)
     # plot acc
     time = perm_df.columns.values.astype(float)
-    mean_acc = perm_df.mean(axis=0)
+    mean_acc = perm_df.mean(axis=0).values
+    std_acc = perm_df.std(axis=0).values
     ax.plot(time, mean_acc, color=color, lw=2)
-    # plot error as 95% CIs
-    CIs = perm_df.quantile([0.025, 0.975], axis=0)
-    lower, upper = CIs.iloc[0].values, CIs.iloc[1].values
-    ax.fill_between(time, lower, upper, color=color, alpha=0.2)
+    # plot std across permutations ~= sem across subjects
+    ax.fill_between(time, mean_acc - std_acc, mean_acc + std_acc, color=color, alpha=0.2)
     # plot significance
     timepoint_pvalues = 1 - perm_df.gt(chance).mean(0)
     reject, pvals_corrected, _, _ = multipletests(timepoint_pvalues, alpha=0.05, method="fdr_bh", maxiter=1)
@@ -341,14 +341,15 @@ def _plot_event_aligned_decoding_acc(
     axes[1].set_yticks([])
     # plot acc
     mean_acc = perm_df.mean(axis=0)
+    std_acc = perm_df.std(axis=0)
     for ax, event in zip(axes, ["cue_aligned", "reward_aligned"]):
         event_acc = mean_acc.loc[event]
         event_time = event_acc.index.values.astype(float)
-        ax.plot(event_time, event_acc.values, color=color, lw=2)
-        # plot error as 95% CIs
-        CIs = perm_df[event].quantile([0.025, 0.975], axis=0)
-        lower, upper = CIs.iloc[0].values, CIs.iloc[1].values
-        ax.fill_between(event_time, lower, upper, color=color, alpha=0.2)
+        event_acc = event_acc.values
+        ax.plot(event_time, event_acc, color=color, lw=2)
+        # plot std across permutations ~= sem across subjects
+        event_std = std_acc.loc[event].values
+        ax.fill_between(event_time, event_acc - event_std, event_acc + event_std, color=color, alpha=0.2)
         # plot significance
         timepoint_pvalues = 1 - perm_df[event].gt(chance).mean(0)
         reject, pvals_corrected, _, _ = multipletests(timepoint_pvalues, alpha=0.05, method="fdr_bh", maxiter=1)

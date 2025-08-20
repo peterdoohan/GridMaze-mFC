@@ -16,8 +16,8 @@ from statsmodels.stats.multitest import multipletests
 from sklearn.preprocessing import StandardScaler
 from GridMaze.analysis.core import permute
 
-from . import bases as db
-from . import decoding_utils as du
+from GridMaze.analysis.distance_to_goal import bases as db
+from GridMaze.analysis.goal_coding import decoding_utils as du
 
 
 # %% Global Variables
