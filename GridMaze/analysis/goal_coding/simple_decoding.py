@@ -112,7 +112,6 @@ def plot_event_aligned_decoding(
     maze_names=["maze_1", "maze_2"],
     goal_subsets=["subset_1", "subset_2"],
     chance=1 / 12,
-    plot_smooth_SD=False,
     color="deepskyblue",
     y_max=0.65,
     axes=None,
@@ -141,13 +140,6 @@ def plot_event_aligned_decoding(
         _subject_means_df = subject_means.copy()
         _subject_means_df.columns = pd.MultiIndex.from_product([[event], _subject_means_df.columns])
         subject_mean_dfs.append(_subject_means_df)
-        # do stats before smoothing
-        if plot_smooth_SD:
-            subject_means = pd.DataFrame(
-                gaussian_filter1d(subject_means.values, sigma=plot_smooth_SD, axis=1),
-                index=subject_means.index,
-                columns=subject_means.columns,
-            )
         grand_mean = subject_means.mean().values
         grand_sem = subject_means.sem().values
         timepoints = np.sort(event_df.timepoint.unique())
@@ -159,7 +151,6 @@ def plot_event_aligned_decoding(
     n_timepoints = timepoints.shape[0]
     for ax, _reg in zip(axes, [reject[:n_timepoints], reject[n_timepoints:]]):
         plot_sig(_reg, timepoints, ax, sig_pos=y_max, sig_color=color)
-    return combined_subject_means
 
 
 def plot_trial_aligned_decoding(
@@ -168,7 +159,6 @@ def plot_trial_aligned_decoding(
     goal_subsets=["subset_1", "subset_2"],
     color="deepskyblue",
     chance=1 / 12,
-    plot_smooth_SD=False,
     y_max=0.32,
     ax=None,
 ):
@@ -190,13 +180,7 @@ def plot_trial_aligned_decoding(
     df = summary_df[(summary_df.maze_name.isin(maze_names)) & (summary_df.goal_subset.isin(goal_subsets))]
     subject_means = df.groupby(["timepoint", "subject_ID"]).accuracy.mean().unstack(level=0)
     # do stats before smoothing
-    reject_null = _timeseries_ttests(subject_means, chance)
-    if plot_smooth_SD:
-        subject_means = pd.DataFrame(
-            gaussian_filter1d(subject_means.values, sigma=plot_smooth_SD, axis=1),
-            index=subject_means.index,
-            columns=subject_means.columns,
-        )
+    reject_null, p_vals = _timeseries_ttests(subject_means, chance)
     grand_mean = subject_means.mean().values
     grand_sem = subject_means.sem().values
     x_range = np.arange(len(timepoints))

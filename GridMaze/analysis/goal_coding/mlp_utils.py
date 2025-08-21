@@ -12,7 +12,7 @@ from torch.utils.data import TensorDataset, DataLoader
 import numpy as np
 from sklearn.preprocessing import OneHotEncoder, LabelEncoder
 
-from GridMaze.analysis.goal_coding import event_aligned_decoding as egd
+from experiment.code.GridMaze.analysis.goal_coding import pseudo_trial_decoding as egd
 import pandas as pd
 
 # %% Global Variables

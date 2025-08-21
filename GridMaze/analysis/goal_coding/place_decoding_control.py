@@ -87,10 +87,10 @@ def plot_distance_aligned_control_decoding(
     colors=("deepskyblue", "darkorange", "limegreen"),
     residuals_comparison=["spike_count", "place_prob"],
     y_max=0.5,
-    axes=None,
+    ax=None,
 ):
     # set up figure
-    if axes is None:
+    if ax is None:
         f, ax = plt.subplots(1, 1, figsize=(3, 1.5), sharey=True)
     ax.spines[["top", "right"]].set_visible(False)
     ax.axhline(y=chance, color="k", ls=":", alpha=0.5)
