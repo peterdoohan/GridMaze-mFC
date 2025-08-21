@@ -5,17 +5,20 @@ Control analysis: neurons -> decoded dist over places --> decode goal (all cv)
 """
 
 # %% Imports
+from tkinter import font
 import pandas as pd
 import numpy as np
 from joblib import Parallel, delayed
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
+from matplotlib import pyplot as plt
 
 
 from GridMaze.maze import representations as mr
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import folds
 from GridMaze.analysis.goal_coding import decoding_utils as du
+from GridMaze.analysis.goal_coding import simple_decoding as sd
 
 
 # %% Global Variables
@@ -27,6 +30,101 @@ if not RESULTS_DIR.exists():
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # %% plotting results
+
+
+def plot_event_aligned_control_decoding(
+    summary_df,
+    maze_names=["maze_1", "maze_2"],
+    goal_subsets=["subset_1", "subset_2"],
+    chance=1 / 12,
+    cue_window=(-5, 10),
+    reward_window=(-10, 5),
+    plot_feature_sets=["spike_count", "place_prob", "place_direction_prob"],
+    colors=("deepskyblue", "darkorange", "limegreen"),
+    axes=None,
+):
+    # set up figure
+    if axes is None:
+        f, axes = plt.subplots(1, 2, figsize=(3, 1.5), sharey=True)
+    for event, ax in zip(["cue", "reward"], axes):
+        ax.axvline(x=0, color="k", ls="--", alpha=0.5)
+        ax.axhline(y=chance, color="k", ls=":", alpha=0.5)
+        ax.set_xlabel(event)
+    axes[0].spines[["top", "right"]].set_visible(False)
+    axes[1].spines[["top", "left", "right"]].set_visible(False)
+    axes[0].set_ylabel("acc.")
+    # process data
+    df = summary_df[(summary_df.maze_name.isin(maze_names)) & (summary_df.goal_subset.isin(goal_subsets))]
+    for event, window, ax in zip(["cue", "reward"], [cue_window, reward_window], axes):
+        event_df = df[(df.aligned_event == event) & (df.timepoint.between(*window))]
+        if event == "cue":
+            # we don't want to non nav times after the cue (eg, consuming reward)
+            event_df = event_df[~(event_df.timepoint.gt(0) & (event_df.trial_phase != "navigation"))]
+        subject_means = event_df.groupby(["timepoint", "subject_ID"]).accuracy.mean().accuracy
+        for f, color in zip(plot_feature_sets, colors):
+            _df = subject_means[f].unstack(level=0)
+            grand_mean = _df.mean()
+            grand_sem = _df.sem()
+            timepoints = grand_mean.index.values
+            ax.plot(timepoints, grand_mean, label=f, color=color)
+            ax.fill_between(
+                timepoints,
+                grand_mean - grand_sem,
+                grand_mean + grand_sem,
+                color=color,
+                alpha=0.2,
+            )
+    axes[0].legend(fontsize=8)
+
+
+def plot_distance_aligned_control_decoding(
+    summary_df,
+    maze_names=["maze_1", "maze_2"],
+    goal_subsets=["subset_1", "subset_2"],
+    chance=1 / 12,
+    max_distance=20,
+    plot_feature_sets=["spike_count", "place_prob", "place_direction_prob"],
+    colors=("deepskyblue", "darkorange", "limegreen"),
+    residuals_comparison=["spike_count", "place_prob"],
+    y_max=0.5,
+    axes=None,
+):
+    # set up figure
+    if axes is None:
+        f, ax = plt.subplots(1, 1, figsize=(3, 1.5), sharey=True)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.axhline(y=chance, color="k", ls=":", alpha=0.5)
+    ax.set_xlabel("steps to goal")
+    ax.set_ylabel("acc.")
+    # process data
+    df = summary_df[(summary_df.maze_name.isin(maze_names)) & (summary_df.goal_subset.isin(goal_subsets))]
+    df = df[
+        (df.aligned_event == "reward")
+        & df.timepoint.le(0)
+        & df.trial_phase.isin(["navigation"])
+        & df.steps_to_goal.le(max_distance)
+    ]
+    # update steps to goal to int (ronund down)
+    df[("steps_to_goal", "")] = df.steps_to_goal.astype(int)
+    subject_means = df.groupby(["subject_ID", "steps_to_goal"]).accuracy.mean().accuracy
+    for f, color in zip(plot_feature_sets, colors):
+        _df = subject_means[f].unstack(level=1)
+        grand_mean = _df.mean()
+        grand_sem = _df.sem()
+        distances = grand_mean.index.values
+        ax.plot(distances, grand_mean, label=f, color=color)
+        ax.fill_between(
+            distances,
+            grand_mean - grand_sem,
+            grand_mean + grand_sem,
+            color=color,
+            alpha=0.2,
+        )
+    ax.legend(fontsize=8)
+    # do stats
+    residuals = (subject_means[residuals_comparison[0]] - subject_means[residuals_comparison[1]]).unstack(level=1)
+    reject, p_vals = sd._timeseries_ttests(residuals, chance=0)
+    sd.plot_sig(reject, distances, ax, sig_pos=y_max, sig_color="k")
 
 
 # %% summary function

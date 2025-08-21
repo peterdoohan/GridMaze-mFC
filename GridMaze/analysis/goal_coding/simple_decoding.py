@@ -72,6 +72,41 @@ def plot_trial_aligned_decoding_summary(summary_df, axes=None):
     return
 
 
+def plot_distance_aligned_decoding(
+    summary_df,
+    maze_names=["maze_1", "maze_2"],
+    goal_subsets=["subset_1", "subset_2"],
+    chance=1 / 12,
+    color="deepskyblue",
+    max_dist=20,
+    y_max=0.5,
+    axes=None,
+):
+    """ """
+    # set up figure
+    if axes is None:
+        f, ax = plt.subplots(1, 1, figsize=(3, 1.5), sharey=True)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.axhline(y=chance, color="k", ls=":", alpha=0.5)
+    ax.set_xlabel("steps to goal")
+    ax.set_ylabel("acc.")
+    # process data
+    df = summary_df[(summary_df.maze_name.isin(maze_names)) & (summary_df.goal_subset.isin(goal_subsets))]
+    df = df[(df.event == "reward") & df.timepoint.le(0) & df.trial_phase.isin(["navigation"])]
+    subject_means = df.groupby(["subject_ID", "steps_to_goal"]).accuracy.mean().unstack(level=1)
+    grand_mean = subject_means.mean()
+    distances = grand_mean.index.values
+    grand_mean = grand_mean.values
+    grand_sem = subject_means.sem().values
+    # plot
+    ax.plot(distances, grand_mean, color=color)
+    ax.fill_between(distances, grand_mean - grand_sem, grand_mean + grand_sem, color=color, alpha=0.2)
+    # do stats
+    reject, p_vals = _timeseries_ttests(subject_means, chance=chance)
+    plot_sig(reject, distances, ax, sig_pos=y_max, sig_color=color)
+    ax.set_xlim(0, max_dist)
+
+
 def plot_event_aligned_decoding(
     summary_df,
     maze_names=["maze_1", "maze_2"],
