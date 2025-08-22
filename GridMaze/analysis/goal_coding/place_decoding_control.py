@@ -25,7 +25,7 @@ from GridMaze.analysis.goal_coding import simple_decoding as sd
 
 from GridMaze.paths import RESULTS_PATH
 
-RESULTS_DIR = RESULTS_PATH / "goal_decoding" / "place_decoding_control"
+RESULTS_DIR = RESULTS_PATH / "goal_coding" / "place_decoding_control"
 if not RESULTS_DIR.exists():
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -41,6 +41,8 @@ def plot_event_aligned_control_decoding(
     reward_window=(-10, 5),
     plot_feature_sets=["spike_count", "place_prob", "place_direction_prob"],
     colors=("deepskyblue", "darkorange", "limegreen"),
+    residuals_comparison=["spike_count", "place_prob"],
+    y_max=0.5,
     axes=None,
 ):
     # set up figure
@@ -55,12 +57,16 @@ def plot_event_aligned_control_decoding(
     axes[0].set_ylabel("acc.")
     # process data
     df = summary_df[(summary_df.maze_name.isin(maze_names)) & (summary_df.goal_subset.isin(goal_subsets))]
+    residual_dfs = []
     for event, window, ax in zip(["cue", "reward"], [cue_window, reward_window], axes):
         event_df = df[(df.aligned_event == event) & (df.timepoint.between(*window))]
         if event == "cue":
             # we don't want to non nav times after the cue (eg, consuming reward)
             event_df = event_df[~(event_df.timepoint.gt(0) & (event_df.trial_phase != "navigation"))]
         subject_means = event_df.groupby(["timepoint", "subject_ID"]).accuracy.mean().accuracy
+        res_df = (subject_means[residuals_comparison[0]] - subject_means[residuals_comparison[1]]).unstack(level=0)
+        res_df.columns = pd.MultiIndex.from_product([[event], res_df.columns])
+        residual_dfs.append(res_df)
         for f, color in zip(plot_feature_sets, colors):
             _df = subject_means[f].unstack(level=0)
             grand_mean = _df.mean()
@@ -75,6 +81,13 @@ def plot_event_aligned_control_decoding(
                 alpha=0.2,
             )
     axes[0].legend(fontsize=8)
+    event_timepoints = [df[event].columns.values for df, event in zip(residual_dfs, ["cue", "reward"])]
+    residuals = pd.concat(residual_dfs, axis=1)
+    reject, p_values = sd._timeseries_ttests(residuals, chance=0)
+    for ax, timepoints, _reject in zip(
+        axes, event_timepoints, [reject[: len(event_timepoints[0])], reject[len(event_timepoints[0]) :]]
+    ):
+        sd.plot_sig(_reject, timepoints, ax, sig_pos=y_max, sig_color="grey")
 
 
 def plot_distance_aligned_control_decoding(

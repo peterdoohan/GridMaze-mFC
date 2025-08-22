@@ -11,7 +11,7 @@ from sklearn.linear_model import LogisticRegression
 from scipy.ndimage import gaussian_filter1d
 from joblib import Parallel, delayed
 from sklearn.neural_network import MLPClassifier
-from GridMaze.analysis.event_aligned import mlp_utils as mu
+from GridMaze.analysis.goal_coding import mlp_utils as mu
 from statsmodels.stats.multitest import multipletests
 import seaborn as sns
 

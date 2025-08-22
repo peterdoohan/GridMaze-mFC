@@ -202,6 +202,8 @@ class Cluster:
             }
         elif feature == "trial_events":
             default_kwargs = {"smooth_SD": 10, "color": "darkgreen", "goal_stratified": False}
+        elif feature == "event_aligned":
+            default_kwargs = {"smooth_SD": 20, "color": "black", "goal_stratified": False}
 
         elif feature == "spatial":
             default_kwargs = {
@@ -371,6 +373,19 @@ class Cluster:
             ].reset_index(drop=True)
             return cluster_tuning_data
 
+        elif feature == "event_aligned":
+            try:
+                analysis_data_structure = "event_aligned_rates.parquet"
+                event_aligned_rates_df = load_data.load(self.analysis_data_path / analysis_data_structure)
+            except FileNotFoundError:
+                self._print_missing_data_error(self, feature)
+                return None
+            # filter for cluster
+            cluster_tuning_data = event_aligned_rates_df[
+                event_aligned_rates_df.cluster_unique_ID == self.cluster_unique_ID
+            ].reset_index(drop=True)
+            return cluster_tuning_data
+
         elif feature == "spatial":
             # load data
             try:
@@ -516,6 +531,15 @@ class Cluster:
                 smooth_SD=feature_kwargs["smooth_SD"],
                 goal_stratified=feature_kwargs["goal_stratified"],
                 ax=ax,
+                color=feature_kwargs["color"],
+            )
+
+        elif feature == "event_aligned":
+            events.plot_event_aligned_rates(
+                tuning_data,
+                smooth_SD=feature_kwargs["smooth_SD"],
+                goal_stratified=feature_kwargs["goal_stratified"],
+                axes=ax,
                 color=feature_kwargs["color"],
             )
         elif feature == "spatial":

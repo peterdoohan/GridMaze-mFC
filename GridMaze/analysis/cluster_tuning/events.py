@@ -30,7 +30,7 @@ def plot_session_trial_aligned_rates(session, goal_stratified=False):
         return_unique_IDs=True,
         single_units=True,
     )
-    for cluster_unique_ID in keep_clusters[:1]:
+    for cluster_unique_ID in keep_clusters:
         cluster_trial_aligned_rates = trial_aligned_rates_df[
             trial_aligned_rates_df.cluster_unique_ID == cluster_unique_ID
         ]
@@ -71,7 +71,6 @@ def plot_trial_aligned_rates(trial_aligned_rates, goal_stratified=False, smooth_
             sem = aligned_rates_sem.to_numpy()
             if smooth_SD:
                 mean = gaussian_filter1d(mean, smooth_SD)
-                # sem = gaussian_filter1d(sem, smooth_SD)
             _plot_trial_aligned_rates(mean, None, time, ax, goal2color[goal])
     return
 
@@ -105,12 +104,19 @@ def plot_session_event_aligned_rates(session, goal_stratified=False):
     return
 
 
-def plot_event_aligned_rates(event_aligned_rates, goal_stratified=False, smooth_SD=10, axes=None, color="black"):
+def plot_event_aligned_rates(
+    event_aligned_rates,
+    goal_stratified=False,
+    smooth_SD=15,
+    axes=None,
+    cue_window=(-5, 5),
+    reward_window=(-5, 5),
+    color="black",
+):
     """ """
     events = ["cue", "reward"]
     if axes is None:
         f, axes = plt.subplots(1, 2, figsize=(6, 3), clear=True, sharey=True)
-    f.subplots_adjust(wspace=0.01)
     axes[0].spines["right"].set_visible(False)
     axes[0].spines["top"].set_visible(False)
     axes[1].spines["right"].set_visible(False)
@@ -136,24 +142,26 @@ def plot_event_aligned_rates(event_aligned_rates, goal_stratified=False, smooth_
             time = aligned_rates_mean[key].index.to_numpy().astype(float)
             _plot_event_aligned_rates(mean, sem, time, ax, event, color)
     else:
-        goal2color = mp.get_goal2standard_color()
+        goals = event_aligned_rates.goal.unique()
+        goal2color = mp._get_goal2color(goals, cmap="hls")
         for goal in event_aligned_rates.goal.unique():
             aligned_rates_mean = event_aligned_rates[event_aligned_rates.goal == goal].firing_rate.mean(axis=0)
             aligned_rates_sem = event_aligned_rates[event_aligned_rates.goal == goal].firing_rate.sem(axis=0)
             for ax, event in zip(axes, events):
                 key = event + "_aligned"
                 mean = aligned_rates_mean[key].to_numpy()
-                sem = aligned_rates_sem[key].to_numpy()
                 if smooth_SD:
                     mean = gaussian_filter1d(mean, smooth_SD)
-                    sem = gaussian_filter1d(sem, smooth_SD)
                 time = aligned_rates_mean[key].index.to_numpy().astype(float)
-                _plot_event_aligned_rates(mean, sem, time, ax, event, goal2color[goal])
+                _plot_event_aligned_rates(mean, None, time, ax, event, goal2color[goal])
+    for ax, window in zip(axes, [cue_window, reward_window]):
+        ax.set_xlim(*window)
     return
 
 
 def _plot_event_aligned_rates(mean, sem, time, ax, event, color):
     """ """
     ax.plot(time, mean, color=color, label=event)
-    ax.fill_between(time, mean - sem, mean + sem, color=color, alpha=0.2)
+    if sem is not None:
+        ax.fill_between(time, mean - sem, mean + sem, color=color, alpha=0.2)
     return
