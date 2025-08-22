@@ -17,7 +17,6 @@ from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import filter as filt
 from GridMaze.analysis.core import convert
 from GridMaze.analysis.distance_to_goal import distributions as dd
-from GridMaze.analysis.distance_to_goal import population_tuning as pt
 from GridMaze.analysis.processing import get_distance_tuning_metrics_df as dtm
 
 from GridMaze.analysis.cluster_tuning import distance_to_goal as dtg

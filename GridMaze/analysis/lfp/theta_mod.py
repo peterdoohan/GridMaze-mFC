@@ -39,7 +39,7 @@ THETA_RANGE = (7, 11)
 def plot_population_theta_mod(population_theta_df, ax=None):
     """ """
     # average theta mod across subjects
-    sub_mean_df = population_theta_df.groupby(level=0).mean()
+    sub_mean_df = population_theta_df.groupby("subject_ID").prop_spikes.mean().prop_spikes
     # normalise and conver to % normalised firing rate
     sub_mean_df = sub_mean_df.div(sub_mean_df.mean(axis=1), axis=0).mul(100)
     # plot mean and sem across subjects
@@ -62,7 +62,7 @@ def plot_population_theta_mod(population_theta_df, ax=None):
         capsize=None,
         elinewidth=2,
     )
-    ax.set_ylim(95, 105)
+    ax.set_ylim(97, 103)
     ax.set_xlabel("theta phase")
     ax.set_ylabel("Norm. firing rate (%)")
     ax.set_xticks(np.arange(-np.pi, np.pi + 0.1, np.pi / 2))
@@ -182,7 +182,9 @@ def get_population_theta_mod(verbose=False, save=False):
     if save_path.exists() and not save:
         if verbose:
             print(f"Loading population theta modulation from {save_path}")
-        return pd.read_csv(save_path, index_col=[0, 1])
+        df = pd.read_csv(save_path, index_col=[0], header=[0, 1])
+        df.columns = pd.MultiIndex.from_tuples([(c if "Unnamed" not in c[1] else (c[0], "")) for c in df.columns])
+        return df
 
     dfs = []
     for subject_ID in SUBJECT_IDS:
