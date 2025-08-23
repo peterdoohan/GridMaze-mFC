@@ -5,14 +5,16 @@ Can we decode the future position/place-direction of the animal from neural avti
 """
 
 # %% Imports
+from cProfile import label
 import json
 import copy
-import re
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 import matplotlib.pyplot as plt
+from py import process
 from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
 from scipy.stats import ttest_1samp
 from statsmodels.stats.multitest import multipletests
 
@@ -182,7 +184,182 @@ def quick_plot(df):
     diff.plot()
 
 
+# %% Dev new core decoding function
+
+
+def test(
+    session,
+    include_multi_units=True,
+    max_steps_to_goal=30,
+    resolution=0.2,
+    modes=["future", "past"],
+    offset=12,
+    state_type="place_direction",
+    min_spikes=300,
+    sqrt_spikes=True,
+    n_folds=5,
+    alpha="opt",
+    normalise_X=True,
+    spikes_reg_weight=None,
+    n_jobs=-1,
+    verbose=True,
+):
+    """ """
+    # input data (see get_input_df for details)
+    input_df = get_input_df(
+        session,
+        include_multi_units,
+        max_steps_to_goal,
+        resolution,
+        modes,
+        offset,
+        state_type,
+        min_spikes,
+    )
+    simple_maze = session.simple_maze()
+    _process_kwargs = {
+        "session": session,
+        "input_df": input_df,
+        "sqrt_spikes": sqrt_spikes,
+        "spikes_reg_weight": spikes_reg_weight,
+        "alpha": alpha,
+        "simple_maze": simple_maze,
+        "state_type": state_type,
+        "n_folds": n_folds,
+        "normalise_X": normalise_X,
+        "verbose": verbose,
+    }
+    if n_jobs is not None:
+        results = Parallel(n_jobs=n_jobs, verbose=True)(
+            delayed(_process_offset)(mode, off, **_process_kwargs)
+            for mode in modes
+            for off in range(0, offset + 1)
+            if off != 0 or mode == modes[0]
+        )
+    else:
+        results = [
+            _process_offset(mode, off, **_process_kwargs)
+            for mode in modes
+            for off in range(0, offset + 1)
+            if off != 0 or mode == modes[0]
+        ]
+    return results
+
+
+def _process_offset(
+    mode,
+    off,
+    session,
+    input_df,
+    sqrt_spikes,
+    spikes_reg_weight,
+    alpha,
+    simple_maze,
+    state_type,
+    n_folds,
+    normalise_X,
+    verbose,
+):
+    if verbose:
+        print(f"processing: {mode}, offset: {off}")
+    offset_results = []
+    # filter input df for times where mode-offsets are defined
+    _input_df = input_df[~input_df[mode][off].isnull()]
+    # gather data for decoding
+    S = _input_df.spike_count.values  # spikes
+    if sqrt_spikes:
+        S = np.sqrt(S)
+    if spikes_reg_weight is not None:
+        assert alpha != "opt", "use spike_reg_weight when not cv optimsing reg across train data"
+        S = S * spikes_reg_weight
+    N = convert.place_direction2onehot(
+        _input_df.place_direction.values, simple_maze=simple_maze
+    )  # nusance regressors for current pd
+    Y_label = _input_df[mode][off].values  # future/past place/place-direction (what we are predicting from spikes)
+    if state_type == "place":
+        Y = np.array([x.split("_")[0] for x in Y_label])
+    elif state_type == "place_direction":
+        Y = Y_label
+    else:
+        raise ValueError(f"Unknown state type: {state_type}. Must be 'place' or 'place_direction'.")
+    feature_set2X = {
+        "spatial_spikes": np.concat([N, S], axis=1),  # baseline + spikes
+        "spatial": N,  # baseline
+    }
+    # define cv folds based on trials available in this subsampling of the data
+    folds_df = folds.get_folds_df(
+        session,
+        goal_stratified=False,
+        valid_trials=_input_df.trial.unique(),
+        n_folds=n_folds,
+        return_unique_IDs=True,
+    )
+    _folds = folds_df.columns.get_level_values(0).unique()
+    for fold in _folds:
+        fold_df = folds_df[fold]
+        train_trials, test_trials = [fold_df[t].unstack().dropna().values for t in ["train", "test"]]
+        train_mask, test_mask = [
+            _input_df.trial_unique_ID.isin(trials).values for trials in [train_trials, test_trials]
+        ]
+        Y_train, Y_test = Y[train_mask], Y[test_mask]
+        # init results df (contains info rel to sample predictions eg, trial, moving etc.)
+        res = _input_df[test_mask].drop(columns=["spike_count", "past", "future"], level=0)
+        if alpha == "opt":
+            feature_set2alpha = search_reg(fold_df, _input_df, Y, feature_set2X, normalise_X)
+        else:
+            feature_set2alpha = {label: alpha for label, alpha in feature_set2X.keys()}
+        for label, X in feature_set2X.items():
+            X_train, X_test = X[train_mask, :], X[test_mask, :]
+            if normalise_X:
+                scaler = StandardScaler()
+                scaler.fit(X_train)
+                X_train, X_test = scaler.transform(X_train), scaler.transform(X_test)
+            # fit model
+            model = LogisticRegression(
+                C=feature_set2alpha[label], random_state=0, max_iter=10_000, class_weight="balanced"
+            )
+            model.fit(X_train, Y_train)
+            # evaluate model
+            Y_hat = model.predict(X_test)
+            acc = (Y_test == Y_hat).astype(int)
+            res[("accuracy", label)] = acc
+            res[("fold", "")] = fold
+            res[("mode", "")] = mode
+            res[("offset", "")] = off
+            offset_results.append(res)
+    return offset_results
+
+
+def search_reg(fold_df, _input_df, Y, feature_set2X, normalise_X, reg_range=np.logspace(-4, 4, 10)):
+    v_df = fold_df.train
+    v_folds = v_df.columns.values
+    results = np.zeros((len(v_folds), len(feature_set2X), len(reg_range)))
+    for i, v in enumerate(v_folds):
+        val_trials = v_df[[col for col in v_folds if col != v]].stack().dropna().values
+        test_trials = v_df[v].dropna().values
+        val_mask, test_mask = (
+            _input_df.trial_unique_ID.isin(val_trials).values,
+            _input_df.trial_unique_ID.isin(test_trials).values,
+        )
+        y_val, y_test = Y[val_mask], Y[test_mask]
+        for j, X in enumerate(feature_set2X.values()):
+            X_val, X_test = X[val_mask], X[test_mask]
+            if normalise_X:
+                scaler = StandardScaler()
+                scaler.fit(X_val)
+                X_val, X_test = scaler.transform(X_val), scaler.transform(X_test)
+            for k, alpha in enumerate(reg_range):
+                print(f"fold: {i}, feat: {j}, alpha: {alpha}")
+                model = LogisticRegression(C=alpha, random_state=0, max_iter=10_000, class_weight="balanced")
+                model.fit(X_val, y_val)
+                results[i, j, k] = model.score(X_test, y_test)
+    opt_alphas = reg_range[results.mean(0).argmax(1)]
+    return {label: alpha for label, alpha in zip(feature_set2X.keys(), opt_alphas)}
+
+
 # %%
+
+
 def get_session_future_place_decoding(
     session,
     include_multi_units=True,
@@ -298,8 +475,8 @@ def get_input_df(
     include_multi_units=True,
     max_steps_to_goal=30,
     resolution=0.1,
-    mode="future",
-    offset=6,
+    modes=["future", "past"],
+    offset=12,
     state_type="place",
     min_spikes=300,
 ):
@@ -332,12 +509,13 @@ def get_input_df(
     )
 
     # add future, past state information
-    future_past_df = get_past_and_future_states(
-        navigation_spikes_df, state_type=state_type, past_offset=offset, future_offset=offset
-    )
-    navigation_spikes_df = pd.concat(
-        [navigation_spikes_df, future_past_df.xs(mode, axis=1, level=0, drop_level=False)], axis=1
-    )
+    future_past_dfs = []
+    for mode in modes:
+        future_past_df = get_past_and_future_states(
+            navigation_spikes_df, state_type=state_type, past_offset=offset, future_offset=offset
+        )
+        future_past_dfs.append(future_past_df.xs(mode, axis=1, level=0, drop_level=False))
+    navigation_spikes_df = pd.concat([navigation_spikes_df, *future_past_dfs], axis=1)
 
     # filter data
     navigation_spikes_df = filt.filter_navigation_rates_df(
