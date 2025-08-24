@@ -137,7 +137,7 @@ def get_place_decoding_summary(
     verbose=False,
 ):
     """ """
-    save_path = RESULTS_DIR / f"{mode}_place_decoding_summary.csv"
+    save_path = RESULTS_DIR / f"{mode}_place_decoding_summary2.csv"
     if not save and save_path.exists():
         if verbose:
             print(f"Loading existing results from {save_path}")
@@ -177,11 +177,144 @@ def get_place_decoding_summary(
 # %%
 
 
-def quick_plot(df):
+def plot_future_decoding_summary(summary_df, decision_points="future", steps_to_goal=None, plot_as="diff", ax=None):
     """ """
-    _df = df.groupby(["offset", "regressors"]).score.mean().unstack()
-    diff = _df["spikes_place_direction"] - _df["place_direction"]
-    diff.plot()
+    # filter for decision points
+    if decision_points:
+        # filter decoded samples for only those at decision points where future is less predicted
+        # by current location
+        dfs = []
+        for maze_name in ["maze_1", "maze_2"]:
+            maze_df = summary_df[summary_df.maze_name == maze_name]
+            simple_maze = mr.get_simple_maze(maze_name)
+            if decision_points == "future":
+                decision_points = get_decision_points(
+                    simple_maze, mode="future", edges_only=True, node_only=False, return_as="strings", plot=False
+                )
+            elif decision_points == "past":
+                decision_points = get_decision_points(
+                    simple_maze, mode="past", edges_only=False, node_only=True, return_as="strings", plot=False
+                )
+            dfs.append(maze_df[maze_df.place_direction.isin(decision_points)])
+        df = pd.concat(dfs, axis=0)
+    # filter for steps to goal
+    if steps_to_goal is not None:
+        # update steps to goal
+        df[("steps_to_goal", "future")] = df.steps_to_goal.future.astype(int)
+        df = df[df.steps_to_goal.future.between(*steps_to_goal)]
+    # process for plotting
+    subject_means = df.groupby(["subject_ID", "mode", "offset"]).accuracy.mean().accuracy
+    # plot
+    if plot_as == "diff":
+        _plot_decoding_diff(subject_means, ax=ax)
+    elif plot_as == "raw":
+        _plot_decoding_raw(subject_means, ax=ax)
+    else:
+        raise ValueError(f"Unknown plot_as: {plot_as}. Must be 'diff' or 'raw'.")
+
+
+def _plot_decoding_diff(subject_means, colors=["hotpink", "blueviolet"], ax=None):
+    # set up fig
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=(5, 2.5))
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.axvline(0, color="k", linestyle="--", alpha=0.5)
+    ax.axhline(0, color="k", linestyle="--", alpha=0.5)
+    ax.set_xlabel("steps in future/past")
+    ax.set_ylabel("decoding acc. \n (chance normalised)")
+    # process
+    diff = (subject_means.spatial_spikes - subject_means.spatial).unstack(level=0).T
+    grand_mean = diff.mean()
+    grand_sem = diff.sem()
+    # plot
+    for mode, color in zip(["past", "future"], colors):
+        mean = grand_mean[mode].values
+        sem = grand_sem[mode].values
+        x_vals = grand_mean[mode].index.values
+        if mode == "past":
+            x_vals = -1 * x_vals
+        ax.errorbar(
+            x_vals,
+            mean,
+            yerr=sem,
+            marker="o",
+            linestyle=None,
+            color=color,
+            linewidth=2,
+            elinewidth=2,
+            capsize=0,
+            markersize=6,
+        )
+
+
+def _plot_decoding_raw(subject_means, colors=[("hotpink", "mediumvioletred"), ("blueviolet", "indigo")], ax=None):
+    # set up fig
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=(5, 2.5))
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.axvline(0, color="k", linestyle="--", alpha=0.5)
+    ax.axhline(0, color="k", linestyle="--", alpha=0.5)
+    ax.set_xlabel("steps in future/past")
+    ax.set_ylabel("decoding acc.")
+    # process
+    grouped = subject_means.groupby(level=[1, 2])
+    grand_mean = grouped.mean()
+    grand_sem = grouped.sem()
+    # plot
+    for mode, mode_colors in zip(["past", "future"], colors):
+        for fs, color in zip(["spatial_spikes", "spatial"], mode_colors):
+            mean = grand_mean.loc[mode, fs].values
+            sem = grand_sem.loc[mode, fs].values
+            x_vals = grand_mean.loc[mode, fs].index.values
+            if mode == "past":
+                x_vals = -1 * x_vals
+            ax.plot(x_vals, mean, color=color, label=f"{fs} ({mode})", lw=1.5)
+            ax.fill_between(x_vals, mean - sem, mean + sem, color=color, alpha=0.2)
+    ax.legend(fontsize=8)
+
+
+def get_place_decoding_summary2(
+    offset=12,
+    subjects="all",
+    maze_names=["maze_1", "maze_2"],
+    days_on_maze="late",
+    save=False,
+    verbose=False,
+):
+    """ """
+    save_path = RESULTS_DIR / f"place_decoding_summary2.parquet"
+    if not save and save_path.exists():
+        if verbose:
+            print(f"Loading existing results from {save_path}")
+        return pd.read_parquet(save_path)
+    if verbose:
+        print("Loading sessions ...")
+    sessions = gs.get_maze_sessions(
+        subject_IDs=subjects,
+        maze_names=maze_names,
+        days_on_maze=days_on_maze,
+        with_data=["navigation_df", "navigation_spike_counts_df", "cluster_metrics", "trials_df"],
+        must_have_data=True,
+    )
+    dfs, failed_sessions = [], []
+    for session in sessions:
+        if verbose:
+            print(session.name)
+        try:
+            results_df = test(session, offset=offset)  # defualt settings
+            results_df[("subject_ID", "")] = session.subject_ID
+            results_df[("maze_name", "")] = session.maze_name
+            results_df[("day_on_maze", "")] = session.day_on_maze
+            dfs.append(results_df)
+        except Exception as e:
+            print(f"Error processing session {session.name}: {e}")
+            failed_sessions.append(session.name)
+    summary_df = pd.concat(dfs, axis=0)
+    if save:
+        summary_df.to_parquet(save_path)
+        if verbose:
+            print(f"Saving results to {save_path}")
+    return summary_df, failed_sessions
 
 
 # %% Dev new core decoding function
@@ -198,9 +331,9 @@ def test(
     min_spikes=300,
     sqrt_spikes=True,
     n_folds=5,
-    alpha="opt",
+    alpha=1,
     normalise_X=True,
-    spikes_reg_weight=None,
+    spikes_reg_weight=0.1,
     n_jobs=-1,
     verbose=True,
 ):
@@ -231,19 +364,15 @@ def test(
     }
     if n_jobs is not None:
         results = Parallel(n_jobs=n_jobs, verbose=True)(
-            delayed(_process_offset)(mode, off, **_process_kwargs)
-            for mode in modes
-            for off in range(0, offset + 1)
-            if off != 0 or mode == modes[0]
+            delayed(_process_offset)(mode, off, **_process_kwargs) for mode in modes for off in range(1, offset + 1)
         )
     else:
-        results = [
-            _process_offset(mode, off, **_process_kwargs)
-            for mode in modes
-            for off in range(0, offset + 1)
-            if off != 0 or mode == modes[0]
-        ]
-    return results
+        results = [_process_offset(mode, off, **_process_kwargs) for mode in modes for off in range(1, offset + 1)]
+    _results = []
+    for res in results:
+        _results.extend(res)
+    results_df = pd.concat(_results, axis=0, ignore_index=True)
+    return results_df
 
 
 def _process_offset(
@@ -296,6 +425,8 @@ def _process_offset(
     )
     _folds = folds_df.columns.get_level_values(0).unique()
     for fold in _folds:
+        if verbose:
+            print(f"  fold {fold}")
         fold_df = folds_df[fold]
         train_trials, test_trials = [fold_df[t].unstack().dropna().values for t in ["train", "test"]]
         train_mask, test_mask = [
@@ -307,7 +438,7 @@ def _process_offset(
         if alpha == "opt":
             feature_set2alpha = search_reg(fold_df, _input_df, Y, feature_set2X, normalise_X)
         else:
-            feature_set2alpha = {label: alpha for label, alpha in feature_set2X.keys()}
+            feature_set2alpha = {label: alpha for label in feature_set2X.keys()}
         for label, X in feature_set2X.items():
             X_train, X_test = X[train_mask, :], X[test_mask, :]
             if normalise_X:
@@ -349,7 +480,6 @@ def search_reg(fold_df, _input_df, Y, feature_set2X, normalise_X, reg_range=np.l
                 scaler.fit(X_val)
                 X_val, X_test = scaler.transform(X_val), scaler.transform(X_test)
             for k, alpha in enumerate(reg_range):
-                print(f"fold: {i}, feat: {j}, alpha: {alpha}")
                 model = LogisticRegression(C=alpha, random_state=0, max_iter=10_000, class_weight="balanced")
                 model.fit(X_val, y_val)
                 results[i, j, k] = model.score(X_test, y_test)
@@ -621,7 +751,7 @@ def get_past_and_future_states(
     return output_df
 
 
-def get_decision_points(simple_maze, mode="future", return_as="strings", plot=False):
+def get_decision_points(simple_maze, mode="future", edges_only=False, node_only=False, return_as="strings", plot=False):
     """
     Computes and returns the set of decision point identifiers in a given maze.
 
@@ -643,14 +773,16 @@ def get_decision_points(simple_maze, mode="future", return_as="strings", plot=Fa
             other_node = node1 if mode == "future" else node2
             if len(list(simple_maze.neighbors(check_node))) >= 3:
                 dir_ = deltas[tuple(np.array(node2) - np.array(node1))]
-                decision_points.add(
-                    (coord2label[other_node], dir_)
-                )  # going in this direction from node1 yields a decision point
-                try:
-                    edge = coord2label[(node1, node2)]
-                except:
-                    edge = coord2label[(node2, node1)]
-                decision_points.add((edge, dir_))
+                if not edges_only:
+                    decision_points.add(
+                        (coord2label[other_node], dir_)
+                    )  # going in this direction from node1 yields a decision point
+                if not node_only:
+                    try:
+                        edge = coord2label[(node1, node2)]
+                    except:
+                        edge = coord2label[(node2, node1)]
+                    decision_points.add((edge, dir_))
     if plot:
         dps = pd.Series(index=pd.MultiIndex.from_tuples(list(decision_points)), data=1)
         mp.plot_directed_heatmap(simple_maze, dps, colormap="Greys", colorbar=False)
