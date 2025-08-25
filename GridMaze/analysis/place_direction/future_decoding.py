@@ -42,136 +42,7 @@ RESULTS_DIR = RESULTS_PATH / "place_direction" / "future_decoding"
 
 def _get_stats_df(future_df, past_df):
     """ """
-    stats_df = pd.DataFrame(index=np.arange(1, future_df.offset.max() + 1), columns=["future", "past"])
-    for mode, df in zip(["future", "past"], [future_df, past_df]):
-        if df is None:
-            continue
-        scores_df = df.groupby(["subject_ID", "regressors", "offset"]).score.mean().unstack(level=(1, 2))
-        diff = scores_df["spikes_place_direction"] - scores_df["place_direction"]
-        diff = diff.drop(columns=[0])
-        # ttest each offset
-        p_values = ttest_1samp(diff.values, 0, axis=0, alternative="greater").pvalue
-        # correct for multiple comparisons
-        reject, pvals_corrected, _, _ = multipletests(p_values, method="fdr_bh", alpha=0.05)
-        stats_df.loc[:, mode] = pvals_corrected
-    return stats_df
-
-
-def plot_place_deocoding_summary(
-    future_df, past_df=None, normalise=False, colors=["violet", "lightskyblue"], print_stats=True, ax=None
-):
-    """ """
-    # set up figure
-    if ax is None:
-        fig, ax = plt.subplots(1, 1, figsize=(5, 2))
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.axhline(0, color="k", linestyle="--", linewidth=0.5)
-    ax.set_xlabel("Steps in the past/future")
-    ax.set_ylabel("Decoding accuracy \n (chance norm.)")
-
-    for mode, df, color in zip(["future", "past"], [future_df, past_df], colors):
-        if df is None:
-            continue
-        # average over folds
-        scores_df = (
-            df.groupby(["subject_ID", "regressors", "offset"]).score.mean().unstack(level=(1, 2))
-        )  # [subjects, regressors x offsets]
-        pd_scores, spike_scores, pd_spikes_scores = (
-            scores_df["place_direction"],
-            scores_df["spikes"],
-            scores_df["spikes_place_direction"],
-        )
-
-        diff = pd_spikes_scores - pd_scores
-        # normalise
-        if normalise:
-            metric = diff / (1 - pd_scores)
-        else:
-            metric = diff
-        # plot
-        mean = metric.mean()
-        mean_ = mean[mean.index > 0]
-        mean_0 = mean[mean.index == 0]
-        sem = metric.sem()
-        sem_ = sem[sem.index > 0]
-        sem_0 = sem[sem.index == 0]
-        x_0 = mean_0.index.values
-        x_ = mean_.index.values
-        if mode == "past":
-            x_ = -x_
-        ax.errorbar(
-            x_0,
-            mean_0.values,
-            yerr=sem_0.values,
-            marker="o",
-            color="grey",
-        )
-        ax.errorbar(
-            x_,
-            mean_.values,
-            yerr=sem_.values,
-            label=mode,
-            marker="o",
-            color=color,
-            linestyle="-",
-        )
-    max_offset = future_df.offset.max()
-    ax.set_xticks(np.arange(-max_offset, max_offset + 1, 2))
-    ax.set_xticklabels(np.arange(-max_offset, max_offset + 1, 2))
-    if print_stats:
-        stats_df = _get_stats_df(future_df, past_df)
-        print("offset pvalues:")
-        print(stats_df)
-
-
-# %%
-
-
-def get_place_decoding_summary(
-    mode="future",
-    max_offset=8,
-    subjects="all",
-    maze_names=["maze_1", "maze_2"],
-    days_on_maze="late",
-    save=False,
-    verbose=False,
-):
-    """ """
-    save_path = RESULTS_DIR / f"{mode}_place_decoding_summary2.csv"
-    if not save and save_path.exists():
-        if verbose:
-            print(f"Loading existing results from {save_path}")
-        return pd.read_csv(save_path, index_col=0)
-    if verbose:
-        print("Loading sessions ...")
-    sessions = gs.get_maze_sessions(
-        subject_IDs=subjects,
-        maze_names=maze_names,
-        days_on_maze=days_on_maze,
-        with_data=[
-            "navigation_df",
-            "navigation_spike_counts_df",
-            "cluster_metrics",
-        ],
-        must_have_data=True,
-    )
-    dfs = []
-    for session in sessions:
-        if verbose:
-            print(session.name)
-        results_df = get_session_future_place_decoding(
-            session, mode=mode, offset=max_offset, state_type="place_direction"
-        )  # defualt settings
-        results_df["subject_ID"] = session.subject_ID
-        results_df["maze_name"] = session.maze_name
-        results_df["day_on_maze"] = session.day_on_maze
-        dfs.append(results_df)
-    summary_df = pd.concat(dfs, axis=0)
-    if save:
-        summary_df.to_csv(save_path)
-        if verbose:
-            print(f"Saving results to {save_path}")
-    return summary_df
+    return
 
 
 # %%
@@ -273,7 +144,7 @@ def _plot_decoding_raw(subject_means, colors=[("hotpink", "mediumvioletred"), ("
     ax.legend(fontsize=8)
 
 
-def get_place_decoding_summary2(
+def get_place_decoding_summary(
     offset=12,
     subjects="all",
     maze_names=["maze_1", "maze_2"],
@@ -301,7 +172,7 @@ def get_place_decoding_summary2(
         if verbose:
             print(session.name)
         try:
-            results_df = test(session, offset=offset)  # defualt settings
+            results_df = get_session_future_place_direction_decoding(session, offset=offset)  # defualt settings
             results_df[("subject_ID", "")] = session.subject_ID
             results_df[("maze_name", "")] = session.maze_name
             results_df[("day_on_maze", "")] = session.day_on_maze
@@ -320,7 +191,7 @@ def get_place_decoding_summary2(
 # %% Dev new core decoding function
 
 
-def test(
+def get_session_future_place_direction_decoding(
     session,
     include_multi_units=True,
     max_steps_to_goal=30,
@@ -488,116 +359,6 @@ def search_reg(fold_df, _input_df, Y, feature_set2X, normalise_X, reg_range=np.l
 
 
 # %%
-
-
-def get_session_future_place_decoding(
-    session,
-    include_multi_units=True,
-    max_steps_to_goal=30,
-    resolution=0.1,
-    mode="future",
-    offset=8,
-    state_type="place_direction",
-    min_spikes=300,
-    sqrt_spikes=True,
-    n_folds=5,
-    normalise_X=True,
-    spikes_reg_weight=0.1,
-    max_jobs=20,
-    verbose=True,
-):
-    # input data (see get_input_df for details)
-    navigation_spikes_df = get_input_df(
-        session, include_multi_units, max_steps_to_goal, resolution, mode, offset, state_type, min_spikes
-    )
-    simple_maze = session.simple_maze()
-    # prep data for decoding
-    spike_counts = navigation_spikes_df.spike_count.values
-    if sqrt_spikes:
-        spike_counts = np.sqrt(spike_counts)
-    # add current place-direction and goal nuissance regressor array
-    PD_1hot = convert.place_direction2onehot(navigation_spikes_df.place_direction.values, simple_maze=simple_maze)
-    # target values are the location we are at now, and that we will be at at different points in the past/future
-    if mode == "future":
-        Y = navigation_spikes_df.future.values
-    elif mode == "past":
-        Y = navigation_spikes_df.past.values
-    #  convert to one-hot for regression
-    if state_type == "place":
-        Y_1hot = np.array([convert.place2onehot(Y[:, i], simple_maze) for i in range(Y.shape[-1])])
-    elif state_type == "place_direction":
-        Y_1hot = np.array([convert.place_direction2onehot(Y[:, i], simple_maze) for i in range(Y.shape[-1])])
-    else:
-        raise ValueError(f"Unknown state type: {state_type}. Must be 'place' or 'place_direction'.")
-    if verbose:
-        print(
-            f"amount of data for the {mode} at different delays:\n{mode}:",
-            Y_1hot.sum((-1, -2)),
-        )
-    # CRITICALLY: filter data for decision points where past and future up to max_offset are available
-    decision_points = get_decision_points(simple_maze, mode, return_as="strings", plot=False)
-    at_decision_point = np.array([sa in decision_points for sa in navigation_spikes_df.place_direction.values])
-    future_and_past_avail = Y_1hot.sum(-1).mean(0) == 1
-    keep_inds = np.where(future_and_past_avail & at_decision_point)[0]
-    if verbose:
-        print("keeping", len(keep_inds), "data points")
-
-    X_spikes = spike_counts[keep_inds, :]  # spike counts for relevant data
-    Y_final = Y_1hot[..., keep_inds, :].argmax(-1)  # future location for relevant data
-    X_SA = PD_1hot[keep_inds, :]  # state-action regressors for relevant data (can use X_SA or X_SAG)
-    trials = navigation_spikes_df.trial.values[keep_inds]  # trial numbers
-
-    # run cv decoding
-    # split trial into cv folds
-    unique_trials = np.unique(trials)
-    trial_splits = [[] for _ in range(n_folds)]
-    for trial in unique_trials:
-        trial_splits[int(trial) % n_folds].append(trial)
-
-    # data indices corresponding to each fold
-    trial_split_inds = [
-        np.concatenate([np.where(trials == trial_id)[0] for trial_id in trial_split]) for trial_split in trial_splits
-    ]
-    if normalise_X:
-        X_spikes, X_SA = [(X - X.mean(0)[None, :]) / (1e-10 + X.std(0)[None, :]) for X in [X_spikes, X_SA]]  # normalize
-
-    # try to decode from either just spikes, just state-actions, or both
-    possible_Xs = [
-        X_spikes,
-        X_SA,
-        np.concatenate(
-            [spikes_reg_weight * X_spikes, X_SA], axis=-1
-        ),  # weight spikes to increase effective reg strength w/ more regressors
-    ]  # for first one (this worked)
-    # run regression for each of these models. Total result shape is (regressions, future vs past, offset, fold)
-    results = Parallel(n_jobs=max_jobs)(
-        delayed(_process_fold)(Y_final, trial_split_inds, n_folds, fold, X, ishift, mode, label, verbose)
-        for X, label in zip(possible_Xs, ["spikes", "place_direction", "spikes_place_direction"])
-        for ishift in np.arange(0, offset + 1)
-        for fold in range(n_folds)
-    )
-
-    return pd.DataFrame(results)
-
-
-def _process_fold(Y_final, trial_split_inds, n_folds, fold, X, ishift, mode, label, verbose):
-    """"""
-    if verbose:
-        print(f"Processing fold {fold}, mode {mode}, offset {ishift} with {label} regressors")
-    y = Y_final[ishift, :]
-    # training and test indices
-    test, train = trial_split_inds[fold], np.concatenate([trial_split_inds[f] for f in range(n_folds) if f != fold])
-    # could do nested crossvalidation to set the regularization strength, but just doing something simple to start
-    clf = LogisticRegression(C=1e-0, max_iter=10_000)
-    clf.fit(X[train, :], y[train])  # fit the model
-    score = clf.score(X[test, :], y[test])
-    return {
-        "mode": mode,
-        "offset": ishift,
-        "fold": fold,
-        "regressors": label,
-        "score": score,
-    }
 
 
 def get_input_df(
