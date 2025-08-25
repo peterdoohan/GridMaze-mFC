@@ -751,7 +751,9 @@ def get_past_and_future_states(
     return output_df
 
 
-def get_decision_points(simple_maze, mode="future", edges_only=False, node_only=False, return_as="strings", plot=False):
+def get_decision_points(
+    simple_maze, mode="future", edges_only=False, node_only=False, return_as="strings", plot=False, ax=None
+):
     """
     Computes and returns the set of decision point identifiers in a given maze.
 
@@ -785,7 +787,9 @@ def get_decision_points(simple_maze, mode="future", edges_only=False, node_only=
                     decision_points.add((edge, dir_))
     if plot:
         dps = pd.Series(index=pd.MultiIndex.from_tuples(list(decision_points)), data=1)
-        mp.plot_directed_heatmap(simple_maze, dps, colormap="Greys", colorbar=False)
+        if ax is None:
+            fig, ax = plt.subplots(1, 1, figsize=(4, 4))
+        mp.plot_directed_heatmap(simple_maze, dps, colormap="Greys", colorbar=False, ax=ax)
     if return_as == "tuples":
         return decision_points
     elif return_as == "strings":
