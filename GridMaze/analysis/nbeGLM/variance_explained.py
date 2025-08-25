@@ -6,7 +6,6 @@ distance_to_goal, place, direction, egocentric_action) using the nbeGLM model co
 
 # %% Imports
 import json
-from cv2 import normalize
 import pandas as pd
 import numpy as np
 import seaborn as sns
@@ -17,7 +16,6 @@ from scipy.stats import ttest_1samp
 from statsmodels.stats.multitest import multipletests
 
 
-from GridMaze.analysis.nbeGLM.load_model_sets import load_model_set_cv_scores
 from GridMaze.analysis.nbeGLM import model_comparisons as mc
 
 
@@ -26,6 +24,31 @@ from GridMaze.paths import EXPERIMENT_INFO_PATH
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
+
+# %%
+
+
+def plot_cpd_clusters(cpd_df, feature_tuned_df, features=["distance_to_goal", "place_direction"], ax=None):
+    """ """
+    # set up fig
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(3, 2.5))
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.axhline(0, color="k", linestyle="--", alpha=0.2)
+    ax.axvline(0, color="k", linestyle="--", alpha=0.2)
+    # process data
+    tuned_clusters = feature_tuned_df.index.get_level_values(1)
+    filt_cpd_df = cpd_df.loc[cpd_df.index.get_level_values(0).isin(tuned_clusters)]
+    x = filt_cpd_df[features[0]]
+    y = filt_cpd_df[features[1]]
+    # plot
+    sns.histplot(
+        x=x,
+        y=y,
+        bins=40,
+        ax=ax,
+        cbar=True,
+    )
 
 
 # %% Unique variance explained acoss cells
@@ -197,10 +220,12 @@ def plot_variance_explained(
     ax.spines[["top", "right"]].set_visible(False)
     if orientation == "vertical":
         ax.axhline(0, color="k", linestyle="--", alpha=0.5)
+        ax.set_xlabel("features")
+        ax.set_ylabel("unique variance explained (%)")
     else:
         ax.axvline(0, color="k", linestyle="--", alpha=0.5)
-    ax.set_xlabel("features")
-    ax.set_ylabel("unique variance explained (%)")
+        ax.set_ylabel("features")
+        ax.set_xlabel("unique variance explained (%)")
 
     # process data
     df = cpd_df.copy()

@@ -7,6 +7,7 @@ tuning summary methods. i.e distance-to-goal -> population heatmap, place-direct
 # %% Imports
 
 from matplotlib import pyplot as plt
+from GridMaze.analysis.core import get_sessions as gs
 
 from GridMaze.analysis.distance_to_goal import population_tuning as dpt
 from GridMaze.analysis.place_direction import dimensionality_reduction as ppt
@@ -55,6 +56,71 @@ def get_single_tuned_clusters(feature="distance_to_goal", maze_names=["maze_1", 
     return single_tuned_clusters
 
 
+def get_multi_tuned_clusters(maze_names=["maze_1", "maze_2", "rooms_maze"]):
+    """ """
+    # load model set with full model (dtg, pd and ea feature groups) and reduced models for each feature
+    results_df = lms.load_model_set_cv_scores("variance_explained", maze_names=maze_names, all_completed=True)
+    # for every cell-feature check if cpd is sig > 0 across folds
+    feature_tuned_df = ve.get_feature_tuned_df(
+        results_df,
+        reduced_models=[
+            "remove_distance_to_goal",
+            "remove_place_direction",
+            "remove_egocentric_action_action",
+        ],
+        multiple_comparisons_corrected=False,
+        alpha=0.05,
+    )
+    mask = (
+        feature_tuned_df.distance_to_goal
+        & feature_tuned_df.place_direction
+        & ~feature_tuned_df.egocentric_action_action
+    )
+    select_cluster_df = feature_tuned_df[mask]
+    multi_tuned_clusters = select_cluster_df.index.get_level_values(1).to_list()
+    return multi_tuned_clusters
+
+
+# %% place-direction & distance-to-goal
+
+
+def test(maze_name="maze_1"):
+    sessions = gs.get_maze_sessions(
+        subject_IDs="all",
+        maze_names=[maze_name],
+        days_on_maze="late",
+        with_data=[
+            "navigation_df",
+            "navigation_spike_rates_df",
+            "cluster_metrics",
+            "cluster_distance_tuning_metrics",
+            "cluster_place_direction_tuning_metrics",
+        ],
+    )
+    population_distance_tuning = dpt.get_population_tuning_df(
+        sessions=sessions,
+        metrics=("distance_to_goal", "geodesic"),
+        min_split_half_corr=None,
+    )
+    population_place_direction_tuning = ppt.get_population_place_direction_tuning(
+        sessions=sessions,
+        include_multi_unit=False,
+        fill_nans="mean",
+        normalisation="length",
+        min_split_corr=None,
+        max_steps_to_goal=30,
+        place_direction_tuned=False,
+    )
+    multi_tuned_clusters = get_multi_tuned_clusters(maze_names=["maze_1"])
+    dist_tuning_df = population_distance_tuning.set_index("cluster_unique_ID").loc[multi_tuned_clusters]
+    place_direction_tuning = population_place_direction_tuning.loc[multi_tuned_clusters]
+    return
+
+
+def _get_joint_nmf():
+    return
+
+
 # %% distance to goal tuning
 
 
@@ -77,6 +143,7 @@ def get_population_unique_distance_to_goal_tuning_df():
     # get all distance to goal tuning curves
     population_distance_tuning = dpt.get_population_tuning_df(
         late_sessions=True,  # late session only in nbeGLM analyses
+        maze_names="all",
         metrics=("distance_to_goal", "geodesic"),
         min_split_half_corr=None,
     )

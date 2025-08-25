@@ -186,18 +186,29 @@ def get_idx_order(row, x, fit="gamma_4p", op="max"):
 
 
 def get_population_tuning_df(
-    late_sessions=True, metrics=("distance_to_goal", "geodesic"), min_split_half_corr=0.5, verbose=False
+    late_sessions=True,
+    maze_names="all",
+    sessions=None,
+    metrics=("distance_to_goal", "geodesic"),
+    min_split_half_corr=0.5,
+    verbose=False,
 ):
     """ """
     days_on_maze = "late" if late_sessions else "all"
-    if verbose:
-        print("Loading sessions...")
-    sessions = gs.get_maze_sessions(
-        subject_IDs="all",
-        maze_names="all",
-        days_on_maze=days_on_maze,
-        with_data=["navigation_df", "navigation_spike_rates_df", "cluster_metrics", "cluster_distance_tuning_metrics"],
-    )
+    if sessions is None:
+        if verbose:
+            print("Loading sessions...")
+        sessions = gs.get_maze_sessions(
+            subject_IDs="all",
+            maze_names=maze_names,
+            days_on_maze=days_on_maze,
+            with_data=[
+                "navigation_df",
+                "navigation_spike_rates_df",
+                "cluster_metrics",
+                "cluster_distance_tuning_metrics",
+            ],
+        )
     tuning_dfs = []
     for session in sessions:
         if verbose:
