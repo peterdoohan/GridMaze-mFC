@@ -462,7 +462,7 @@ def get_tuning_curves(
             actions=actions,
             window=window,
             min_split_half_corr=min_split_half_corr,
-            max_jobs=10,
+            n_jobs=-1,
             with_metrics=True,
             verbose=verbose,
         )

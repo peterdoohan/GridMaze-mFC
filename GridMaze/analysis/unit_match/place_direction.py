@@ -27,6 +27,7 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as f:
 
 RESULTS_DIR = RESULTS_PATH / "unit_match" / "place_direction"
 
+MAZE_PAIRS = [("maze_1", "maze_2"), ("maze_2", "rooms_maze")]
 
 # %% cross-maze NMF/PCA components
 
@@ -194,6 +195,29 @@ def _get_stats(results):
     permuted = [np.mean(np.nanmean(data["permuted_corrs"], axis=1)) for data in results.values()]
     t_stat, p_value = ttest_rel(true, permuted)
     print(f"Random effects t-statistic: {t_stat:.3f}, p-value: {p_value:.3f}")
+
+
+def get_all_cross_maze_corrs():
+    results = []
+    for maze_pair in MAZE_PAIRS:
+        results.append(get_cross_maze_corr_summary(maze_pair))
+    # combine results into single dict
+    all_results = {}
+    for subject_ID in SUBJECT_IDS:
+        true = []
+        permuted = []
+        for r in results:
+            if subject_ID not in r.keys():
+                continue
+            t_array = r[subject_ID]["true_corrs"]
+            p_array = r[subject_ID]["permuted_corrs"]
+            true.append(t_array)
+            permuted.append(p_array)
+        all_results[subject_ID] = {
+            "true_corrs": np.hstack(true),  # n_matches
+            "permuted_corrs": np.hstack(permuted),  # n_maches by n_permutations
+        }
+    return all_results
 
 
 def get_cross_maze_corr_summary(

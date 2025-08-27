@@ -150,6 +150,29 @@ def plot_cross_maze_corrs_summary(results, print_stats=True, ax=None):
     ax.set_ylabel("distance-to-goal \n tuning corr.")
 
 
+def get_all_cross_maze_corrs():
+    results = []
+    for maze_pair in MAZE_PAIRS:
+        results.append(get_cross_maze_corr_summary(maze_pair))
+    # combine results into single dict
+    all_results = {}
+    for subject_ID in SUBJECT_IDS:
+        true = []
+        permuted = []
+        for r in results:
+            if subject_ID not in r.keys():
+                continue
+            t_array = r[subject_ID]["true_corrs"]
+            p_array = r[subject_ID]["permuted_corrs"]
+            true.append(t_array)
+            permuted.append(p_array)
+        all_results[subject_ID] = {
+            "true_corrs": np.hstack(true),  # n_matches
+            "permuted_corrs": np.hstack(permuted),  # n_maches by n_permutations
+        }
+    return all_results
+
+
 def get_cross_maze_corr_summary(
     maze_pair=("maze_1", "maze_2"),
     min_split_half_corr=0.3,

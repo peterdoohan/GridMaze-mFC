@@ -191,9 +191,10 @@ def get_population_egocentric_action_tuning(
     sessions=None,
     actions=["turn_left", "turn_right", "go_forward"],
     include_action_type=False,
+    include_multi_units=False,
     window=(-2, 2),
     min_split_half_corr=0.3,
-    max_jobs=10,
+    n_jobs=-1,
     with_metrics=True,
     verbose=False,
 ):
@@ -218,7 +219,7 @@ def get_population_egocentric_action_tuning(
     def _process_session(session, actions, include_action_type, min_split_half_corr, window, verbose):
         # get tuning curves
         tuning_df = get_session_egocentric_action_tuning(
-            session, actions, include_action_type, min_split_half_corr, window, verbose
+            session, include_multi_units, actions, include_action_type, min_split_half_corr, window, verbose
         )
         if tuning_df is None:
             return None, None
@@ -228,17 +229,23 @@ def get_population_egocentric_action_tuning(
         metrics_df.set_index("cluster_unique_ID", inplace=True)
         return tuning_df, metrics_df
 
-    dfs = Parallel(n_jobs=max_jobs)(
-        delayed(_process_session)(
-            session,
-            actions,
-            include_action_type,
-            min_split_half_corr,
-            window,
-            verbose,
+    if n_jobs is not None:
+        dfs = Parallel(n_jobs=n_jobs)(
+            delayed(_process_session)(
+                session,
+                actions,
+                include_action_type,
+                min_split_half_corr,
+                window,
+                verbose,
+            )
+            for session in sessions
         )
-        for session in sessions
-    )
+    else:
+        dfs = [
+            _process_session(session, actions, include_action_type, min_split_half_corr, window, verbose)
+            for session in sessions
+        ]
     tuning_df = pd.concat([x[0] for x in dfs if x[0] is not None], axis=0)
     metrics_df = pd.concat([x[1] for x in dfs if x[1] is not None], axis=0)
     if with_metrics:
