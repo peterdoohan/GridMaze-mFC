@@ -13,8 +13,10 @@ import networkx as nx
 import seaborn as sns
 from matplotlib import pyplot as plt
 from GridMaze.analysis.core import get_sessions as gs
-from GridMaze.maze import representations as mr
-from GridMaze.maze import plotting as mp
+
+import statsmodels.formula.api as smf
+from statsmodels.stats.anova import anova_lm
+from statsmodels.stats.anova import AnovaRM
 
 # %% Global variables
 from GridMaze.paths import RESULTS_PATH, EXPERIMENT_INFO_PATH
@@ -75,7 +77,7 @@ def plot_performance_metrics(basic_behaviour_df, cmap="plasma"):
 # %% subplots
 
 
-def _plot_n_excess_steps(basic_behaviour_df, ax=None, legend=False, cmap="plasma"):
+def _plot_n_excess_steps(basic_behaviour_df, ax=None, legend=False, cmap="plasma", print_stats=True):
     """ """
     if ax is None:
         f, ax = plt.subplots(1, 1, figsize=(1, 2), clear=True)
@@ -95,6 +97,15 @@ def _plot_n_excess_steps(basic_behaviour_df, ax=None, legend=False, cmap="plasma
     )
     ax.set_xlabel("Day on Maze")
     ax.set_ylabel("n Excess Steps")
+    if print_stats:
+        df = n_excess_steps_df.dropna()
+        m = smf.mixedlm(
+            "n_excess_steps ~ C(maze_name) * day_on_maze",
+            data=df,
+            groups=df["subject_ID"],
+        ).fit(reml=False)
+
+        print(m.summary())
 
 
 def _plot_errors(basic_behaviour_df, ax=None, legend=False, cmap="plasma"):
@@ -141,7 +152,7 @@ def _plot_durations(basic_behaviour_df, ax=None, legend=False, cmap="plasma"):
     ax.set_ylabel("Duration (s)")
 
 
-def _plot_trials(basic_behaviour_df, ax=None, legend=False, cmap="plasma"):
+def _plot_trials(basic_behaviour_df, ax=None, legend=False, cmap="plasma", print_stats=True):
     """ """
     if ax is None:
         f, ax = plt.subplots(1, 1, figsize=(1, 2), clear=True)
@@ -161,6 +172,15 @@ def _plot_trials(basic_behaviour_df, ax=None, legend=False, cmap="plasma"):
     )
     ax.set_xlabel("Day on Maze")
     ax.set_ylabel("Trials")
+    if print_stats:
+        df = trial_counts_df.dropna()
+        m = smf.mixedlm(
+            "trial ~ C(maze_name) * day_on_maze",
+            data=df,
+            groups=df["subject_ID"],
+        ).fit(reml=False)
+
+        print(m.summary())
 
 
 # %%
