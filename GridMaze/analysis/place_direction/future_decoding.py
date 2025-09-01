@@ -5,14 +5,12 @@ Can we decode the future position/place-direction of the animal from neural avti
 """
 
 # %% Imports
-from cProfile import label
 import json
 import copy
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 import matplotlib.pyplot as plt
-from py import process
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from scipy.stats import ttest_1samp
