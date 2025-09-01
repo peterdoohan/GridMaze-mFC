@@ -31,6 +31,19 @@ from GridMaze.maze import plotting as mp
 # %% Functions
 
 
+def quick_plot(results_df):
+    spatial_df = results_df[results_df.input_type == "spatial"]
+    spatial_error = spatial_df.groupby(["mode", "offset"]).error.mean()
+    theta_df = results_df[(results_df.input_type == "spatial_spikes") & (results_df.theta_phase != "mean")]
+    theta_error = theta_df.groupby(["mode", "offset", "theta_phase"]).error.mean().unstack(level=[0, 1])
+    # diff from spatial error
+    theta_error_res = theta_error.sub(spatial_error, axis=1)
+    # demean
+    norm_theta_error_df = theta_error_res.sub(theta_error_res.mean(axis=0), axis=1)
+    # plot
+    return norm_theta_error_df.plot()
+
+
 def test(
     session,
     include_multi_units=True,
