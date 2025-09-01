@@ -41,6 +41,7 @@ def quick_plot(results_df):
     # demean
     norm_theta_error_df = theta_error_res.sub(theta_error_res.mean(axis=0), axis=1)
     # plot
+    #
     return norm_theta_error_df.plot()
 
 
