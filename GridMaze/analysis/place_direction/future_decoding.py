@@ -50,22 +50,7 @@ def plot_future_decoding_summary(summary_df, decision_points="future", steps_to_
     """ """
     # filter for decision points
     if decision_points:
-        # filter decoded samples for only those at decision points where future is less predicted
-        # by current location
-        dfs = []
-        for maze_name in ["maze_1", "maze_2"]:
-            maze_df = summary_df[summary_df.maze_name == maze_name]
-            simple_maze = mr.get_simple_maze(maze_name)
-            if decision_points == "future":
-                decision_points = get_decision_points(
-                    simple_maze, mode="future", edges_only=True, node_only=False, return_as="strings", plot=False
-                )
-            elif decision_points == "past":
-                decision_points = get_decision_points(
-                    simple_maze, mode="past", edges_only=False, node_only=True, return_as="strings", plot=False
-                )
-            dfs.append(maze_df[maze_df.place_direction.isin(decision_points)])
-        df = pd.concat(dfs, axis=0)
+        df = _filter_for_decision_points(summary_df, decision_points=decision_points)
     # filter for steps to goal
     if steps_to_goal is not None:
         # update steps to goal
@@ -80,6 +65,24 @@ def plot_future_decoding_summary(summary_df, decision_points="future", steps_to_
         _plot_decoding_raw(subject_means, ax=ax)
     else:
         raise ValueError(f"Unknown plot_as: {plot_as}. Must be 'diff' or 'raw'.")
+
+
+def _filter_for_decision_points(summary_df, decision_points="future"):
+    dfs = []
+    for maze_name in ["maze_1", "maze_2"]:
+        maze_df = summary_df[summary_df.maze_name == maze_name]
+        simple_maze = mr.get_simple_maze(maze_name)
+        if decision_points == "future":
+            decision_points = get_decision_points(
+                simple_maze, mode="future", edges_only=True, node_only=False, return_as="strings", plot=False
+            )
+        elif decision_points == "past":
+            decision_points = get_decision_points(
+                simple_maze, mode="past", edges_only=False, node_only=True, return_as="strings", plot=False
+            )
+        dfs.append(maze_df[maze_df.place_direction.isin(decision_points)])
+    df = pd.concat(dfs, axis=0)
+    return df
 
 
 def _plot_decoding_diff(subject_means, colors=["hotpink", "blueviolet"], ax=None):
