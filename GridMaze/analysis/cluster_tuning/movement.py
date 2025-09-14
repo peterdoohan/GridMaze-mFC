@@ -17,6 +17,20 @@ from scipy.ndimage import gaussian_filter1d
 FRAME_RATE = 60  # Hz
 # %% Functions
 
+
+def plot_session_movement_tuning(session):
+    """ """
+    navigation_activity_df = session.get_navigation_activity_df(
+        type="rates", cluster_kwargs={"single_units": True, "multi_units": False}
+    )
+    # get movement data
+    speeds, tangential_acc = get_movement_tuning_data(navigation_activity_df)
+    cluster_unique_IDs = navigation_activity_df.firing_rate.columns.values
+    for cluster in cluster_unique_IDs:
+        firing_rate = navigation_activity_df.firing_rate[cluster].values
+        plot_movement_tuning(speeds, tangential_acc, firing_rate)
+
+
 ## plotting
 
 
@@ -103,13 +117,18 @@ def plot_acceleration_aligned_activity(
                 axes[i].legend(lines1 + lines2, labels1 + labels2, loc="upper right")
                 axes[i].axvline(x=0, color="k", linestyle="--", alpha=0.5)
                 axes[i].set_xlabel("Time (s)")
-    plt.tight_layout()
-    if axes is None:
-        return fig
 
 
 def plot_movement_tuning(
-    speed, tangential_acc, firing_rate, speed_bin_size=0.05, acc_bin_size=0.5, occupancy_proportion=0.005, ax1=None
+    speed,
+    tangential_acc,
+    firing_rate,
+    speed_range=(0, 0.3),
+    acc_range=(-3, 3),
+    speed_bin_size=0.025,
+    acc_bin_size=0.25,
+    occupancy_proportion=0.005,
+    ax1=None,
 ):
     """
     Get the acceleration and speed data from the navigation activity dataframe.
@@ -135,16 +154,16 @@ def plot_movement_tuning(
     bin_edges = {}
     data = {}
     bin_sizes = [speed_bin_size, acc_bin_size]
-    for i, stat in enumerate(["speed", "tangential_acc"]):
+    for i, (stat, _range) in enumerate(zip(["speed", "tangential_acc"], [speed_range, acc_range])):
 
-        lower_bound, upper_bound = np.percentile(movement_df[stat], [2.5, 97.5])
+        lower_bound, upper_bound = _range
         stat_bin_edges = np.arange(lower_bound, upper_bound + bin_sizes[i], bin_sizes[i])
         bin_edges.update({stat: stat_bin_edges})
         movement_df[f"{stat}_bin"] = pd.cut(
             movement_df[f"{stat}"], bins=stat_bin_edges, labels=(stat_bin_edges[:-1] + bin_sizes[i] / 2)
         )
         # filter occupancy out
-        occupancy = movement_df.groupby(f"{stat}_bin").size()
+        occupancy = movement_df.groupby(f"{stat}_bin", observed=True).size()
         occ_threshold = int(len(movement_df) * occupancy_proportion)
         valid_bins = occupancy[occupancy >= occ_threshold].index
         valid_data = movement_df[movement_df[f"{stat}_bin"].isin(valid_bins)]
@@ -154,7 +173,7 @@ def plot_movement_tuning(
 
     # Create figure with two x-axes
     if ax1 is None:
-        fig, ax1 = plt.subplots(figsize=(5, 5))
+        fig, ax1 = plt.subplots(figsize=(2, 2))
 
     ax2 = ax1.twiny()  # Create second x-axis sharing the same y-axis
 
@@ -172,18 +191,6 @@ def plot_movement_tuning(
     # Color the tick labels to match the lines
     ax1.tick_params(axis="x", colors="royalblue")
     ax2.tick_params(axis="x", colors="gray")
-
-    # Add legend
-    lines1, labels1 = ax1.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper right")
-
-    if ax1 is None:
-        plt.tight_layout()
-        plt.show()
-        return fig
-    else:
-        return
 
 
 ## computing functions
