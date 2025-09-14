@@ -32,7 +32,6 @@ def get_trajectory_data(
     n_pcs=10,
     theta_peak_inds=[4, 5, 6, 7],
     theta_trough_inds=[0, 1, 10, 11],
-    frac_var_exp=None,
     plot_trajectories=False,
     plot_angle_type="goal",
 ):
@@ -42,17 +41,15 @@ def get_trajectory_data(
         "zscore_spikes": zscore_spikes,
         "smooth_SD": smooth_SD,
     }
-    pca, n_pcs = utils.get_pcs(
+    pca = utils.get_pcs(
         session,
         **common_kwargs,
         n_pcs=n_pcs,
-        frac_var_exp=frac_var_exp,
     )
     neural_pc_df = utils.get_neural_pc_df(
         session,
         **common_kwargs,
         pca=pca,
-        n_pcs=n_pcs,
     )
     theta_peak_trough_pc_df = utils.get_theta_peak_trough_df(
         session,
@@ -60,13 +57,11 @@ def get_trajectory_data(
         theta_peak_inds=theta_peak_inds,
         theta_trough_inds=theta_trough_inds,
         pca=pca,
-        n_pcs=n_pcs,
     )
     theta_pc_df = utils.get_theta_pc_df(
         session,
         **common_kwargs,
         pca=pca,
-        n_pcs=n_pcs,
     )
     trials = neural_pc_df.trial.dropna().unique()
     if plot_trajectories:
