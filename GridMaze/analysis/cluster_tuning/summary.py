@@ -70,11 +70,7 @@ def save_session_tuning_summaries(subject_ID, maze_name, day_on_maze, type="conc
     return
 
 
-# %% Short summaries
-
-
-def plot_tuning_summary_full(Cluster):
-    return
+# %% single unit summarry plots
 
 
 def plot_tuning_summary_concise(Cluster):
@@ -98,4 +94,32 @@ def plot_tuning_summary_concise(Cluster):
     # make adjustments
     ax4.legend(loc="upper left", bbox_to_anchor=(-0.4, 1.2))
     ax5.legend(loc="upper right", bbox_to_anchor=(1.0, 1.3))
+    return fig
+
+
+def plot_tuning_summary_full(Cluster):
+    fig = plt.figure(figsize=(15, 5), clear=True)
+    gsc = GridSpec(2, 5, figure=fig)
+    # asign axes
+    ax1 = fig.add_subplot(gsc[0:2, 0:2])  # place direction heatmap
+    ax2 = fig.add_subplot(gsc[0:1, 2:3])  # spatial heatmap
+    ax2.set_axis_off()
+    ax3 = fig.add_subplot(gsc[1:2, 2:3])  # speed tuning
+    ax4 = fig.add_subplot(gsc[0:1, 3:4])  # trial_aligned tuning
+    ax5 = fig.add_subplot(gsc[1:2, 3:4])  # distance to goal tuning
+    ax6 = fig.add_subplot(gsc[0:1, 4:5], projection="polar")  # angle to goal tuning
+    ax7 = fig.add_subplot(gsc[1:2, 4:5])  # action tuning
+    # use Cluser Obj to plot tuning to asigned axes
+    Cluster.plot_tuning("place_direction", ax=ax1)
+    Cluster.plot_tuning("spatial", ax=ax2, feature_kwargs={"maze_silhouette": False, "cbar": False})
+    Cluster.plot_tuning("movement", ax=ax3)
+    Cluster.plot_tuning("trial_events", ax=ax4)
+    Cluster.plot_tuning("distance_to_goal", ax=ax5, feature_kwargs={"smooth_SD": 0.5})
+    Cluster.plot_tuning("angle_to_goal", feature_kwargs={"angle_metric": "summary"}, ax=ax6)
+    Cluster.plot_tuning("actions", ax=ax7, feature_kwargs={"concise": True, "action_type": "all", "smooth_SD": 12})
+    fig.suptitle(f"{Cluster.cluster_unique_ID}", fontsize=12)
+    # make adjustments
+    ax6.legend(loc="upper left", bbox_to_anchor=(-0.4, 1.2))
+    ax7.legend(loc="upper right", bbox_to_anchor=(1.0, 1.3))
+    fig.subplots_adjust(hspace=0.5, wspace=0.5)
     return fig

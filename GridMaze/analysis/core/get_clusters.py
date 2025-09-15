@@ -12,7 +12,15 @@ from GridMaze.analysis.core import load_data
 from GridMaze.analysis.core import filter as filt
 from GridMaze.analysis.core import get_sessions as gs
 
-from GridMaze.analysis.cluster_tuning import actions, angle_to_goal, distance_to_goal, events, spatial, head_direction
+from GridMaze.analysis.cluster_tuning import (
+    actions,
+    angle_to_goal,
+    distance_to_goal,
+    events,
+    spatial,
+    head_direction,
+    movement,
+)
 from GridMaze.maze import representations as mr
 
 # %% Global Variables
@@ -212,6 +220,8 @@ class Cluster:
                 "exclude_time_at_goal": False,
                 "bin_size": 0.03,
                 "smooth_SD": 0.04,
+                "maze_silhouette": True,
+                "cbar": True,
             }
 
         elif feature == "place":
@@ -236,6 +246,14 @@ class Cluster:
             default_kwargs = {
                 "n_bins": 180,
                 "smooth_SD": 2,
+            }
+        elif feature == "movement":
+            default_kwargs = {
+                "speed_range": (0, 0.3),
+                "acc_range": (-3, 3),
+                "speed_bin_size": 0.025,
+                "acc_bin_size": 0.25,
+                "occupancy_proportion": 0.005,
             }
         else:
             raise ValueError(f"Tuning feature: {feature} not recognised")
@@ -470,6 +488,21 @@ class Cluster:
             mean_tuning, sem_tuning = mean_tuning[self.cluster_unique_ID], sem_tuning[self.cluster_unique_ID]
             return mean_tuning, sem_tuning
 
+        elif feature == "movement":
+            try:
+                navigation_df = load_data.load(self.analysis_data_path / "frames.navigation.parquet")
+                navigation_spike_rates_df = load_data.load(self.analysis_data_path / "frames.spikeRates.parquet")
+            except FileNotFoundError:
+                print("some data not found")  #
+
+            # filter data for specified cluster & specific feature kwargs
+            navigation_spike_rates_df = navigation_spike_rates_df.xs(
+                self.cluster_unique_ID, level=1, axis=1, drop_level=False
+            ).reset_index(drop=True)
+            firing_rates = navigation_spike_rates_df.firing_rate.values.squeeze()
+            speeds, acceleration = movement.get_movement_tuning_data(navigation_df)
+            return (speeds, acceleration, firing_rates)
+
     def plot_tuning(self, feature, feature_kwargs={}, ax=None):
         """ """
         # get data to plot
@@ -548,6 +581,8 @@ class Cluster:
                 *tuning_data,
                 bin_size=feature_kwargs["bin_size"],
                 smooth_SD=feature_kwargs["smooth_SD"],
+                maze_silhouette=feature_kwargs["maze_silhouette"],
+                cbar=feature_kwargs["cbar"],
                 ax=ax,
             )
         elif feature == "place":
@@ -562,6 +597,8 @@ class Cluster:
                 smooth_SD=feature_kwargs["smooth_SD"],
                 ax=ax,
             )
+        elif feature == "movement":
+            movement.plot_movement_tuning(*tuning_data, **feature_kwargs, ax1=ax)
         else:
             raise ValueError(f"Tuning feature: {feature} not recognised")
         return

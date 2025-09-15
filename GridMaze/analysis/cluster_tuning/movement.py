@@ -29,6 +29,7 @@ def plot_session_movement_tuning(session):
     for cluster in cluster_unique_IDs:
         firing_rate = navigation_activity_df.firing_rate[cluster].values
         plot_movement_tuning(speeds, tangential_acc, firing_rate)
+    return
 
 
 ## plotting
@@ -185,7 +186,7 @@ def plot_movement_tuning(
 
     # Set labels and title
     ax1.set_xlabel("Speed (m/s)", color="royalblue")
-    ax2.set_xlabel("Tangential acceleration (m/s²)", color="gray")
+    ax2.set_xlabel("Tang. acc. (m/s²)", color="gray")
     ax1.set_ylabel("Firing rate (Hz)")
 
     # Color the tick labels to match the lines

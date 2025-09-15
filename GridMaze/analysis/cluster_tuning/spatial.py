@@ -175,17 +175,21 @@ def plot_session_spatial_tuning(session, navigation_only=False, moving_only=Fals
     return
 
 
-def plot_spatial_heatmap(pos, spike_counts, simple_maze, goals=False, bin_size=0.02, smooth_SD=0.04, ax=None):
+def plot_spatial_heatmap(
+    pos, spike_counts, simple_maze, goals=False, bin_size=0.02, smooth_SD=0.04, maze_silhouette=True, cbar=True, ax=None
+):
     """Plots a spatial heatmap of neural firnig rate in 2D space"""
     rate_map, binx, biny = get_2D_ratemap(spike_counts, pos, x_size=bin_size, y_size=bin_size, smooth_SD=smooth_SD)
     if ax is None:
         fig, ax = plt.subplots()
-    mp.plot_simple_maze_silhouette(
-        simple_maze,
-        ax=ax,
-        color="gainsboro",
-        highlight_nodes=goals,
-    )
+    ax.set_axis_off()
+    if maze_silhouette:
+        mp.plot_simple_maze_silhouette(
+            simple_maze,
+            ax=ax,
+            color="gainsboro",
+            highlight_nodes=goals,
+        )
     ax.imshow(
         rate_map,
         extent=[binx[0], binx[-1], biny[0], biny[-1]],
@@ -194,10 +198,11 @@ def plot_spatial_heatmap(pos, spike_counts, simple_maze, goals=False, bin_size=0
         zorder=2,
     )
     # add colorbar
-    cbar = plt.colorbar(ax.images[0], ax=ax)
-    cbar.set_label("Firing Rate (Hz)")
-    # remove boarder from colorbar
-    cbar.outline.set_visible(False)
+    if cbar:
+        cbar = plt.colorbar(ax.images[0], ax=ax)
+        cbar.set_label("Firing Rate (Hz)")
+        # remove boarder from colorbar
+        cbar.outline.set_visible(False)
     return
 
 

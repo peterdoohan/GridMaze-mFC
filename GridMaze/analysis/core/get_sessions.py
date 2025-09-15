@@ -39,6 +39,7 @@ MAZE_ANALYSIS_DATA_STRUCTURE2FILENAME = {
     "cluster_distance_tuning_metrics": "clusters.distanceTuningMetrics.parquet",
     "cluster_place_direction_tuning_metrics": "clusters.placeDirectionTuningMetrics.parquet",
     "cluster_egocentric_action_tuning_metrics": "clusters.egocentricActionTuningMetrics.parquet",
+    "cluster_movement_metrics": "clusters.movementMetrics.parquet",
     "navigation_theta_spike_counts_df": "frames.thetaSpikeCounts.parquet",
     "navigation_4Hz_spike_counts_df": "frames.4HzSpikeCounts.parquet",
 }

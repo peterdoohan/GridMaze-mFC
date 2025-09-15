@@ -10,7 +10,7 @@ import pandas as pd
 from datetime import date
 
 # %% Global Variables
-from ...paths import PROCESSED_DATA_PATH, ANALYSIS_DATA_PATH, EXPERIMENT_INFO_PATH
+from GridMaze.paths import PROCESSED_DATA_PATH, ANALYSIS_DATA_PATH, EXPERIMENT_INFO_PATH
 
 PROBE_DEPTHS_DF = pd.read_csv(EXPERIMENT_INFO_PATH / "probe_depths.htsv", sep="\t")
 
@@ -119,6 +119,8 @@ def _analysis_data(filepath):
     elif analysis_data_structure == "clusters.placeDirectionTuningMetrics.parquet":
         data = _load_multiindex_parquet(filepath)
     elif analysis_data_structure == "clusters.egocentricActionTuningMetrics.parquet":
+        data = _load_multiindex_parquet(filepath)
+    elif analysis_data_structure == "clusters.movementMetrics.parquet":
         data = _load_multiindex_parquet(filepath)
     elif analysis_data_structure == "frames.thetaSpikeCounts.parquet":
         data = _load_multiindex_parquet(filepath)
