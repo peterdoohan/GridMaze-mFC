@@ -14,6 +14,7 @@ from .get_trajectory_decisions_dfs import get_trajectory_decisions_df
 from .get_distance_tuning_metrics_df import get_distance_tuning_metrics_df
 from .get_place_direction_metrics_df import get_place_direcion_tuning_metrics_df
 from .get_action_tuning_metrics_df import get_egocentric_action_tuning_metrics_df
+from .get_movement_metrics_df import get_movement_metrics_df
 from .get_lfp_aligned_spike_counts import get_navigation_theta_spike_counts_df, get_navigation_4Hz_spike_counts_df
 
 # %% Global variables
@@ -84,6 +85,11 @@ ANALYSIS_DATA_STRUCTURES_DF = pd.DataFrame(
         {
             "filename": "frames.4HzSpikeCounts.parquet",
             "function": get_navigation_4Hz_spike_counts_df,
+            "session_types": ["maze"],
+        },
+        {
+            "filename": "clusters.movementMetrics.parquet",
+            "function": get_movement_metrics_df,
             "session_types": ["maze"],
         },
     ]

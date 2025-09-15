@@ -54,7 +54,7 @@ def get_split_half_metrics(
     acc_range=(-3, 3),
     speed_bin_size=0.025,
     acc_bin_size=0.25,
-    n_splits=50,
+    n_splits=20,
 ):
     """ """
     if navigation_only:
@@ -79,12 +79,12 @@ def get_split_half_metrics(
         acc_min.append(acc_curve_1.idxmin())
         acc_max.append(acc_curve_1.idxmax())
     metrics = {
-        ("speed", "mean_corr"): np.mean(speed_corrs),
-        ("speed", "min"): np.mean(speed_min),
-        ("speed", "max"): np.mean(speed_max),
-        ("tangential_acc", "mean_corr"): np.mean(acc_corrs),
-        ("tangential_acc", "min"): np.mean(acc_min),
-        ("tangential_acc", "max"): np.mean(acc_max),
+        ("speed", "mean_corr"): np.nanmean(speed_corrs),
+        ("speed", "min"): np.nanmean(speed_min),
+        ("speed", "max"): np.nanmean(speed_max),
+        ("tangential_acc", "mean_corr"): np.nanmean(acc_corrs),
+        ("tangential_acc", "min"): np.nanmean(acc_min),
+        ("tangential_acc", "max"): np.nanmean(acc_max),
     }
     return metrics
 
