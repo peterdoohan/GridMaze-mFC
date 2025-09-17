@@ -10,7 +10,7 @@ from GridMaze.analysis.core import convert
 from GridMaze.analysis.cluster_tuning import movement as mv
 
 # %% Global Variables
-
+FRAME_RATE = 60
 
 # %% Functions
 
@@ -30,16 +30,34 @@ def get_movement_metrics_df(processed_data_path, analysis_data_path, navigation_
     single_units = convert.cluster_IDs2scluster_unique_IDs(session_info, single_units)
 
     # get movement data
-    speeds, tangential_acc = mv.get_movement_tuning_data(navigation_df)
+    speeds, velocities, tangential_acc = mv.get_movement_tuning_data(navigation_df)
     navigation_df[("speed", "")] = speeds
-    navigation_df[("tangential_acc", "")] = tangential_acc
+    navigation_df[("velocity", "x")] = velocities[:, 0]
+    navigation_df[("velocity", "y")] = velocities[:, 1]
 
     # get split half metrics
     metrics = []
     for cluster in cluster_unique_IDs:
-        cluster_df = navigation_df.copy()
-        cluster_df[("firing_rate", "")] = navigation_spike_rates_df.firing_rate[cluster]
-        metrics.append(get_split_half_metrics(cluster_df, navigation_only=navigation_only, n_splits=50))
+        if cluster in single_units:
+            cluster_df = navigation_df.copy()
+            cluster_df[("firing_rate", "")] = navigation_spike_rates_df.firing_rate[cluster]
+            metrics.append(get_split_half_metrics(cluster_df, navigation_only=navigation_only, n_splits=50))
+        else:
+            metrics.append(
+                {
+                    x: np.nan
+                    for x in [
+                        ("speed", "mean_corr"),
+                        ("speed", "min"),
+                        ("speed", "max"),
+                        ("velocity", "mean_corr"),
+                        ("velocity", "min_x"),
+                        ("velocity", "min_y"),
+                        ("velocity", "max_x"),
+                        ("velocity", "max_y"),
+                    ]
+                }
+            )
     metrics_df = pd.DataFrame(metrics)
     metrics_df.columns = pd.MultiIndex.from_tuples(metrics_df.columns)
     metrics_df[("cluster_unique_ID", "")] = cluster_unique_IDs
@@ -51,9 +69,7 @@ def get_split_half_metrics(
     cluster_df,
     navigation_only=False,
     speed_range=(0, 0.3),
-    acc_range=(-3, 3),
     speed_bin_size=0.025,
-    acc_bin_size=0.25,
     n_splits=20,
 ):
     """ """
@@ -61,43 +77,62 @@ def get_split_half_metrics(
         cluster_df = cluster_df[cluster_df.trial_phase == "navigation"]
     trials = cluster_df.trial.unique()
     mid = len(trials) // 2
-    speed_corrs, acc_corrs = [], []
-    speed_min, acc_min = [], []
-    speed_max, acc_max = [], []
+    speed_corrs, vel_corrs = [], []
+    speed_min, vel_min = [], []
+    speed_max, vel_max = [], []
     for _ in range(n_splits):
         trials_shuffled = np.random.permutation(trials)
         split_1 = cluster_df[cluster_df.trial.isin(trials_shuffled[:mid])].copy()
         split_2 = cluster_df[cluster_df.trial.isin(trials_shuffled[mid:])].copy()
-        speed_curve_1 = _get_tuning_curve(split_1, metric="speed", range=speed_range, bin_size=speed_bin_size)
-        speed_curve_2 = _get_tuning_curve(split_2, metric="speed", range=speed_range, bin_size=speed_bin_size)
+        speed_curve_1 = _get_speed_tuning_curve(split_1, range=speed_range, bin_size=speed_bin_size)
+        speed_curve_2 = _get_speed_tuning_curve(split_2, range=speed_range, bin_size=speed_bin_size)
         speed_corrs.append(speed_curve_1.corr(speed_curve_2, method="spearman"))
         speed_min.append(speed_curve_1.idxmin())
         speed_max.append(speed_curve_1.idxmax())
-        acc_curve_1 = _get_tuning_curve(split_1, metric="tangential_acc", range=acc_range, bin_size=acc_bin_size)
-        acc_curve_2 = _get_tuning_curve(split_2, metric="tangential_acc", range=acc_range, bin_size=acc_bin_size)
-        acc_corrs.append(acc_curve_1.corr(acc_curve_2, method="spearman"))
-        acc_min.append(acc_curve_1.idxmin())
-        acc_max.append(acc_curve_1.idxmax())
+        vel_curve_1 = _get_velocity_tuning(split_1)
+        vel_curve_2 = _get_velocity_tuning(split_2)
+        vel_corrs.append(vel_curve_1.corr(vel_curve_2, method="spearman"))
+        vel_min.append(vel_curve_1.idxmin())
+        vel_max.append(vel_curve_1.idxmax())
+    vel_min = np.array(vel_min)
+    vel_max = np.array(vel_max)
     metrics = {
         ("speed", "mean_corr"): np.nanmean(speed_corrs),
         ("speed", "min"): np.nanmean(speed_min),
         ("speed", "max"): np.nanmean(speed_max),
-        ("tangential_acc", "mean_corr"): np.nanmean(acc_corrs),
-        ("tangential_acc", "min"): np.nanmean(acc_min),
-        ("tangential_acc", "max"): np.nanmean(acc_max),
+        ("velocity", "mean_corr"): np.nanmean(vel_corrs),
+        ("velocity", "min_x"): np.nanmean(vel_min[:, 0]),
+        ("velocity", "min_y"): np.nanmean(vel_min[:, 1]),
+        ("velocity", "max_x"): np.nanmean(vel_max[:, 0]),
+        ("velocity", "max_y"): np.nanmean(vel_max[:, 1]),
     }
     return metrics
 
 
-def _get_tuning_curve(cluster_df, metric="speed", range=(0, 0.3), bin_size=0.025, occupancy_proportion=0.005):
+def _get_speed_tuning_curve(cluster_df, range=(0, 0.3), bin_size=0.025, min_occupancy=0.5):
     bin_edges = np.arange(range[0], range[1] + bin_size, bin_size)
-    cluster_df[f"{metric}_bin"] = pd.cut(
-        cluster_df[f"{metric}"], bins=bin_edges, labels=(bin_edges[:-1] + bin_size / 2)
-    )
+    cluster_df["speed_bin"] = pd.cut(cluster_df[f"speed"], bins=bin_edges, labels=(bin_edges[:-1] + bin_size / 2))
     # filter occupancy out
-    occupancy = cluster_df.groupby(f"{metric}_bin", observed=True).size()
-    occ_threshold = int(len(cluster_df) * occupancy_proportion)
-    invalid_bins = occupancy[occupancy < occ_threshold].index
-    tuning_curve = cluster_df.groupby(f"{metric}_bin", observed=True).firing_rate.mean()
-    tuning_curve[invalid_bins] = np.nan
+    grouped = cluster_df.groupby("speed_bin", observed=True).firing_rate
+    occupancy = grouped.count()
+    tuning_curve = grouped.mean()
+    occupancy_mask = occupancy.lt(min_occupancy * FRAME_RATE)
+    tuning_curve[occupancy_mask] = np.nan
     return tuning_curve
+
+
+def _get_velocity_tuning(cluster_df, range_x=(0, 0.3), range_y=(-0.3, 0.3), bin_size=0.05, min_occupancy=0.5):
+    bin_edges_x = np.arange(range_x[0], range_x[1] + bin_size, bin_size)
+    bin_edges_y = np.arange(range_y[0], range_y[1] + bin_size, bin_size)
+    cluster_df[("velocity_binned", "x")] = pd.cut(
+        cluster_df.velocity.x, bins=bin_edges_x, labels=(bin_edges_x[:-1] + bin_size / 2)
+    )
+    cluster_df[("velocity_binned", "y")] = pd.cut(
+        cluster_df.velocity.y, bins=bin_edges_y, labels=(bin_edges_y[:-1] + bin_size / 2)
+    )
+    # group over bins
+    grouped = cluster_df.groupby([("velocity_binned", "x"), ("velocity_binned", "y")], observed=True).firing_rate
+    velocity_tuning = grouped.mean()
+    occupancy_mask = grouped.count().lt(min_occupancy * FRAME_RATE)
+    velocity_tuning[occupancy_mask] = np.nan
+    return velocity_tuning

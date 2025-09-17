@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 from GridMaze.analysis.core import get_clusters as gc
 
 from GridMaze.maze import plotting as mp
-from scipy.ndimage import gaussian_filter1d
+from scipy.ndimage import gaussian_filter1d, gaussian_filter
 
 
 # %% Global Variables
@@ -24,11 +24,13 @@ def plot_session_movement_tuning(session):
         type="rates", cluster_kwargs={"single_units": True, "multi_units": False}
     )
     # get movement data
-    speeds, tangential_acc = get_movement_tuning_data(navigation_activity_df)
+    speeds, velocities, tangential_acc = get_movement_tuning_data(navigation_activity_df)
     cluster_unique_IDs = navigation_activity_df.firing_rate.columns.values
     for cluster in cluster_unique_IDs:
         firing_rate = navigation_activity_df.firing_rate[cluster].values
-        plot_movement_tuning(speeds, tangential_acc, firing_rate)
+        f, axes = plt.subplots(1, 2, figsize=(4, 2))
+        plot_movement_tuning(speeds, tangential_acc, firing_rate, ax1=axes[0])
+        plot_velocity_tuning(velocities, firing_rate, ax=axes[1])
     return
 
 
@@ -194,7 +196,75 @@ def plot_movement_tuning(
     ax2.tick_params(axis="x", colors="gray")
 
 
-## computing functions
+# %%
+
+
+def plot_velocity_tuning(
+    velocities,
+    firing_rate,
+    x_range=(-0.3, 0.3),
+    y_range=(-0.3, 0.3),
+    bin_size=0.025,
+    smooth_SD=1,  # bins
+    min_occ=0.5,  # seconds
+    ax=None,
+):
+    """ """
+    # process data
+    vel_df = pd.DataFrame({"firing_rate": firing_rate, "vel_x": velocities[:, 0], "vel_y": velocities[:, 1]})
+    x_bin_edges = np.arange(x_range[0], x_range[1] + bin_size, bin_size)
+    y_bin_edges = np.arange(y_range[0], y_range[1] + bin_size, bin_size)
+    vel_df["x_bin"] = pd.cut(vel_df["vel_x"], bins=x_bin_edges, labels=(x_bin_edges[:-1] + bin_size / 2))
+    vel_df["y_bin"] = pd.cut(vel_df["vel_y"], bins=y_bin_edges, labels=(y_bin_edges[:-1] + bin_size / 2))
+    bin_grouped = vel_df.groupby(["x_bin", "y_bin"], observed=True).firing_rate
+
+    tuning_heatmap = bin_grouped.mean().unstack(level=0)
+    tuning_occ = bin_grouped.count().unstack(level=0)
+    # low occ aware smoothing
+    if smooth_SD:
+        # Convert to arrays
+        mean_arr = tuning_heatmap.to_numpy(dtype=float)
+        occ_arr = tuning_occ.to_numpy(dtype=float)
+        # Numerator: sum of rates per bin = mean * occ
+        num_arr = np.where(np.isfinite(mean_arr), mean_arr * occ_arr, 0.0)
+        # Smooth numerator and occupancy with the same kernel
+        num_s = gaussian_filter(num_arr, sigma=smooth_SD, mode="constant", cval=0.0)
+        occ_s = gaussian_filter(occ_arr, sigma=smooth_SD, mode="constant", cval=0.0)
+        # Safe division; where occ_s ~ 0 keep NaN
+        with np.errstate(invalid="ignore", divide="ignore"):
+            smoothed_mean = np.where(occ_s > 0, num_s / occ_s, np.nan)
+        # Put back into DataFrame with original indexing
+        tuning_heatmap = pd.DataFrame(smoothed_mean, index=tuning_heatmap.index, columns=tuning_heatmap.columns)
+
+    # mask low occupancy bins
+    raw_low_occ = tuning_occ.lt(min_occ * FRAME_RATE)
+    tuning_heatmap = tuning_heatmap.mask(raw_low_occ)
+
+    # plotting
+    if ax is None:
+        f, ax = plt.subplots(figsize=(2, 2))
+    sns.heatmap(
+        tuning_heatmap,
+        cmap="viridis",
+        cbar_kws={"label": "Firing rate (Hz)", "shrink": 0.8},
+        square=True,
+        xticklabels=False,
+        yticklabels=False,
+        ax=ax,
+    )
+
+    # additional formatting
+    n_x = tuning_heatmap.shape[1]
+    n_y = tuning_heatmap.shape[0]
+    ax.axhline(n_y // 2, color="w", linestyle="--", alpha=0.5)
+    ax.axvline(n_x // 2, color="w", linestyle="--", alpha=0.5)
+    ax.set_xlabel("V(x) (m/s)")
+    ax.set_ylabel("V(y) (m/s)")
+    ax.set_xticks([0, n_x // 2, n_x], [f"{x_range[0]:.2f}", "0", f"{x_range[1]:.2f}"])
+    ax.set_yticks([0, n_y // 2, n_y], [f"{y_range[0]:.2f}", "0", f"{y_range[1]:.2f}"])
+
+
+# %% calc movement variables
 
 
 def get_movement_tuning_data(navigation_df, position_smoothing_ms=1000 * 1 / FRAME_RATE, frame_rate=FRAME_RATE):
@@ -214,7 +284,7 @@ def get_movement_tuning_data(navigation_df, position_smoothing_ms=1000 * 1 / FRA
     angles = np.arctan2(vel_minus_acc[:, 1], vel_minus_acc[:, 0])
     tangential_acc = np.sin(np.pi / 2 - angles) * np.linalg.norm(accelerations, axis=1)
 
-    return speeds, tangential_acc
+    return speeds, velocities, tangential_acc
 
 
 ## for the 'acceleration-aligned' tuning curves
