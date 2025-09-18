@@ -227,43 +227,12 @@ def get_session_place_direction_tuning(
     return place_direction_df
 
 
-# %% get CV var exp to determine best number of components
+# %% derive metric for similart of place_direction across subjects
 
 
-def test(tuning_dfs, sessions, component_range=(1, 20), max_jobs=20):
+def test():
     """ """
-    results = []
-    for i in range(len(sessions)):
-        test_session = sessions[i]
-        print(test_session.name)
-        test_df = tuning_dfs[i]
-        train_df = pd.concat(tuning_dfs[:i] + tuning_dfs[i + 1 :], axis=0)
-        # do CV NMF for each number of components
-        X_train = train_df.values  # [n_neurons, n_place_directions]
-        X_test = test_df.values
-        fold_results = Parallel(n_jobs=max_jobs)(
-            delayed(_process_fold)(X_train, X_test, test_session, n_components)
-            for n_components in range(component_range[0], component_range[1] + 1)
-        )
-        results.extend(fold_results)
-    return results
+    for subject in SUBJECT_IDS:
+        other_subjects = [s for s in SUBJECT_IDS if s != subject]
 
-
-def _process_fold(X_train, X_test, test_session, n_components):
-    """ """
-    nmf = NMF(n_components=n_components, random_state=0, max_iter=10_000)
-    W_train = nmf.fit_transform(X_train)
-    H = nmf.components_
-    X_train_pred = W_train @ H
-    # project test data onto learned components
-    W_test = nmf.transform(X_test)
-    X_test_pred = W_test @ H
-    # calculate variance explained
-    return {
-        "subject_ID": test_session.subject_ID,
-        "maze_name": test_session.maze_name,
-        "day_on_maze": test_session.day_on_maze,
-        "n_components": n_components,
-        "train_var_exp": explained_variance_score(X_train, X_train_pred),
-        "test_var_exp": explained_variance_score(X_test, X_test_pred),
-    }
+    return
