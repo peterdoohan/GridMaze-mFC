@@ -10,6 +10,7 @@ import json
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
+from zict import File
 from GridMaze.analysis.core import get_sessions as gs
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -201,7 +202,7 @@ def get_strategy_weights_across_sessions(n_itter=1000, plot=False):
         RESULTS_PATH
         / "behaviour"
         / "navigation_strategies_modelling"
-        / "navigation_strategy_weights_over_sessions.htsv"
+        / "navigation_strategy_weights_over_sessions2.htsv"
     )
     if save_path.exists():
         navigation_strategy_weights_df = pd.read_csv(save_path, sep="\t")
@@ -214,6 +215,7 @@ def get_strategy_weights_across_sessions(n_itter=1000, plot=False):
             for maze_name in MAZE_DAY2DATE.keys():
                 for day in [int(i) for i in MAZE_DAY2DATE[maze_name].keys()]:
                     sessions = [maze2day_subject_sessions[maze_name][day][s] for s in sampled_subjects]
+                    sessions = [s for s in sessions if s is not None]
                     strategy_weights = get_navigation_strategy_weights(sessions)
                     navigation_strategy_weights.append(
                         {
@@ -297,13 +299,17 @@ def get_maze2day_subject_session():
         for day in [int(i) for i in MAZE_DAY2DATE[maze_name].keys()]:
             subject2sessions = {}
             for subject in SUBJECT_IDS:
-                session = gs.get_maze_sessions(
-                    subject_IDs=[subject],
-                    maze_names=[maze_name],
-                    days_on_maze=[day],
-                    with_data=["navigation_strategies_df"],
-                )
-                subject2sessions[subject] = session
+                try:
+                    session = gs.get_maze_sessions(
+                        subject_IDs=[subject],
+                        maze_names=[maze_name],
+                        days_on_maze=[day],
+                        with_data=["navigation_strategies_df"],
+                        must_have_data=True,
+                    )
+                    subject2sessions[subject] = session
+                except FileNotFoundError:
+                    subject2sessions[subject] = None
             day2subject_sessions[day] = subject2sessions
         maze2day_subject_sessions[maze_name] = day2subject_sessions
     return maze2day_subject_sessions

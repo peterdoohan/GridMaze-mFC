@@ -23,7 +23,6 @@ def submit_jobs(seed=0, subfolder="performance_validation"):
     for model_params in ju.find_missing(model_set_params):
         script_path = ju.get_SLURM_script(**model_params)
         os.system(f"chmod +x {script_path}")
-        return script_path
         os.system(f"sbatch {script_path}")
     return print("all jobs submitted to hpc")
 

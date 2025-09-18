@@ -78,7 +78,6 @@ def submit_all_jobs():
         # Import the module
         submit = import_module(module_path)
         submit.submit_jobs(seed=0, subfolder=subfolder)
-        return
 
 
 # %% Functions
