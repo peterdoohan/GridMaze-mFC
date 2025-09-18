@@ -1,6 +1,7 @@
 """ """
 
 # %% Imports
+import json
 import pandas as pd
 import numpy as np
 from matplotlib import pyplot as plt
@@ -16,6 +17,10 @@ from GridMaze.analysis.core import get_sessions as gs
 
 # %% Global Variables
 
+from GridMaze.paths import EXPERIMENT_INFO_PATH
+
+with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
+    SUBJECT_IDS = json.load(input_file)
 
 # %% Functions
 
@@ -225,14 +230,3 @@ def get_session_place_direction_tuning(
     place_direction_df.columns.names = ["maze_position", "direction"]
     place_direction_df.sort_index(axis=1, inplace=True)
     return place_direction_df
-
-
-# %% derive metric for similart of place_direction across subjects
-
-
-def test():
-    """ """
-    for subject in SUBJECT_IDS:
-        other_subjects = [s for s in SUBJECT_IDS if s != subject]
-
-    return

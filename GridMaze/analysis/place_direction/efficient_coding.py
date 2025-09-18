@@ -22,7 +22,7 @@ from GridMaze.analysis.core import filter as filt
 from sklearn.decomposition import PCA
 from sklearn.model_selection import ShuffleSplit
 from matplotlib import pyplot as plt
-from scipy.stats import ttest_1samp
+from scipy.stats import ttest_1samp, ttest_rel
 import seaborn as sns
 
 # %% Global Variables
@@ -633,3 +633,132 @@ def get_pca_variance_explained(A, B):  # A & B: [n_samples, n_features]
     pc_exp_var = np.square(M).sum(axis=0)
     cumsum_exp_var = np.cumsum(pc_exp_var) / pc_exp_var.sum()
     return np.concatenate(([0], cumsum_exp_var))
+
+
+# %% derive metric for similart of place_direction across subjects
+
+
+def plot_place_direction_cross_subject_similarity(results_df, ax=None, print_stats=True):
+    """ """
+    # set up fig
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(1.5, 3), clear=True)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_ylabel("AUC")
+    ax.set_xticks([0, 1], ["within", "across"])
+    ax.set_xlabel("place_dir. \n similarity")
+    ax.set_xlim(-0.25, 1.25)
+    ax.set_ylim(0.5, 0.8)
+
+    # process data
+    mean_AUCs = results_df.groupby("subject")[["AUC_subject", "AUC_other"]].mean()
+    long_df = mean_AUCs.stack().reset_index()
+    long_df.columns = ["subject", "condition", "AUC"]
+    long_df["condition"] = long_df["condition"].map({"AUC_subject": "within", "AUC_other": "across"})
+    sns.swarmplot(
+        data=long_df,
+        x="condition",
+        hue="subject",
+        y="AUC",
+        palette="hls",
+        size=6,
+        alpha=0.5,
+        dodge=False,
+        zorder=1,
+        legend=False,
+    )
+    sns.pointplot(
+        data=long_df,
+        x="condition",
+        y="AUC",
+        capsize=0.1,
+        estimator=np.mean,
+        linestyles="",
+        dodge=False,
+        color="darkgrey",
+        linestyle="none",
+    )
+
+    # do stats
+    if print_stats:
+        t, p = ttest_rel(mean_AUCs["AUC_subject"], mean_AUCs["AUC_other"])
+        print(f"t={t:.2f}, p={p:.3f}")
+
+
+def get_place_direction_cross_subject_similarity(
+    test_size=0.5,
+    n_splits=5,
+    late_sessions=False,
+    max_steps_to_goal=30,
+    demean=False,
+    norm_length=True,
+    verbose=True,
+    save=False,
+):
+    """ """
+    save_path = RESULTS_DIR / "cross_subject_similarity.parquet"
+    if save_path.exists() and not save:
+        if verbose:
+            print(f"Loading existing results from {save_path}")
+        return pd.read_parquet(save_path)
+    all_results = []
+    for maze_name in ["maze_1", "maze_2", "rooms_maze"]:
+        if verbose:
+            print(maze_name)
+        input_data = get_input_data(
+            maze_name=maze_name,
+            n_splits=n_splits,
+            test_size=test_size,
+            late=late_sessions,
+            max_steps_to_goal=max_steps_to_goal,
+            verbose=verbose,
+        )
+        results = []
+        for i in range(n_splits):
+            if verbose:
+                print(f"split: {i}")
+            for subject in SUBJECT_IDS:
+                if verbose:
+                    print(subject)
+                other_subjects = [s for s in SUBJECT_IDS if s != subject]
+                # get
+                subject_train = input_data[subject][i]["neural_data"]["train"]
+                subject_test = input_data[subject][i]["neural_data"]["test"]
+                other_subjects_test = pd.concat(
+                    [input_data[s][i]["neural_data"][t] for t in ["test", "train"] for s in other_subjects], axis=0
+                )
+                n_test_subject_test_neurons = subject_test.shape[
+                    0
+                ]  # subsample other subject's data to match the comparison
+                other_subjects_test = other_subjects_test.sample(
+                    n=n_test_subject_test_neurons, replace=False, random_state=0
+                )
+                # define arrays
+                subject_train_arr = subject_train.values
+                subject_test_arr = subject_test.values
+                other_subjects_test_arr = other_subjects_test.values
+                if demean:
+                    subject_train_arr, subject_test_arr, other_subjects_test_arr = [
+                        _demean(arr) for arr in [subject_train_arr, subject_test_arr, other_subjects_test_arr]
+                    ]
+                if norm_length:
+                    subject_train_arr, subject_test_arr, other_subjects_test_arr = [
+                        _norm_length(arr) for arr in [subject_train_arr, subject_test_arr, other_subjects_test_arr]
+                    ]
+
+                # get variance expalin in neurons by within-subject
+                _results = {"split": i, "subject": subject}
+                for label, B in zip(["AUC_subject", "AUC_other"], [subject_test_arr, other_subjects_test_arr]):
+                    cumsum_ve = get_pca_variance_explained(B, subject_train_arr)
+                    auc = np.trapz(cumsum_ve, dx=1 / len(cumsum_ve))
+                    _results[label] = auc
+                results.append(_results)
+        results_df = pd.DataFrame(results)
+        results_df["maze_name"] = maze_name
+        all_results.append(results_df)
+    results_df = pd.concat(all_results, axis=0)
+    if save:
+        results_df.to_parquet(save_path)
+        if verbose:
+            print(f"Results saved to {save_path}")
+    return results_df
