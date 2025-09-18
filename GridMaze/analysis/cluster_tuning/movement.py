@@ -1,13 +1,13 @@
 """Library for plotting speed and acceleration tuning curves."""
 
 # %% Imports
-import os
-import json
 import pandas as pd
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
 from GridMaze.analysis.core import get_clusters as gc
+from scipy.ndimage import rotate
 
 from GridMaze.maze import plotting as mp
 from scipy.ndimage import gaussian_filter1d, gaussian_filter
@@ -28,10 +28,18 @@ def plot_session_movement_tuning(session):
     cluster_unique_IDs = navigation_activity_df.firing_rate.columns.values
     for cluster in cluster_unique_IDs:
         firing_rate = navigation_activity_df.firing_rate[cluster].values
-        f, axes = plt.subplots(1, 2, figsize=(4, 2))
-        plot_movement_tuning(speeds, tangential_acc, firing_rate, ax1=axes[0])
-        plot_velocity_tuning(velocities, firing_rate, ax=axes[1])
-    return
+        tuning_heatmap = get_velocity_tuning(velocities, firing_rate)
+
+        fig = plt.figure(figsize=(5, 2.5), clear=True)
+        gsc = GridSpec(2, 2, figure=fig, width_ratios=[2, 1], wspace=0.5, hspace=0.8)
+        ax1 = fig.add_subplot(gsc[0:2, 0])  # v heatmap
+        ax2 = fig.add_subplot(gsc[0, 1])  # rot corr
+        ax3 = fig.add_subplot(gsc[1, 1])  # harmonics
+        plot_velocity_tuning(tuning_heatmap, ax=ax1)
+        rot_corrs, angles = get_rotational_autocorr(tuning_heatmap)
+        plot_rotational_autocorr(rot_corrs, angles, ax=ax2)
+        power = rotational_spectrum(rot_corrs)
+        plot_rotational_spectrum(power, ax=ax3)
 
 
 ## plotting
@@ -199,7 +207,90 @@ def plot_movement_tuning(
 # %%
 
 
-def plot_velocity_tuning(
+def plot_rotational_spectrum(power, ax=None):
+    """ """
+    harmonics = np.arange(len(power))
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(1, 1))
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_xlabel("Harmonic")
+    ax.set_ylabel("Amp.")
+    ax.bar(harmonics, power, color="grey")
+    ax.set_xlim(0.5, 4.5)
+    ax.set_xticks([1, 2, 3, 4])
+    ax.set_ylim(0, 100)
+
+
+def rotational_spectrum(C):
+    # remove the mean to avoid DC leakage
+    x = C - np.nanmean(C)
+    X = np.fft.rfft(x)  # complex spectrum
+    amp = np.abs(X)  # amplitude
+    power = amp**2  # power
+    return power
+
+
+def plot_rotational_autocorr(rot_corrs, angles, ax=None):
+    """ """
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(2, 1))
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.plot(angles, rot_corrs, color="grey")
+    ax.set_xlabel("Rotation (deg)")
+    ax.set_ylabel("corr.")
+    ax.set_xticks([0, 90, 180, 270, 360])
+    ax.set_yticks([-1, 0, 1])
+
+
+def get_rotational_autocorr(tuning_heatmap, angle_step=6):
+    """ """
+    angles = np.arange(0, 360, angle_step)
+    T = tuning_heatmap.values
+    rot_corrs = np.zeros(len(angles))
+    for i, angle in enumerate(angles):
+        R, _ = rotate_with_nan(T, angle)
+        # correlate with original (accounting for nans)
+        m = np.isfinite(T) & np.isfinite(R)
+        if m.sum() < 2:
+            return np.nan
+        a, b = T[m], R[m]
+        a = a - a.mean()
+        b = b - b.mean()
+        rot_corrs[i] = (a * b).sum() / np.sqrt((a * a).sum() * (b * b).sum())
+    return rot_corrs, angles
+
+
+def rotate_with_nan(arr, angle_deg, order=1, mode="constant"):
+    """
+    Rotate a 2D array by angle_deg about its center, keeping the same shape,
+    and correctly handling NaNs by re-normalizing with a rotated weight mask.
+
+    order: 0=nearest, 1=bilinear, 3=bicubic (slower, smoother)
+    mode: how to fill outside area ('constant' is typical); cval is set to 0 here
+    """
+    arr = np.asarray(arr, dtype=float)
+
+    # 1) build weight mask of defined pixels
+    w = np.isfinite(arr).astype(float)
+
+    # 2) replace NaNs with 0 so they don't contaminate interpolation
+    arr_filled = np.where(np.isfinite(arr), arr, 0.0)
+
+    # 3) rotate both filled data and weight mask with identical params
+    Ar = rotate(arr_filled, angle_deg, reshape=False, order=order, mode=mode, cval=0.0, prefilter=True)
+    Wr = rotate(w, angle_deg, reshape=False, order=order, mode=mode, cval=0.0, prefilter=True)
+
+    # 4) re-normalize and restore NaNs where there’s no support
+    with np.errstate(invalid="ignore", divide="ignore"):
+        out = Ar / Wr
+    out[Wr < 1e-6] = np.nan
+    return out, Wr  # (rotated array, rotated weight mask)
+
+
+# %%
+
+
+def get_velocity_tuning(
     velocities,
     firing_rate,
     x_range=(-0.3, 0.3),
@@ -207,7 +298,6 @@ def plot_velocity_tuning(
     bin_size=0.025,
     smooth_SD=1,  # bins
     min_occ=0.5,  # seconds
-    ax=None,
 ):
     """ """
     # process data
@@ -239,7 +329,16 @@ def plot_velocity_tuning(
     # mask low occupancy bins
     raw_low_occ = tuning_occ.lt(min_occ * FRAME_RATE)
     tuning_heatmap = tuning_heatmap.mask(raw_low_occ)
+    return tuning_heatmap
 
+
+def plot_velocity_tuning(
+    tuning_heatmap,
+    ax=None,
+):
+    """ """
+    y_range = tuning_heatmap.index.to_numpy()
+    x_range = tuning_heatmap.columns.to_numpy()
     # plotting
     if ax is None:
         f, ax = plt.subplots(figsize=(2, 2))
@@ -260,8 +359,8 @@ def plot_velocity_tuning(
     ax.axvline(n_x // 2, color="w", linestyle="--", alpha=0.5)
     ax.set_xlabel("V(x) (m/s)")
     ax.set_ylabel("V(y) (m/s)")
-    ax.set_xticks([0, n_x // 2, n_x], [f"{x_range[0]:.2f}", "0", f"{x_range[1]:.2f}"])
-    ax.set_yticks([0, n_y // 2, n_y], [f"{y_range[0]:.2f}", "0", f"{y_range[1]:.2f}"])
+    ax.set_xticks([0, n_x // 2, n_x], [f"{x_range[0]:.1f}", "0", f"{x_range[-1]:.1f}"])
+    ax.set_yticks([0, n_y // 2, n_y], [f"{y_range[0]:.1f}", "0", f"{y_range[-1]:.1f}"])
 
 
 # %% calc movement variables
