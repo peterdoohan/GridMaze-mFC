@@ -4,7 +4,7 @@
 import os
 import json
 from copy import deepcopy
-from jobs.nbeGLM import utils as ju
+from jobs.neGLM import utils as ju
 
 # %% Global variables
 
@@ -62,7 +62,7 @@ def get_model_set_params(seed=0, subfolder="other_features", overwrite=False):
                         "overwrite": overwrite,
                     },
                     "resource_type": "gpu",
-                    "run_fn": "run_cv_nbeGLM",
+                    "run_fn": "run_cv_neGLM",
                 }
             )
     # also run models upto the inclusion of goal, where goal is coded differently
@@ -98,7 +98,7 @@ def get_model_set_params(seed=0, subfolder="other_features", overwrite=False):
                         "overwrite": overwrite,
                     },
                     "resource_type": "gpu",
-                    "run_fn": "run_cv_nbeGLM",
+                    "run_fn": "run_cv_neGLM",
                 }
             )
     return model_set_params

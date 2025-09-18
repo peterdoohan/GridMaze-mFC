@@ -1,9 +1,9 @@
 """
-Run nbeGLM (neural-behavioural embedding GLM) encoding analyses
+Run neGLM (neural-behavioural embedding GLM) encoding analyses
 Use-cases:
-- run cross-validated nbeGLM, save out cv scores for all neurons
+- run cross-validated neGLM, save out cv scores for all neurons
 - run cross-validated GLM (without neural-behavioural embedding), save out cv scores for all neurons (control)
-- train nbeGLM on all input data, save out latents and model weights
+- train neGLM on all input data, save out latents and model weights
 @peterdoohan @krisjensen
 """
 
@@ -24,7 +24,7 @@ from GridMaze.analysis.neGLM.get_input_data import get_input_data
 # %% Global Variables
 from GridMaze.paths import RESULTS_PATH
 
-RESULTS_DIR = RESULTS_PATH / "nbeGLM"
+RESULTS_DIR = RESULTS_PATH / "neGLM"
 
 from jobs.neGLM.utils import (
     DEFAULT_INPUT_DATA_KWARGS,
@@ -37,7 +37,7 @@ from jobs.neGLM.utils import (
 # %% Imports
 
 
-def run_cv_nbeGLM(
+def run_cv_neGLM(
     input_data_kwargs=DEFAULT_INPUT_DATA_KWARGS,
     model_init_kwargs=DEFAULT_MODEL_INIT_KWARGS,
     model_train_kwargs=DEFAULT_MODEL_TRAIN_KWARGS,
@@ -53,7 +53,7 @@ def run_cv_nbeGLM(
         return
     # remember model params
     model_params = copy.deepcopy(locals())
-    model_params["fn"] = "run_cv_nbeGLM"
+    model_params["fn"] = "run_cv_neGLM"
     # set seed
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -68,7 +68,7 @@ def run_cv_nbeGLM(
     n_sessions = len(input_data)
     for i in range(n_sessions):
         if verbose:
-            print(f"Running cross-validatied nbeGLM for session {i + 1}/{n_sessions} ...")
+            print(f"Running cross-validatied neGLM for session {i + 1}/{n_sessions} ...")
 
         test_session = input_data[i]  # single session
         train_sessions = input_data[:i] + input_data[i + 1 :]  # all other sessions
@@ -182,7 +182,7 @@ def run_cv_baselineGLM(
     return cv_scores_df
 
 
-def train_nbeGLM(
+def train_neGLM(
     input_data_kwargs=DEFAULT_INPUT_DATA_KWARGS,
     model_init_kwargs=DEFAULT_MODEL_INIT_KWARGS,
     model_train_kwargs=DEFAULT_MODEL_TRAIN_KWARGS,
@@ -200,7 +200,7 @@ def train_nbeGLM(
 
     # remember model params
     model_params = copy.deepcopy(locals())
-    model_params["fn"] = "train_nbeGLM"
+    model_params["fn"] = "train_neGLM"
     # set seed
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -211,7 +211,7 @@ def train_nbeGLM(
     input_data = get_input_data(**input_data_kwargs)
 
     # fit model
-    model = models.nbeGLM(**model_init_kwargs)
+    model = models.neGLM(**model_init_kwargs)
     if verbose:
         print("Learning embedding from all input data ...")
     model.train(input_data, test_session=None, **model_train_kwargs)

@@ -2,6 +2,7 @@
 
 # %% Imports
 from pathlib import Path
+from importlib import import_module
 
 # %% Global Variables
 from GridMaze.paths import RESULTS_PATH
@@ -34,7 +35,7 @@ DEFAULT_MODEL_INIT_KWARGS = {
 
 DEFAULT_MODEL_TRAIN_KWARGS = {
     "device": None,
-    "test_freq": 300,
+    "test_freq": 500,
     "lr": 1e-3,
     "nepochs": 5001,
     "eval_alpha": 1e-3,
@@ -49,7 +50,7 @@ DEFAULT_SCORE_KWARGS = {
     "verbose": False,
 }
 
-DEFAULT_NBEGLM_PARAMS = {
+DEFAULT_NEGLM_PARAMS = {
     "input_data_kwargs": DEFAULT_INPUT_DATA_KWARGS,
     "model_init_kwargs": DEFAULT_MODEL_INIT_KWARGS,
     "model_train_kwargs": DEFAULT_MODEL_TRAIN_KWARGS,
@@ -59,6 +60,25 @@ DEFAULT_NBEGLM_PARAMS = {
     "verbose": True,
     "overwrite": False,
 }
+
+
+# %%
+
+
+def submit_all_jobs():
+    for subfolder in [
+        "performance_validation",
+        "interaction_validation",
+        "variance_explained",
+        "other_features",
+        "variance_explained_full",
+        "feature_interactions_full",
+    ]:
+        module_path = f"jobs.neGLM.{subfolder}.submit"
+        # Import the module
+        submit = import_module(module_path)
+        submit.submit_jobs(seed=0, subfolder=subfolder)
+        return
 
 
 # %% Functions
@@ -74,9 +94,9 @@ def find_missing(model_set_params):
 
 
 def get_SLURM_script(
-    model_name, subfolder, maze_name, model_params, run_fn="run_cv_nbeGLM", resource_type="gpu", RAM="16G"
+    model_name, subfolder, maze_name, model_params, run_fn="run_cv_neGLM", resource_type="gpu", RAM="32G"
 ):
-    """Create SLURM script for running nbeGLM experiment."""
+    """Create SLURM script for running neGLM experiment."""
     # check jobs and results output folders exist
     _job_name = ".".join([maze_name, model_name])
     results_output_path = RESULTS_DIR / subfolder / maze_name / model_name
@@ -95,9 +115,9 @@ def get_SLURM_script(
 
     # create SLURM script
     script = f"""#!/bin/bash
-#SBATCH --job-name=nbeGLM_{_job_name}
-#SBATCH --output=jobs/nbeGLM/{subfolder}/out/{_job_name}.out
-#SBATCH --error=jobs/nbeGLM/{subfolder}/err/{_job_name}.err
+#SBATCH --job-name=neGLM_{_job_name}
+#SBATCH --output=jobs/neGLM/{subfolder}/out/{_job_name}.out
+#SBATCH --error=jobs/neGLM/{subfolder}/err/{_job_name}.err
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=24
 #SBATCH -p {partition}
@@ -111,11 +131,11 @@ conda deactivate
 conda activate goalNav_mEC
 
 python <<EOF
-from GridMaze.analysis.nbeGLM import run_nbeGLM as rn
+from GridMaze.analysis.neGLM import run_neGLM as rn
 rn.{run_fn}(**{model_params})
 EOF
 """
-    script_path = f"jobs/nbeGLM/{subfolder}/slurm/{_job_name}.sh"
+    script_path = f"jobs/neGLM/{subfolder}/slurm/{_job_name}.sh"
     with open(script_path, "w") as f:
         f.write(script)
     return script_path

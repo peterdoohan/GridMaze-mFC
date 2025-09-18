@@ -4,7 +4,7 @@
 import os
 import json
 from copy import deepcopy
-from jobs.nbeGLM import utils as ju
+from jobs.neGLM import utils as ju
 
 # %% Global variables
 
@@ -23,18 +23,19 @@ def submit_jobs(seed=0, subfolder="performance_validation"):
     for model_params in ju.find_missing(model_set_params):
         script_path = ju.get_SLURM_script(**model_params)
         os.system(f"chmod +x {script_path}")
+        return script_path
         os.system(f"sbatch {script_path}")
     return print("all jobs submitted to hpc")
 
 
 def get_model_set_params(seed=0, subfolder="performance_validation", overwrite=False):
     """
-    generate a list of dicts (.jsons) that define all the models to compare for the nbeGLM validation figure
+    generate a list of dicts (.jsons) that define all the models to compare for the neGLM validation figure
     """
     model_set_params = []
     for maze_name in ["maze_1", "maze_2", "rooms_maze"]:
         # with embedding condition
-        fn = "run_cv_nbeGLM"
+        fn = "run_cv_neGLM"
         for input_groups, input_group_kwargs, model_name in [
             (
                 ["direction"],

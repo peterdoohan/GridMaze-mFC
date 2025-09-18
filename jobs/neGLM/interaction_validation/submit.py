@@ -4,7 +4,7 @@
 import os
 import json
 from copy import deepcopy
-from jobs.nbeGLM import utils as ju
+from jobs.neGLM import utils as ju
 
 # %% Global variables
 
@@ -75,7 +75,7 @@ def get_model_set_params(seed=0, subfolder="interaction_validation", overwrite=F
                         "overwrite": overwrite,
                     },
                     "resource_type": "gpu",
-                    "run_fn": "run_cv_nbeGLM",
+                    "run_fn": "run_cv_neGLM",
                 }
             )
     return model_set_params

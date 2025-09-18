@@ -4,7 +4,7 @@
 import os
 import json
 from copy import deepcopy
-from jobs.nbeGLM import utils as ju
+from jobs.neGLM import utils as ju
 
 # %% Global variables
 
@@ -63,7 +63,7 @@ def get_model_set_params(seed=0, subfolder="variance_explained"):
                         "save_path": str(RESULTS_DIR / subfolder / maze_name / model_name),
                     },
                     "resource_type": "gpu",
-                    "run_fn": "run_cv_nbeGLM",
+                    "run_fn": "run_cv_neGLM",
                 }
             )
 
