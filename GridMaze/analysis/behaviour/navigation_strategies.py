@@ -7,6 +7,7 @@ And visualizes the results.
 import os
 import sys
 import json
+from matplotlib import lines
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
@@ -168,8 +169,7 @@ def plot_strategy_weights_cross_subject(
         linestyles="",
         dodge=False,
         palette=colormap,
-        scale=1.3,
-        join=False,
+        linestyle="none",
     )
     plt.ylim(0, 1)
     plt.xticks(
@@ -237,29 +237,23 @@ def get_strategy_weights_across_sessions(n_itter=1000, plot=False):
 
 def plot_nav_strategy_weights_over_sessions(nav_strategy_weights_df, cmap="viridis", fig=None, axes=None):
     # firt calculate the upper and lower 95CIs for each weight over bootstrapped itters
-    grouped_df = nav_strategy_weights_df.groupby(["maze_name", "day_on_maze"])
-    upper_CI95_df = grouped_df.quantile(0.975)
-    lower_CI95_df = grouped_df.quantile(0.025)
-    df = grouped_df.mean().reset_index()
-    df["weight_vector_lower"] = lower_CI95_df.weight_vector.to_numpy()
-    df["weight_vector_upper"] = upper_CI95_df.weight_vector.to_numpy()
-    df["weight_structure_lower"] = lower_CI95_df.weight_structure.to_numpy()
-    df["weight_structure_upper"] = upper_CI95_df.weight_structure.to_numpy()
+    df = nav_strategy_weights_df.copy()
     if axes is None or fig is None:
         fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-    for maze, marker, ax in zip(df.maze_name.unique(), ["o", "o", "o"], axes):
+    for maze, marker, ax in zip(["maze_1", "maze_2", "rooms_maze"], ["o", "o", "o"], axes):
         maze_df = df[df.maze_name == maze]
+        grouped_df = maze_df.groupby("day_on_maze")[["weight_vector", "weight_structure"]]
+        mean = grouped_df.mean()
+        std = grouped_df.std()
         cmap = plt.cm.get_cmap(cmap)
-        colors = [cmap(i) for i in np.linspace(0.2, 0.95, len(maze_df))]
-        x = maze_df.weight_vector.to_numpy()
-        xl = maze_df.weight_vector_lower.to_numpy()
-        xu = maze_df.weight_vector_upper.to_numpy()
-        y = maze_df.weight_structure
-        yl = maze_df.weight_structure_lower
-        yu = maze_df.weight_structure_upper
-        plot_scatter_with_error_bars(x, y, xl, xu, yl, yu, colors, marker, ax)
-        ax.set_xlim(-0.05, 0.9)
-        ax.set_ylim(-0.05, 0.9)
+        colors = [cmap(i) for i in np.linspace(0.2, 0.95, len(mean))]
+        x = mean.weight_vector.to_numpy()
+        xerr = std.weight_vector.to_numpy()
+        y = mean.weight_structure.to_numpy()
+        yerr = std.weight_structure.to_numpy()
+        plot_scatter_with_error_bars(x, y, xerr, yerr, colors, marker, ax)
+        ax.set_xlim(-0.05, 1.0)
+        ax.set_ylim(-0.05, 1.0)
         ax.set_xlabel("Vector Weight")
         ax.set_ylabel("Structure Weight")
         # ax.set_aspect("equal")
@@ -275,13 +269,13 @@ def plot_nav_strategy_weights_over_sessions(nav_strategy_weights_df, cmap="virid
     return
 
 
-def plot_scatter_with_error_bars(x, y, xl, xu, yl, yu, colors, marker, ax):
-    for xi, yi, xui, xli, yui, yli, color in zip(x, y, xu, xl, yu, yl, colors):
+def plot_scatter_with_error_bars(x, y, xerr, yerr, colors, marker, ax):
+    for xi, yi, xerri, yerri, color in zip(x, y, xerr, yerr, colors):
         ax.errorbar(
             xi,
             yi,
-            xerr=[[xi - xli], [xui - xi]],
-            yerr=[[yi - yli], [yui - yi]],
+            xerr=xerri,
+            yerr=yerri,
             color=color,
             capsize=0,
             marker=marker,
