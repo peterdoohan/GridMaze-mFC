@@ -73,15 +73,19 @@ def _filter_for_decision_points(summary_df, decision_points="future"):
         maze_df = summary_df[summary_df.maze_name == maze_name]
         simple_maze = mr.get_simple_maze(maze_name)
         if decision_points == "future":
-            decision_points = get_decision_points(
+            _decision_points = get_decision_points(
                 simple_maze, mode="future", edges_only=True, node_only=False, return_as="strings", plot=False
             )
         elif decision_points == "past":
-            decision_points = get_decision_points(
+            _decision_points = get_decision_points(
                 simple_maze, mode="past", edges_only=False, node_only=True, return_as="strings", plot=False
             )
-        dfs.append(maze_df[maze_df.place_direction.isin(decision_points)])
+        dfs.append(maze_df[maze_df.place_direction.isin(_decision_points)])
     df = pd.concat(dfs, axis=0)
+    if decision_points == "future":
+        # remove past -1 which is fully predicted at decision points
+        remove_mask = (df[("mode", "")] == "past") & (df[("offset", "")] == 1)
+        df = df[~remove_mask]
     return df
 
 
