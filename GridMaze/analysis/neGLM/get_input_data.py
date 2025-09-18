@@ -91,7 +91,7 @@ def get_session_input_data(
     max_steps_to_goal=30,
     moving_only=False,
     min_spike_count=300,
-    input_groups=["distance_to_goal", "place_direction", "egocentric_action", "acceleration"],
+    input_groups=["distance_to_goal", "place_direction", "egocentric_action", "velocity"],
     input_group_kwargs={"distance_to_goal": None, "place_direction": None, "egocentric_action": None},
     verbose=False,
 ):
@@ -319,7 +319,7 @@ def _get_place_direction_regressors(df, regressor="place_direction"):
 
 def _get_egocentric_action_regressors(
     df,
-    components=["action", "free_forced", "tower_bridge"],
+    components=["action", "tower_bridge"],
     actions=["turn_left", "turn_right", "go_forward", "go_back"],
 ):
     """ """

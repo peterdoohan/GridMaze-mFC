@@ -6,7 +6,7 @@ from pathlib import Path
 # %% Global Variables
 from GridMaze.paths import RESULTS_PATH
 
-RESULTS_DIR = RESULTS_PATH / "nbeGLM"
+RESULTS_DIR = RESULTS_PATH / "neGLM"
 
 # %% Default Parameters
 
@@ -36,7 +36,7 @@ DEFAULT_MODEL_TRAIN_KWARGS = {
     "device": None,
     "test_freq": 300,
     "lr": 1e-3,
-    "nepochs": 3001,
+    "nepochs": 5001,
     "eval_alpha": 1e-3,
     "n_jobs": 24,
     "verbose": True,
