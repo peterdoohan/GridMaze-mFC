@@ -6,12 +6,12 @@ TODO
 import time
 import torch
 import numpy as np
-from nbeGLM import utils
+from neGLM import utils
 
 # %% Core Class
 
 
-class nbeGLM(torch.nn.Module):
+class neGLM(torch.nn.Module):
     """pytorch model for learning task embeddings"""
 
     def __init__(
@@ -22,7 +22,7 @@ class nbeGLM(torch.nn.Module):
         beta_weight=1e-1,
         partition=None,
         latent_nonlin=None,
-        latent_split = None,
+        latent_split=None,
     ):
         """
         input_streams (list of int arrays): indices for each input stream. Use [np.arange(Nin)] to treat everything as one stream.
@@ -32,7 +32,7 @@ class nbeGLM(torch.nn.Module):
         partition
         latent_split: None or a tuple that specifies how many latents comes from each partiotion
         """
-        super(nbeGLM, self).__init__()
+        super(neGLM, self).__init__()
 
         # convert input_streams to tensor
         assert latent_nonlin in {None, "relu"}
@@ -46,16 +46,18 @@ class nbeGLM(torch.nn.Module):
 
         # set latent nonlinearity
         self.latent_nonlin = latent_nonlin
-        
-        # 
+
+        #
         self.latent_split = latent_split
         if latent_split is not None:
-            assert np.sum(latent_split) == self.Nlat # should add up to total latents
-            assert self.partition is not None # should correspond to partitioning of inputs
+            assert np.sum(latent_split) == self.Nlat  # should add up to total latents
+            assert self.partition is not None  # should correspond to partitioning of inputs
             assert len(latent_split) == len(self.partition)
             # also precompute latent indices corresponding to each partition
-            self.latent_split_inds = [np.arange(latent_split[i]) + np.sum(latent_split[:i]) for i in range(len(latent_split))]
-        
+            self.latent_split_inds = [
+                np.arange(latent_split[i]) + np.sum(latent_split[:i]) for i in range(len(latent_split))
+            ]
+
     def __repr__(self):
         lines = [
             "╭─────────────────────────────╮",
@@ -118,6 +120,12 @@ class nbeGLM(torch.nn.Module):
             torch.arange(cum_neurons_per_session[i], cum_neurons_per_session[i + 1]) for i in range(len(train_data) - 1)
         ]
 
+        # add cluster_unique_IDs to model ouputs if provided
+        cuIDs = []
+        for s in train_data:
+            cuIDs.extend(s["cluster_unique_IDs"])
+        self.train_cluster_unique_IDs = cuIDs
+
         self.enc = []
         if self.partition is None:  # simple; just run all the inputs through the model
             Nhid = [self.Nin] + self.Nhid + [self.Nlat]  # concatenate stuff so our loop works
@@ -156,7 +164,7 @@ class nbeGLM(torch.nn.Module):
         z = x
         for n, params in enumerate(encoder):
             # multiply by weight, add bias
-            z = params[0] @ z + params[1][:, None] # num_features x batch
+            z = params[0] @ z + params[1][:, None]  # num_features x batch
             if n != len(encoder) - 1:  # currently ReLU for all non-terminal layers
                 z = torch.relu(z)
         return z
@@ -171,16 +179,17 @@ class nbeGLM(torch.nn.Module):
             self.z = self.encode_channel(x, self.enc)
         else:
             # separately pass each input component through the appropriate embedding stream, then compute the (normalized) sum
-            self.partition_zs = [self.encode_channel(x[inds, ...], self.enc[n])
-                    for (n, inds) in enumerate(self.partition_input_indices)]
-            
-            if self.latent_split is None: # we just add the output from each partition
+            self.partition_zs = [
+                self.encode_channel(x[inds, ...], self.enc[n]) for (n, inds) in enumerate(self.partition_input_indices)
+            ]
+
+            if self.latent_split is None:  # we just add the output from each partition
                 self.z = torch.sum(
                     torch.stack(self.partition_zs),
                     axis=0,
                 ) / np.sqrt(len(self.partition))
             else:
-                self.z = torch.cat(self.partition_zs, axis = 0) # concatenate
+                self.z = torch.cat(self.partition_zs, axis=0)  # concatenate
 
         if self.latent_nonlin == "relu":
             self.z = torch.relu(self.z)

@@ -16,9 +16,9 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 
-from nbeGLM import models
+from neGLM import models
 
-from GridMaze.analysis.nbeGLM.get_input_data import get_input_data
+from GridMaze.analysis.neGLM.get_input_data import get_input_data
 
 
 # %% Global Variables
@@ -26,7 +26,7 @@ from GridMaze.paths import RESULTS_PATH
 
 RESULTS_DIR = RESULTS_PATH / "nbeGLM"
 
-from jobs.nbeGLM.utils import (
+from jobs.neGLM.utils import (
     DEFAULT_INPUT_DATA_KWARGS,
     DEFAULT_MODEL_INIT_KWARGS,
     DEFAULT_MODEL_TRAIN_KWARGS,
@@ -74,7 +74,7 @@ def run_cv_nbeGLM(
         train_sessions = input_data[:i] + input_data[i + 1 :]  # all other sessions
 
         # init model
-        model = models.nbeGLM(**model_init_kwargs)
+        model = models.neGLM(**model_init_kwargs)
 
         if verbose:
             print("     learning embedding ...")

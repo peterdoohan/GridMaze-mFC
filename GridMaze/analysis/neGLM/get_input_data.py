@@ -150,9 +150,13 @@ def init_navigation_spikes_df(session, input_features):
     # load data (single units only)
     df = session.get_navigation_activity_df(type="spikes", cluster_kwargs={"single_units": True, "multi_units": False})
     # get cleaned up speed and acceleration
-    if "speed" in input_features or "acceleration" in input_features:
-        _speed, _acceleration = _get_smoothed_speed_and_acceleration(df, position_smoothing_ms=1000 * 1 / FRAME_RATE)
+    if "speed" in input_features or "acceleration" in input_features or "velocitys" in input_features:
+        _speed, _velocities, _acceleration = _get_smoothed_movement_variables(
+            df, position_smoothing_ms=1000 * 1 / FRAME_RATE
+        )
         df[("speed", "")] = _speed
+        df[("velocity", "x")] = _velocities[:, 0]
+        df[("velocity", "y")] = _velocities[:, 1]
         df[("acceleration", "")] = _acceleration
         df[("moving", "")] = df.speed.ge(ds.MOVEMENT_THRESHOLD)
 
@@ -182,7 +186,7 @@ def _conditional_ffill(df, column_to_fill, condition_column):
     return _df
 
 
-def _get_smoothed_speed_and_acceleration(df, position_smoothing_ms=1000 * 1 / FRAME_RATE):
+def _get_smoothed_movement_variables(df, position_smoothing_ms=1000 * 1 / FRAME_RATE):
     _df = df.copy()
     positions = _df.centroid_position.values
     smoothed_positions = gaussian_filter1d(positions, position_smoothing_ms / 1000 * FRAME_RATE, axis=0)
@@ -194,7 +198,7 @@ def _get_smoothed_speed_and_acceleration(df, position_smoothing_ms=1000 * 1 / FR
     vel_minus_acc = velocities - accelerations
     angles = np.arctan2(vel_minus_acc[:, 1], vel_minus_acc[:, 0])
     tangential_acc = np.sin(np.pi / 2 - angles) * np.linalg.norm(accelerations, axis=1)
-    return speeds, tangential_acc
+    return speeds, velocities, tangential_acc
 
 
 # %% regressor level funcs
@@ -230,6 +234,8 @@ def get_input_features(df, input_feature, input_kwargs):
     # low level variables
     elif input_feature == "speed":
         x = _get_speed_regressors(df)
+    elif input_feature == "velocity":
+        x = _get_velocity_regressors(df)
     elif input_feature == "acceleration":
         x = _get_acceleration_regressor(df)
     elif input_feature == "head_direction":
@@ -344,6 +350,11 @@ def _get_angle_to_goal_regressors(df, metric="egocentric"):
     angles_rad = np.deg2rad(angles_deg)  # convert to radians
     regressors = np.column_stack([np.sin(angles_rad), np.cos(angles_rad)])  # n_samples x 2
     return regressors
+
+
+def _get_velocity_regressors(df):
+    velocity = df.velocity.values  # n_samples x 2
+    return velocity
 
 
 def _get_speed_regressors(df):
