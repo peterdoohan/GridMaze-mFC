@@ -1,11 +1,13 @@
 """Library for plotting speed and acceleration tuning curves."""
 
 # %% Imports
+import json
 import pandas as pd
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
+from matplotlib.patches import Circle
 from GridMaze.analysis.core import get_clusters as gc
 from scipy.ndimage import rotate
 
@@ -14,32 +16,55 @@ from scipy.ndimage import gaussian_filter1d, gaussian_filter
 
 
 # %% Global Variables
+from GridMaze.paths import ANALYSIS_INFO_PATH
+
+with open(ANALYSIS_INFO_PATH / "movement_threshold.json", "r") as f:
+    MOVEMENT_THRESHOLD = json.load(f)
+
 FRAME_RATE = 60  # Hz
 # %% Functions
 
 
-def plot_session_movement_tuning(session):
+def plot_session_movement_tuning(session, navigation_only=True):
     """ """
     navigation_activity_df = session.get_navigation_activity_df(
         type="rates", cluster_kwargs={"single_units": True, "multi_units": False}
     )
     # get movement data
-    speeds, velocities, tangential_acc = get_movement_tuning_data(navigation_activity_df)
+    speeds, velocities, tangential_acc = get_movement_tuning_data(
+        navigation_activity_df, navigation_only=navigation_only
+    )
     cluster_unique_IDs = navigation_activity_df.firing_rate.columns.values
     for cluster in cluster_unique_IDs:
         firing_rate = navigation_activity_df.firing_rate[cluster].values
+        if navigation_only:
+            mask = navigation_activity_df.trial_phase == "navigation"
+            firing_rate = firing_rate[mask]
         tuning_heatmap = get_velocity_tuning(velocities, firing_rate)
+        fig = plot_velocity_tuning_summary(tuning_heatmap)
+        fig.suptitle(cluster)
+        return
 
+
+# %%
+
+
+def plot_velocity_tuning_summary(tuning_heatmap, axes=None):
+    if axes is None:
         fig = plt.figure(figsize=(5, 2.5), clear=True)
         gsc = GridSpec(2, 2, figure=fig, width_ratios=[2, 1], wspace=0.5, hspace=0.8)
         ax1 = fig.add_subplot(gsc[0:2, 0])  # v heatmap
         ax2 = fig.add_subplot(gsc[0, 1])  # rot corr
         ax3 = fig.add_subplot(gsc[1, 1])  # harmonics
-        plot_velocity_tuning(tuning_heatmap, ax=ax1)
-        rot_corrs, angles = get_rotational_autocorr(tuning_heatmap)
-        plot_rotational_autocorr(rot_corrs, angles, ax=ax2)
-        power = rotational_spectrum(rot_corrs)
-        plot_rotational_spectrum(power, ax=ax3)
+    else:
+        ax1, ax2, ax3 = axes
+    plot_velocity_tuning(tuning_heatmap, ax=ax1)
+    rot_corrs, angles = get_rotational_autocorr(tuning_heatmap)
+    plot_rotational_autocorr(rot_corrs, angles, ax=ax2)
+    power = rotational_spectrum(rot_corrs)
+    plot_rotational_spectrum(power, ax=ax3)
+    if axes is None:
+        return fig
 
 
 ## plotting
@@ -334,6 +359,7 @@ def get_velocity_tuning(
 
 def plot_velocity_tuning(
     tuning_heatmap,
+    movement_threshold=MOVEMENT_THRESHOLD,
     ax=None,
 ):
     """ """
@@ -361,12 +387,39 @@ def plot_velocity_tuning(
     ax.set_ylabel("V(y) (m/s)")
     ax.set_xticks([0, n_x // 2, n_x], [f"{x_range[0]:.1f}", "0", f"{x_range[-1]:.1f}"])
     ax.set_yticks([0, n_y // 2, n_y], [f"{y_range[0]:.1f}", "0", f"{y_range[-1]:.1f}"])
+    # draw movement threshold circle
+    if movement_threshold is not None:
+        # Compute scaling from velocity values to heatmap coordinates
+        x0, x1 = x_range[0], x_range[-1]
+        y0, y1 = y_range[0], y_range[-1]
+
+        # velocity → axis units (pixels on heatmap)
+        x_mid = n_x // 2
+        y_mid = n_y // 2
+        # Scale threshold velocity to number of pixels
+        radius_x = (movement_threshold / (x1 - 0)) * (n_x // 2)
+        radius_y = (movement_threshold / (y1 - 0)) * (n_y // 2)
+        # For isotropic scaling, take average (since square=True enforces equal aspect ratio)
+        radius = (radius_x + radius_y) / 2
+
+        circ = Circle(
+            (x_mid, y_mid),
+            radius,
+            edgecolor="w",
+            linestyle="--",
+            linewidth=1.5,
+            fill=False,
+            alpha=0.5,
+        )
+        ax.add_patch(circ)
 
 
 # %% calc movement variables
 
 
-def get_movement_tuning_data(navigation_df, position_smoothing_ms=1000 * 1 / FRAME_RATE, frame_rate=FRAME_RATE):
+def get_movement_tuning_data(
+    navigation_df, position_smoothing_ms=1000 * 1 / FRAME_RATE, frame_rate=FRAME_RATE, navigation_only=True
+):
     """
     Returns speed data and tangential acceleration data,
     computed from gaussian-smoothed position data.
@@ -382,6 +435,11 @@ def get_movement_tuning_data(navigation_df, position_smoothing_ms=1000 * 1 / FRA
     vel_minus_acc = velocities - accelerations
     angles = np.arctan2(vel_minus_acc[:, 1], vel_minus_acc[:, 0])
     tangential_acc = np.sin(np.pi / 2 - angles) * np.linalg.norm(accelerations, axis=1)
+    if navigation_only:
+        mask = navigation_df.trial_phase == "navigation"
+        speeds = speeds[mask]
+        velocities = velocities[mask]
+        tangential_acc = tangential_acc[mask]
 
     return speeds, velocities, tangential_acc
 

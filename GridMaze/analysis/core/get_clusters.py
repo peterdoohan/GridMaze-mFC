@@ -255,6 +255,11 @@ class Cluster:
                 "acc_bin_size": 0.25,
                 "occupancy_proportion": 0.005,
             }
+        elif feature == "velocity":
+            default_kwargs = {
+                "with_symmetry": True,
+                "navigation_only": True,
+            }
         else:
             raise ValueError(f"Tuning feature: {feature} not recognised")
         # Step 3: check input kwargs are valid
@@ -500,8 +505,30 @@ class Cluster:
                 self.cluster_unique_ID, level=1, axis=1, drop_level=False
             ).reset_index(drop=True)
             firing_rates = navigation_spike_rates_df.firing_rate.values.squeeze()
-            speeds, acceleration = movement.get_movement_tuning_data(navigation_df)
+            speeds, velocities, acceleration = movement.get_movement_tuning_data(navigation_df)
             return (speeds, acceleration, firing_rates)
+
+        elif feature == "velocity":
+            try:
+                navigation_df = load_data.load(self.analysis_data_path / "frames.navigation.parquet")
+                navigation_spike_rates_df = load_data.load(self.analysis_data_path / "frames.spikeRates.parquet")
+            except FileNotFoundError:
+                print("some data not found")  #
+
+            # filter data for specified cluster & specific feature kwargs
+            navigation_spike_rates_df = navigation_spike_rates_df.xs(
+                self.cluster_unique_ID, level=1, axis=1, drop_level=False
+            ).reset_index(drop=True)
+            firing_rates = navigation_spike_rates_df.firing_rate.values.squeeze()
+            if feature_kwargs["navigation_only"]:
+                mask = navigation_df.trial_phase == "navigation"
+                firing_rates = firing_rates[mask]
+            speeds, velocities, acceleration = movement.get_movement_tuning_data(
+                navigation_df,
+                navigation_only=feature_kwargs["navigation_only"],
+            )
+            tuning_heatmap = movement.get_velocity_tuning(velocities, firing_rates)
+            return tuning_heatmap
 
     def plot_tuning(self, feature, feature_kwargs={}, ax=None):
         """ """
@@ -599,6 +626,11 @@ class Cluster:
             )
         elif feature == "movement":
             movement.plot_movement_tuning(*tuning_data, **feature_kwargs, ax1=ax)
+        elif feature == "velocity":
+            if feature_kwargs["with_symmetry"]:
+                movement.plot_velocity_tuning_summary(tuning_data, axes=ax)
+            else:
+                movement.plot_velocity_tuning(tuning_data, ax=ax)
         else:
             raise ValueError(f"Tuning feature: {feature} not recognised")
         return
