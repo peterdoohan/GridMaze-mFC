@@ -3,6 +3,7 @@ Library for the analysis of neural tuning to place_direction explaining low dime
 """
 
 # %% Imports
+from cProfile import label
 import json
 import joblib
 import numpy as np
@@ -696,12 +697,15 @@ def get_place_direction_cross_subject_similarity(
     save=False,
 ):
     """ """
-    save_path = RESULTS_DIR / "cross_subject_similarity.parquet"
-    if save_path.exists() and not save:
+    auc_save_path = RESULTS_DIR / "cross_subject_similarity" / "cross_subject_similarity_auc.parquet"
+    cve_save_path = RESULTS_DIR / "cross_subject_similarity" / "cross_subject_similarity_cve.parquet"
+    if auc_save_path.exists() and not save:
         if verbose:
-            print(f"Loading existing results from {save_path}")
-        return pd.read_parquet(save_path)
-    all_results = []
+            print(f"Loading existing results from {auc_save_path}")
+        auc_df = pd.read_parquet(auc_save_path)
+        cve_df = pd.read_parquet(cve_save_path)
+        return auc_df, cve_df
+    all_auc_results, all_cve_results = [], []
     for maze_name in ["maze_1", "maze_2", "rooms_maze"]:
         if verbose:
             print(maze_name)
@@ -713,7 +717,7 @@ def get_place_direction_cross_subject_similarity(
             max_steps_to_goal=max_steps_to_goal,
             verbose=verbose,
         )
-        results = []
+        auc_results, cve_results = [], []
         for i in range(n_splits):
             if verbose:
                 print(f"split: {i}")
@@ -745,20 +749,35 @@ def get_place_direction_cross_subject_similarity(
                     subject_train_arr, subject_test_arr, other_subjects_test_arr = [
                         _norm_length(arr) for arr in [subject_train_arr, subject_test_arr, other_subjects_test_arr]
                     ]
-
                 # get variance expalin in neurons by within-subject
-                _results = {"split": i, "subject": subject}
-                for label, B in zip(["AUC_subject", "AUC_other"], [subject_test_arr, other_subjects_test_arr]):
+                _auc_results = {"split": i, "subject": subject}
+                cve_df = pd.DataFrame(
+                    index=range(min(subject_test_arr.shape) + 1),
+                    columns=["subject", "split", "subject_pcs", "other_pcs", "component"],
+                )
+                for auc_label, cve_label, B in zip(
+                    ["AUC_subject", "AUC_other"],
+                    ["subject_pcs", "other_pcs"],
+                    [subject_test_arr, other_subjects_test_arr],
+                ):
                     cumsum_ve = get_pca_variance_explained(B, subject_train_arr)
+                    cve_df[cve_label] = cumsum_ve
+                    cve_df["component"] = np.arange(len(cumsum_ve))
+                    cve_df["split"] = i
+                    cve_df["subject"] = subject
                     auc = np.trapz(cumsum_ve, dx=1 / len(cumsum_ve))
-                    _results[label] = auc
-                results.append(_results)
-        results_df = pd.DataFrame(results)
-        results_df["maze_name"] = maze_name
-        all_results.append(results_df)
-    results_df = pd.concat(all_results, axis=0)
+                    _auc_results[auc_label] = auc
+                auc_results.append(_auc_results)
+                cve_results.append(cve_df)
+        auc_results_df = pd.DataFrame(auc_results)
+        auc_results_df["maze_name"] = maze_name
+        cve_results_df = pd.concat(cve_results, axis=0)
+        cve_results_df["maze_name"] = maze_name
+        all_auc_results.append(auc_results_df)
+        all_cve_results.append(cve_results_df)
+    auc_results_df = pd.concat(all_auc_results, axis=0)
+    cve_results_df = pd.concat(all_cve_results, axis=0)
     if save:
-        results_df.to_parquet(save_path)
-        if verbose:
-            print(f"Results saved to {save_path}")
-    return results_df
+        auc_results_df.to_parquet(auc_save_path)
+        cve_results_df.to_parquet(cve_save_path)
+    return auc_results_df, cve_results_df

@@ -4,6 +4,8 @@ Come up with some way of visualising velocity tuning across the population
 """
 
 # %% Imports
+import json
+from turtle import speed
 import pandas as pd
 import numpy as np
 from scipy.ndimage import gaussian_filter
@@ -11,12 +13,17 @@ from sklearn.cluster import KMeans
 from matplotlib import pyplot as plt
 from matplotlib.gridspec import GridSpec
 import seaborn as sns
+from sympy import ordered
 
 from GridMaze.analysis.cluster_tuning import movement as mv
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import get_clusters as gc
 
 # %% Global Variables
+from GridMaze.paths import ANALYSIS_INFO_PATH
+
+with open(ANALYSIS_INFO_PATH / "movement_threshold.json", "r") as f:
+    MOVEMENT_THRESHOLD = json.load(f)
 
 FRAME_RATE = 60
 
@@ -25,8 +32,7 @@ FRAME_RATE = 60
 
 def plot_velocity_population_symmetry_heatmap(
     pop_df,
-    n_clusters=8,
-    min_ordering_power=30,
+    min_velocity_power=30,
     ax=None,
     vmax=100,
     cmap="viridis",
@@ -34,52 +40,40 @@ def plot_velocity_population_symmetry_heatmap(
     """ """
     df = pop_df.copy()
     harmonics = df.columns
-    df.columns = pd.MultiIndex.from_product([["harmonic"], harmonics])
-    # cluster neurons
-    kmeans = KMeans(n_clusters=n_clusters, random_state=0)
-    kmeans.fit(df.values)
-    df[("KMeans_cluster", "")] = kmeans.labels_
-    cluster_means = df.groupby("KMeans_cluster").mean().harmonic
-    # split into velocity and speed clusters based on min_ordering_power
-    cluster_max = cluster_means.max(axis=1)
-    speed_clusters = cluster_max[cluster_max.lt(min_ordering_power)].index
-    velocity_clusters = cluster_max[cluster_max.ge(min_ordering_power)].index
-    velocity_sorted_clusters = cluster_means.loc[velocity_clusters].sort_values(
-        by=list(harmonics), ascending=[False, False, False, False]
-    )
-    cluster_order = list(velocity_sorted_clusters.index) + list(speed_clusters)
-    cluster2new_order = {c: i for i, c in enumerate(cluster_order)}
-    cluster2max_harm = cluster_means.loc[cluster_order].reset_index(drop=True).idxmax(axis=1).to_dict()
-    # rename clusters by ordering
-    df[("KMeans_cluster", "")] = df[("KMeans_cluster", "")].map(cluster2new_order)
-    # further order neurons within each cluster
-    _dfs = []
-    for i in range(n_clusters):
-        cluster_df = df[df[("KMeans_cluster", "")] == i].harmonic
-        if i in velocity_clusters:
-            max_harm = cluster2max_harm[i]
-            cluster_df = cluster_df.sort_values(by=[max_harm], ascending=[False])
-        _dfs.append(cluster_df)
-    ordered_df = pd.concat(_dfs, axis=0)
+    max_power = df.max(axis=1)
+    speed_df = df[max_power.lt(min_velocity_power)]
+    velocity_df = df[max_power.ge(min_velocity_power)]
+    # order velocity_df by harmonic 1,2,3,4...
+    v_idxmax = velocity_df.idxmax(axis=1)
+    dfs = []
+    for h in harmonics:
+        maxh_df = velocity_df[v_idxmax == h]
+        dfs.append(maxh_df.sort_values(by=[h], ascending=[False]))
+    ordered_velocity_df = pd.concat(dfs, axis=0)
+    # leave speed randomly ordered
+    ordered_df = pd.concat([ordered_velocity_df, speed_df], axis=0)
     # plotting
     if ax is None:
-        f, ax = plt.subplots(1, 1, figsize=(2, 6))
+        f, ax = plt.subplots(1, 1, figsize=(8, 1.5))
     sns.heatmap(
-        ordered_df.astype(float),
+        ordered_df.astype(float).T,
         cmap=cmap,
-        cbar_kws={"label": "Power", "shrink": 0.4},
-        yticklabels=False,
+        cbar_kws={"label": "Power"},
+        yticklabels=True,
         ax=ax,
         rasterized=True,
         vmax=vmax,
     )
-    y_tick = (df.shape[0] // 100) * 100
-    ax.set_yticks([y_tick])
-    ax.set_yticklabels([y_tick])
-    ax.set_ylabel("neurons (ordered by rotational symmetry)")
-    ax.set_xlabel("harmonic")
-    ax.set_xticklabels(harmonics + 1)
+    x_tick = (df.shape[0] // 100) * 100
+    ax.set_xticks([x_tick])
+    ax.set_xticklabels([x_tick])
+    ax.set_xlabel("neurons (ordered by rotational symmetry)")
+    ax.set_ylabel("harmonic")
+    ax.set_yticklabels(harmonics + 1)
     return
+
+
+# %%
 
 
 def get_population_velocity_summary(late_session=False, verbose=True, sessions=None):
@@ -110,7 +104,9 @@ def get_population_velocity_summary(late_session=False, verbose=True, sessions=N
 
 def get_session_velocity_rotational_harmonics(
     session,
-    min_corr=0.75,
+    navigation_only=True,
+    min_corr=0.65,
+    max_speed_thres=MOVEMENT_THRESHOLD,
     x_range=(-0.3, 0.3),
     y_range=(-0.3, 0.3),
     bin_size=0.025,
@@ -126,6 +122,9 @@ def get_session_velocity_rotational_harmonics(
     # filter clusters
     if min_corr is not None:
         movement_metrics = movement_metrics[movement_metrics.velocity.mean_corr.gt(min_corr)]
+    if max_speed_thres is not None:
+        # remove stationay tuned cells
+        movement_metrics = movement_metrics[movement_metrics.speed["max"].gt(max_speed_thres)]
     keep_clusters = movement_metrics.cluster_unique_ID.values
 
     # if no velocity tuned cluster from session return nan
@@ -137,7 +136,7 @@ def get_session_velocity_rotational_harmonics(
     navigation_rates_df = pd.concat([navigation_df, navigation_rates_df], axis=1)
 
     # get smoothed velocity data and update navigation df
-    speeds, velocities, trang_acc = mv.get_movement_tuning_data(navigation_df)
+    speeds, velocities, trang_acc = mv.get_movement_tuning_data(navigation_df, navigation_only=False)
     navigation_rates_df[("velocity", "x")] = velocities[:, 0]
     navigation_rates_df[("velocity", "y")] = velocities[:, 1]
 
@@ -150,6 +149,10 @@ def get_session_velocity_rotational_harmonics(
     navigation_rates_df[("velocity", "y_bin")] = pd.cut(
         navigation_rates_df[("velocity", "y")], bins=y_bin_edges, labels=(y_bin_edges[:-1] + bin_size / 2)
     )
+
+    # filter for navigation time data (optional)
+    if navigation_only:
+        navigation_rates_df = navigation_rates_df[navigation_rates_df.trial_phase == "navigation"]
 
     # get tuning curves
     grouped_df = navigation_rates_df.groupby([("velocity", "x_bin"), ("velocity", "y_bin")], observed=True)

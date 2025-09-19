@@ -30,7 +30,9 @@ def get_movement_metrics_df(processed_data_path, analysis_data_path, navigation_
     single_units = convert.cluster_IDs2scluster_unique_IDs(session_info, single_units)
 
     # get movement data
-    speeds, velocities, tangential_acc = mv.get_movement_tuning_data(navigation_df)
+    speeds, velocities, tangential_acc = mv.get_movement_tuning_data(
+        navigation_df, navigation_only=False
+    )  # filter for nav later
     navigation_df[("speed", "")] = speeds
     navigation_df[("velocity", "x")] = velocities[:, 0]
     navigation_df[("velocity", "y")] = velocities[:, 1]
@@ -67,7 +69,7 @@ def get_movement_metrics_df(processed_data_path, analysis_data_path, navigation_
 
 def get_split_half_metrics(
     cluster_df,
-    navigation_only=False,
+    navigation_only=True,
     speed_range=(0, 0.3),
     speed_bin_size=0.025,
     n_splits=20,
