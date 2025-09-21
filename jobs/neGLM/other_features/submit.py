@@ -101,4 +101,38 @@ def get_model_set_params(seed=0, subfolder="other_features", overwrite=False):
                     "run_fn": "run_cv_neGLM",
                 }
             )
+    # also run a speed and velocity comparison
+    feature_groups = ["place_direction", "distance_to_goal", "goal", "egocentric_action", "speed"]
+    for maze_name in ["maze_1", "maze_2", "rooms_maze"]:
+        model_name = ".".join(feature_groups)
+        # update defualt input data kwargs
+        input_data_kwargs = deepcopy(ju.DEFAULT_INPUT_DATA_KWARGS)
+        input_data_kwargs["maze_name"] = maze_name
+        input_data_kwargs["input_groups"] = feature_groups
+        input_data_kwargs["input_group_kwargs"] = {}
+        # use defualt model init kwargs
+        model_init_kwargs = deepcopy(ju.DEFAULT_MODEL_INIT_KWARGS)
+        # use defualt model train kwargs
+        model_train_kwargs = deepcopy(ju.DEFAULT_MODEL_TRAIN_KWARGS)
+        # use defualt score kwargs
+        score_kwargs = deepcopy(ju.DEFAULT_SCORE_KWARGS)
+        model_set_params.append(
+            {
+                "model_name": model_name,
+                "subfolder": subfolder,
+                "maze_name": maze_name,
+                "model_params": {
+                    "input_data_kwargs": input_data_kwargs,
+                    "model_init_kwargs": model_init_kwargs,
+                    "model_train_kwargs": model_train_kwargs,
+                    "score_kwargs": score_kwargs,
+                    "seed": seed,
+                    "verbose": True,
+                    "save_path": str(RESULTS_DIR / subfolder / maze_name / model_name),
+                    "overwrite": overwrite,
+                },
+                "resource_type": "gpu",
+                "run_fn": "run_cv_neGLM",
+            }
+        )
     return model_set_params

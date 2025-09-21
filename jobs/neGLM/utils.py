@@ -37,7 +37,7 @@ DEFAULT_MODEL_TRAIN_KWARGS = {
     "device": None,
     "test_freq": 500,
     "lr": 1e-3,
-    "nepochs": 5001,
+    "nepochs": 3001,
     "eval_alpha": 1e-3,
     "n_jobs": 24,
     "verbose": True,
@@ -73,6 +73,8 @@ def submit_all_jobs():
         "other_features",
         "variance_explained_full",
         "feature_interactions_full",
+        "variance_explained_all_sessions",
+        "variance_explained_full_all_sessions",
     ]:
         module_path = f"jobs.neGLM.{subfolder}.submit"
         # Import the module
@@ -93,7 +95,7 @@ def find_missing(model_set_params):
 
 
 def get_SLURM_script(
-    model_name, subfolder, maze_name, model_params, run_fn="run_cv_neGLM", resource_type="gpu", RAM="32G"
+    model_name, subfolder, maze_name, model_params, run_fn="run_cv_neGLM", resource_type="gpu", RAM="16G"
 ):
     """Create SLURM script for running neGLM experiment."""
     # check jobs and results output folders exist
