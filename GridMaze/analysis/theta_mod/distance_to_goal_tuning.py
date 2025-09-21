@@ -12,6 +12,7 @@ from matplotlib import pyplot as plt
 from scipy.ndimage import gaussian_filter1d
 from scipy.interpolate import interp1d
 from scipy.stats import ttest_1samp
+from pingouin import multivariate_ttest
 
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import filter as filt
@@ -317,7 +318,9 @@ def get_opt_heatmap_x_shift(
     return best_shift * upsampled_spacing
 
 
-def get_population_theta_split_distance_tuning(subject_ID="all", verbose=True, min_split_half_corr=0.7):
+def get_population_theta_split_distance_tuning(
+    subject_ID="all", method="peak_trough", verbose=True, min_split_half_corr=0.7
+):
     """ """
     all_tuning_curves = []
     all_metrics = []
@@ -339,7 +342,14 @@ def get_population_theta_split_distance_tuning(subject_ID="all", verbose=True, m
         for session in sessions:
             if verbose:
                 print(session.name)
-            tuning_curves = get_session_theta_split_distance_tuning(session, min_split_half_corr=min_split_half_corr)
+            if method == "peak_trough":
+                tuning_curves = get_session_theta_split_distance_tuning(
+                    session, min_split_half_corr=min_split_half_corr
+                )
+            elif method == "mean_all_phases":
+                tuning_curves = get_session_theta_split_distance_tuning_all_phases(
+                    session, min_split_half_corr=min_split_half_corr
+                )
             if tuning_curves is None:
                 continue  # no distance tunned cells
             distance_metrics = session.cluster_distance_tuning_metrics
@@ -434,7 +444,7 @@ def get_session_theta_split_distance_tuning(
 # %%
 
 
-def get_session_theta_split_distance_tuning2(
+def get_session_theta_split_distance_tuning_all_phases(
     session,
     metrics=("distance_to_goal", "geodesic"),
     min_split_half_corr=0.7,
@@ -497,3 +507,132 @@ def get_session_theta_split_distance_tuning2(
     distance_theta_tuning = distance_theta_rates.groupby("distance_bin").spike_count.mean().sort_index(axis=1)
     distance_theta_tuning.index = [c.mid for c in distance_theta_tuning.index]
     return distance_theta_tuning.spike_count
+
+
+def get_opt_heatmap_x_shift_all_phases(
+    tuning_df, shift=0.08, bin_spacing=0.04, smooth_SD=3, normalise=False, upsampled_spacing=0.001
+):
+    """
+    Find best x-shift moving across whole heatmaps from peak and trough
+    """
+    # get theta phases
+    phases = [c for c in tuning_df.columns.get_level_values(1).unique() if c != "mean"]
+    df = tuning_df.T.swaplevel(0, 1, axis=0).sort_index(axis=0)
+    if smooth_SD:
+        df = pd.DataFrame(
+            data=gaussian_filter1d(df.values, axis=1, sigma=smooth_SD), index=df.index, columns=df.columns
+        )
+    if normalise == "max":
+        grand_max = df.max(axis=1)
+        df = df.div(grand_max, axis=0)
+    # upsample
+    current_bins = df.shape[1]
+    upsampled_bins = int(current_bins * (bin_spacing / upsampled_spacing))
+    x_new = np.linspace(0, current_bins - 1, upsampled_bins)
+    df_upsampled = pd.DataFrame(
+        data=interp1d(np.arange(current_bins), df.values, axis=1, kind="quadratic")(x_new), index=df.index
+    )
+    # calculate MSE for all shifts
+    n_shifts = int(shift / upsampled_spacing)
+    mean_tuning = df_upsampled.loc["mean"].values  # n_neurons x n_upsampled_distance_bins
+    # mask the edges of the upsampled data up to the max shift
+    shift_mask = np.zeros_like(mean_tuning, dtype=bool)
+    shift_mask[:, :n_shifts] = True
+    shift_mask[:, -n_shifts:] = True
+    _mean_tuning = mean_tuning[~shift_mask]
+    _shifts = np.arange(-n_shifts, n_shifts + 1, 1)
+    mses = np.zeros((len(phases), len(_shifts)))
+    for i, phase in enumerate(phases):
+        phase_tuning = df_upsampled.loc[phase].values  # n_neurons x n_upsampled_distance_bins
+        for j, _shift in enumerate(_shifts):
+            shifted_phase_tuning = np.roll(phase_tuning, _shift, axis=1)
+            shifted_phase_tuning = shifted_phase_tuning[~shift_mask]
+            mses[i, j] = ((_mean_tuning - shifted_phase_tuning) ** 2).mean()
+    phase_opt_x_shifts = _shifts[np.argmin(mses, axis=1)] * upsampled_spacing
+    return phase_opt_x_shifts, phases
+
+
+def get_population_distance_tuning_theta_x_shifts_all_phases(
+    min_split_half_corr=0.7,
+    shift=0.08,
+    bin_spacing=0.04,
+    smooth_SD=3,
+    normalise=False,
+    upsampled_spacing=0.001,
+    save=False,
+    verbose=False,
+):
+    """ """
+    save_path = RESULTS_DIR / "population_theta_x_shifts_all_phases.csv"
+    if not save and save_path.exists():
+        if verbose:
+            print(f"Loading existing results from {save_path}")
+        results_df = pd.read_csv(save_path, index_col=0)
+        return results_df
+    subject_opt_x_shifts = []
+    for subject in SUBJECT_IDS:
+        tuning_df, _ = get_population_theta_split_distance_tuning(
+            subject_ID=subject,
+            verbose=verbose,
+            min_split_half_corr=min_split_half_corr,
+        )
+        opt_x_shifts, phases = get_opt_heatmap_x_shift_all_phases(
+            tuning_df,
+            shift,
+            bin_spacing,
+            smooth_SD,
+            normalise,
+            upsampled_spacing,
+        )
+        subject_opt_x_shifts.append(opt_x_shifts)
+    results_df = pd.DataFrame(data=np.array(subject_opt_x_shifts).T, index=phases, columns=SUBJECT_IDS)
+    if save:
+        if verbose:
+            print(f"Saving results to {save_path}")
+        results_df.to_csv(save_path)
+    return results_df
+
+
+def plot_theta_mode_x_shifts(results_df, color="teal", print_stats=True, ax=None):
+    """ """
+    # init plot
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(2, 2))
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.axhline(0, color="black", linestyle="--", alpha=0.5)
+    ax.set_ylabel("tuning bias (cm)")
+    ax.set_xlabel("theta phase (rad)")
+    ax.set_xticks(np.arange(-np.pi, np.pi + 0.1, np.pi / 2))
+    ax.set_xticklabels(["-π", "-π/2", "0", "π/2", "π"])
+    # process
+    phases = results_df.index.astype(float).values
+    mean = results_df.mean(1).values * 100  # convert to cm
+    sem = results_df.sem(1).values * 100
+    # plot
+    ax.errorbar(
+        phases,
+        mean,
+        yerr=sem,
+        fmt="o-",
+        color=color,
+        markersize=6,
+        linewidth=2,
+        capsize=None,
+        elinewidth=2,
+    )
+    # stats
+    if print_stats:
+        _get_x_shift_stats(results_df)
+
+
+def _get_x_shift_stats(results_df):
+    """ """
+    df = results_df.T
+    phis = df.columns.astype(float)
+    data = df.values
+    beta_cos = data.dot(np.cos(phis))
+    beta_sin = data.dot(np.sin(phis))
+    betas = np.column_stack([beta_cos, beta_sin])
+    zeros = np.zeros_like(betas)
+    mv_test = multivariate_ttest(betas, zeros, paired=False)
+    return print(mv_test)
