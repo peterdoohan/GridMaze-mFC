@@ -8,12 +8,13 @@ import json
 import numpy as np
 import pandas as pd
 import networkx as nx
-from joblib import Parallel, delayed
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
+from joblib import Parallel, delayed
 from scipy.stats import ttest_1samp
+from scipy.ndimage import gaussian_filter1d
 from statsmodels.stats.multitest import multipletests
 
 from GridMaze.analysis.place_direction import future_decoding as fd
@@ -31,12 +32,29 @@ from GridMaze.maze import plotting as mp
 # %% Global Variables
 from GridMaze.paths import RESULTS_PATH, EXPERIMENT_INFO_PATH
 
+RESULTS_DIR = RESULTS_PATH / "theta_mod" / "trajectory_decoding"
+
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as f:
     SUBJECT_IDS = json.load(f)
 
 MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
 
+FRAME_RATE = 60
+
 # %% Functions
+
+
+def plot_theta_mod_trajectory_error(summary_df, steps_to_goal=None, decision_points=False, ax=None):
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(1, 1))
+    # filter data
+    df = summary_df.copy()
+    if steps_to_goal is not None:
+        df = df[df.steps_to_goal.between(*steps_to_goal)]
+    if decision_points:
+        df = filter_decision_points(df, decision_points="future")
+
+    return
 
 
 def filter_decision_points(summary_df, decision_points="future"):
@@ -57,8 +75,22 @@ def filter_decision_points(summary_df, decision_points="future"):
     return df
 
 
-def get_summary_df(verbose=True):
-    dfs, failed_sessions = [], []
+def get_summary_df(verbose=True, save=True):
+
+    def _process_session(session):
+        if verbose:
+            print(session.name)
+        results_df = get_session_theta_mod_trajectory_error(session, verbose=False)
+        results_df["subject_ID"] = session.subject_ID
+        results_df["maze_name"] = session.maze_name
+        results_df["day_on_maze"] = session.day_on_maze
+        return results_df
+
+    save_path = RESULTS_DIR / "decoding_summary_df2.parquet"
+    if save_path.exists() and not save:
+        summary_df = pd.read_parquet(save_path)
+        return summary_df
+    dfs = []
     for subject in SUBJECT_IDS:
         for maze_name in MAZE_NAMES:
             sessions = gs.get_maze_sessions(
@@ -68,34 +100,28 @@ def get_summary_df(verbose=True):
                 with_data=["navigation_df", "navigation_theta_spike_counts_df", "cluster_metrics", "trials_df"],
                 must_have_data=True,
             )
-            for session in sessions:
-                if verbose:
-                    print(session.name)
-                try:
-                    results_df = get_session_theta_mod_trajectory_error(session)  # defualt settings
-                    results_df["subject_ID"] = session.subject_ID
-                    results_df["maze_name"] = session.maze_name
-                    results_df["day_on_maze"] = session.day_on_maze
-                    dfs.append(results_df)
-                except Exception as e:
-                    print(f"Failed: {session.name}")
-                    print(e)
-                    failed_sessions.append(session.name)
+            _dfs = Parallel(n_jobs=-1)(delayed(_process_session)(session) for session in sessions)
+            for df in _dfs:
+                dfs.append(df)
     summary_df = pd.concat(dfs).reset_index(drop=True)
-    return summary_df, failed_sessions
+    if save:
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_df.to_parquet(save_path)
+    return summary_df
 
 
 def get_session_theta_mod_trajectory_error(
     session,
     include_multi_units=True,
     max_steps_to_goal=30,
-    resolution=0.2,
-    envelope=10,
-    sqrt_spikes=False,
-    alpha=5,
+    sum_spike_window=0.4,
+    resolution=0.1,
+    envelope=2,
+    sqrt_spikes=True,
+    alpha="opt",
     normalise_X=True,
-    n_folds=5,
-    verbose=True,
+    n_folds=8,
+    verbose=False,
 ):
     """ """
     # input data
@@ -105,6 +131,7 @@ def get_session_theta_mod_trajectory_error(
         session,
         include_multi_units=include_multi_units,
         max_steps_to_goal=max_steps_to_goal,
+        sum_spike_window=sum_spike_window,
         resolution=resolution,
         modes=["past", "future"],
         offset=envelope,
@@ -139,7 +166,13 @@ def get_session_theta_mod_trajectory_error(
             scaler = StandardScaler().fit(X_train_mean)
             X_train_mean, X_test_mean = scaler.transform(X_train_mean), scaler.transform(X_test_mean)
         Y_train, Y_test = [df.maze_position.simple.values for df in [train_df, test_df]]
-        decoder = LogisticRegression(C=alpha, random_state=0, max_iter=10_000, class_weight="balanced")
+        if alpha == "opt":
+            _alpha = _get_opt_alpha(fold_df, train_df, normalise_X=normalise_X, sqrt_spikes=sqrt_spikes)
+        else:
+            _alpha = alpha
+        decoder = LogisticRegression(
+            C=_alpha, random_state=0, max_iter=10_000, class_weight="balanced", verbose=verbose
+        )
         decoder.fit(X_train_mean, Y_train)
         decoder_classes = decoder.classes_
         # test on spikes at each theta phase
@@ -151,47 +184,102 @@ def get_session_theta_mod_trajectory_error(
             if normalise_X:
                 X_theta_test = scaler.transform(X_theta_test)
             Yprob = decoder.predict_proba(X_theta_test)  # decoding prob across all maze locs
-            weighted_errors, traj_prob_mass = get_weighted_trajectory_position_error(
+            signed_errors, abs_errors, true_prob_mass, all_traj_defined = get_weighted_trajectory_position_error(
                 Yprob, Y_test, test_df, decoder_classes, all_pairs_path_length
             )
             _res = res.copy()
             _res["theta_phase"] = phase
             _res["fold"] = fold
-            _res["weighted_trajectory_error"] = weighted_errors
-            _res["trajectory_prob_mass"] = traj_prob_mass
+            _res["signed_error"] = signed_errors
+            _res["abs_error"] = abs_errors
+            _res["true_prob_mass"] = true_prob_mass
+            _res["all_traj_defined"] = all_traj_defined
             results.append(_res)
     results_df = pd.concat(results).reset_index(drop=True)
     return results_df
 
 
-def get_weighted_trajectory_position_error(Yprob, Y_test, test_df, decoder_classes, all_pairs_path_length):
+def get_weighted_trajectory_position_error(
+    Yprob,
+    Y_test,
+    test_df,
+    decoder_classes,
+    all_pairs_path_length,
+    verbose=False,
+):
     """ """
     samples = Yprob.shape[0]
     traj_envelope = test_df[["past", "future"]]  # past & future parts of trajectory
-    errors = np.zeros(samples)
-    traj_prob_mass = np.zeros(samples)
+    signed_errors = np.zeros(samples)
+    abs_errors = np.zeros(samples)
+    true_prob_mass = np.zeros(samples)
+    all_traj_defined = np.ones(samples, dtype=bool)
     for i in range(samples):
         y = Y_test[i]
         probs = Yprob[i]
+        loc2prob = dict(zip(decoder_classes, probs))
         traj = traj_envelope.iloc[i]
+        # check trajectory in decoder classes
+        not_in_train = np.setdiff1d(traj.unique(), decoder_classes)
+        if len(not_in_train) > 0:
+            if verbose:
+                print(not_in_train)
+            all_traj_defined[i] = False
         past_locs = traj.loc["past"].iloc[1:].dropna().unique()
         future_locs = traj.loc["future"].iloc[1:].dropna().unique()
-        traj_locs = traj.dropna().unique()
-        traj_loc_mask = np.isin(decoder_classes, traj_locs)
-        traj_pmass = np.sum(probs[traj_loc_mask])
+        if y not in decoder_classes:
+            true_pmass = np.nan
+        else:
+            true_pmass = loc2prob[y]
+        true_prob_mass[i] = true_pmass
         # filter probs to only include those on the trajectory
-        past_loc_mask = np.isin(decoder_classes, past_locs)
-        past_probs = probs[past_loc_mask]
-        past_dists = np.array([all_pairs_path_length[y][loc] for loc in decoder_classes[past_loc_mask]])
-        future_loc_mask = np.isin(decoder_classes, future_locs)
-        future_probs = probs[future_loc_mask]
-        future_dists = np.array([all_pairs_path_length[y][loc] for loc in decoder_classes[future_loc_mask]])
+        past_probs = [loc2prob[loc] if loc in loc2prob.keys() else np.nan for loc in past_locs]
+        past_dists = np.array([all_pairs_path_length[y][loc] for loc in past_locs])
+        future_probs = [loc2prob[loc] if loc in loc2prob.keys() else np.nan for loc in future_locs]
+        future_dists = np.array([all_pairs_path_length[y][loc] for loc in future_locs])
         # calculate decoding error distance over the trajectory (+ve = more future, -ve = more past)
-        traj_prob_sum = traj_pmass + 1e-9  # avoid div by 0
-        weighted_error = (np.sum(future_probs * future_dists) - np.sum(past_probs * past_dists)) / traj_prob_sum
-        errors[i] = weighted_error
-        traj_prob_mass[i] = traj_pmass
-    return errors, traj_prob_mass
+        weighted_past, weighted_future = np.nansum(future_probs * future_dists), np.nansum(past_probs * past_dists)
+        signed_errors[i] = weighted_future - weighted_past
+        abs_errors[i] = weighted_future + weighted_past
+    return (
+        signed_errors,
+        abs_errors,
+        true_prob_mass,
+        all_traj_defined,
+    )
+
+
+def _get_opt_alpha(
+    fold_df, train_df, normalise_X=True, sqrt_spikes=True, reg_range=np.logspace(-4, 4, 10), verbose=False
+):
+    vfolds_df = fold_df.train
+    vfolds = vfolds_df.columns
+    results = np.zeros((len(vfolds), len(reg_range)))
+    for i, vfold in enumerate(vfolds):
+        if verbose:
+            print(f"vfold: {i}")
+        val_trials = vfolds_df[vfold].dropna().values
+        train_trials = vfolds_df[[t for t in vfolds if t != vfold]].unstack().dropna().values
+        _train_df = train_df[train_df.trial.isin(train_trials)]
+        _val_df = train_df[train_df.trial.isin(val_trials)]
+        X_train, X_val = [df.spike_count.T.groupby(level=0).mean().T.values for df in [_train_df, _val_df]]
+        if X_train.shape[0] == 0 or X_val.shape[0] == 0:
+            continue
+        Y_train, Y_val = [df.maze_position.simple.values for df in [_train_df, _val_df]]
+        # standardise
+        if sqrt_spikes:
+            X_train, X_val = np.sqrt(X_train), np.sqrt(X_val)
+        if normalise_X:
+            scaler = StandardScaler().fit(X_train)
+            X_train, X_val = scaler.transform(X_train), scaler.transform(X_val)
+        # fit model
+        for j, alpha in enumerate(reg_range):
+            decoder = LogisticRegression(C=alpha, random_state=0, max_iter=10_000, class_weight="balanced")
+            decoder.fit(X_train, Y_train)
+            score = decoder.score(X_val, Y_val)
+            results[i, j] = score
+    opt_alpha = reg_range[np.nanmean(results, axis=0).argmax()]
+    return opt_alpha
 
 
 def _get_all_pairs_path_length(simple_maze):
@@ -212,15 +300,16 @@ def get_input_data(
     session,
     include_multi_units=True,
     max_steps_to_goal=30,
-    resolution=0.2,
+    resolution=None,
+    sum_spike_window=0.4,
     modes=["future", "past"],
     offset=12,
     state_type="place",
 ):
     """ """
     # load data
-    navigation_df = session.navigation_df
-    spike_counts_df = session.navigation_theta_spike_counts_df.reset_index(drop=True)
+    navigation_df = session.navigation_df.copy()
+    spike_counts_df = session.navigation_theta_spike_counts_df.reset_index(drop=True).copy()
 
     # filter clusters
     keep_clusters = gc.filter_clusters(
@@ -234,12 +323,17 @@ def get_input_data(
         spike_counts_df.columns[spike_counts_df.columns.get_level_values(1).isin(keep_clusters)]
     ]
 
+    # sum spikes over spike_window
+    sum_frames = int(sum_spike_window * FRAME_RATE)
+    spike_counts_df = spike_counts_df.rolling(window=sum_frames, center=True).sum().fillna(0).astype(int)
+
+    navigation_df.columns = pd.MultiIndex.from_tuples([(*col, "") for col in navigation_df.columns])
+    navigation_spikes_df = pd.concat([navigation_df, spike_counts_df], axis=1)
+
     # downsample data
-    ds_nav_df, ds_spikes_df = ds.downsample_nav_spikes_data(
-        navigation_df, spike_counts_df, resolution=resolution, distance_metrics=[("steps_to_goal", "future")]
-    )
-    ds_nav_df.columns = pd.MultiIndex.from_tuples([(*col, "") for col in ds_nav_df.columns])
-    navigation_spikes_df = pd.concat([ds_nav_df, ds_spikes_df], axis=1)
+    if resolution is not None:
+        every_n_frames = int(resolution * FRAME_RATE)
+        navigation_spikes_df = navigation_spikes_df.iloc[::every_n_frames].reset_index(drop=True)
 
     # add place_direction column
     navigation_spikes_df[("place_direction", "", "")] = (
