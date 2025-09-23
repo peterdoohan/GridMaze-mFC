@@ -24,6 +24,7 @@ from GridMaze.analysis.core import filter as filt
 from GridMaze.analysis.core import folds
 from GridMaze.analysis.core import downsample as ds
 from GridMaze.analysis.core import convert
+from GridMaze.analysis.theta_mod import distance_to_goal_tuning as gt
 
 from GridMaze.maze import representations as mr
 from GridMaze.maze import plotting as mp
@@ -41,20 +42,57 @@ MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
 
 FRAME_RATE = 60
 
-# %% Functions
+# %% Vis data
 
 
-def plot_theta_mod_trajectory_error(summary_df, steps_to_goal=None, decision_points=False, ax=None):
+def plot_theta_mod_trajectory_error(
+    summary_df,
+    error="signed",
+    normalise=True,
+    all_traj_defined=True,
+    steps_to_goal=None,
+    decision_points=False,
+    color="grey",
+    print_stats=True,
+    ax=None,
+):
     if ax is None:
-        f, ax = plt.subplots(1, 1, figsize=(1, 1))
+        f, ax = plt.subplots(1, 1, figsize=(2, 2))
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.axhline(0, color="black", linestyle="--", alpha=0.5)
+    ax.set_ylabel("decoding bias (steps)")
+    ax.set_xlabel("theta phase (rad)")
+    ax.set_xticks(np.arange(-np.pi, np.pi + 0.1, np.pi / 2))
+    ax.set_xticklabels(["-π", "-π/2", "0", "π/2", "π"])
     # filter data
     df = summary_df.copy()
+    if all_traj_defined:
+        df = df[df.all_traj_defined]
     if steps_to_goal is not None:
         df = df[df.steps_to_goal.between(*steps_to_goal)]
     if decision_points:
         df = filter_decision_points(df, decision_points="future")
-
-    return
+    # average data for each subject
+    subject_means = df.groupby(["subject_ID", "theta_phase"])[f"{error}_error"].mean().unstack(0)
+    if normalise:
+        subject_means = subject_means.sub(subject_means.mean(), axis=1)
+    grand_mean = subject_means.mean(1)
+    grand_sem = subject_means.sem(1)
+    # plot
+    ax.errorbar(
+        grand_mean.index.values,
+        grand_mean.values,
+        yerr=grand_sem.values,
+        fmt="o-",
+        color=color,
+        markersize=6,
+        linewidth=2,
+        capsize=None,
+        elinewidth=2,
+    )
+    # stats
+    if print_stats:
+        gt._get_x_shift_stats(subject_means)
 
 
 def filter_decision_points(summary_df, decision_points="future"):
@@ -75,7 +113,10 @@ def filter_decision_points(summary_df, decision_points="future"):
     return df
 
 
-def get_summary_df(verbose=True, save=True):
+# %%
+
+
+def get_summary_df(verbose=True, save=False):
 
     def _process_session(session):
         if verbose:
@@ -104,6 +145,8 @@ def get_summary_df(verbose=True, save=True):
             for df in _dfs:
                 dfs.append(df)
     summary_df = pd.concat(dfs).reset_index(drop=True)
+    # check for duplicate columns
+    summary_df = summary_df.loc[:, ~summary_df.columns.duplicated()].copy()
     if save:
         save_path.parent.mkdir(parents=True, exist_ok=True)
         summary_df.to_parquet(save_path)
