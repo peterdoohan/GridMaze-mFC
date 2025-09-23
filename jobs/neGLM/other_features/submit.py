@@ -38,7 +38,7 @@ def get_model_set_params(seed=0, subfolder="other_features", overwrite=False):
             # update defualt input data kwargs
             input_data_kwargs = deepcopy(ju.DEFAULT_INPUT_DATA_KWARGS)
             input_data_kwargs["maze_name"] = maze_name
-            input_data_kwargs["input_groups"] = input_features
+            input_data_kwargs["input_groups"] = input_features.copy()
             input_data_kwargs["input_group_kwargs"] = {}
             # use defualt model init kwargs
             model_init_kwargs = deepcopy(ju.DEFAULT_MODEL_INIT_KWARGS)

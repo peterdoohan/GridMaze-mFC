@@ -44,6 +44,7 @@ def get_input_data(
     max_steps_to_goal=30,
     moving_only=False,
     min_spike_count=300,
+    min_trials=20,
     input_groups=["distance_to_goal", "place_direction", "egocentric_action"],
     input_group_kwargs={},
     verbose=False,
@@ -52,7 +53,7 @@ def get_input_data(
     if sessions is None:
         if verbose:
             print("Loading session objects ...")
-        with_data = ["navigation_df", "navigation_spike_counts_df", "cluster_metrics"]
+        with_data = ["trials_df", "navigation_df", "navigation_spike_counts_df", "cluster_metrics"]
         if "theta_phase" in input_groups:  # note if loading lfp data for all sessions >128GB RAM req
             with_data.extend(["lfp_signal", "lfp_times", "lfp_metrics"])
         sessions = gs.get_maze_sessions(
@@ -67,6 +68,12 @@ def get_input_data(
     for session in sessions:
         if verbose:
             print(session.name)
+        if min_trials is not None:
+            session_trials = session.trials_df.trial.max()
+            if session_trials < min_trials:
+                if verbose:
+                    print(f"Skipping session {session.name}, only {session_trials} trials")
+                continue
         session_data = get_session_input_data(
             session,
             resolution,

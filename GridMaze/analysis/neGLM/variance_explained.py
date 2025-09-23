@@ -10,13 +10,13 @@ import pandas as pd
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
-from matplotlib_venn import venn3
+from matplotlib_venn import venn2
 
 from scipy.stats import ttest_1samp
 from statsmodels.stats.multitest import multipletests
 
 
-from GridMaze.analysis.nbeGLM import model_comparisons as mc
+from GridMaze.analysis.neGLM import model_comparisons as mc
 
 
 # %% Global Variables
@@ -28,7 +28,13 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 # %%
 
 
-def plot_cpd_clusters(cpd_df, feature_tuned_df, features=["distance_to_goal", "place_direction"], ax=None):
+def plot_cpd_clusters(
+    cpd_df,
+    feature_tuned_df,
+    features=["distance_to_goal", "place_direction"],
+    remove_no_unique_variance_clusters=False,
+    ax=None,
+):
     """ """
     # set up fig
     if ax is None:
@@ -37,7 +43,11 @@ def plot_cpd_clusters(cpd_df, feature_tuned_df, features=["distance_to_goal", "p
     ax.axhline(0, color="k", linestyle="--", alpha=0.2)
     ax.axvline(0, color="k", linestyle="--", alpha=0.2)
     # process data
-    tuned_clusters = feature_tuned_df.index.get_level_values(1)
+    if remove_no_unique_variance_clusters:
+        _feature_tuned_df = feature_tuned_df[feature_tuned_df.any(axis=1)]
+    else:
+        _feature_tuned_df = feature_tuned_df.copy()
+    tuned_clusters = _feature_tuned_df.index.get_level_values(1)
     filt_cpd_df = cpd_df.loc[cpd_df.index.get_level_values(0).isin(tuned_clusters)]
     x = filt_cpd_df[features[0]]
     y = filt_cpd_df[features[1]]
@@ -51,6 +61,57 @@ def plot_cpd_clusters(cpd_df, feature_tuned_df, features=["distance_to_goal", "p
     )
 
 
+def plot_cpd_scatter(
+    cpd_df,
+    feature_tuned_df,
+    remove_no_unique_variance_clusters=False,
+    colors=["royalblue", "crimson", "mediumspringgreen", "silver"],
+    ax=None,
+):
+    """ """
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(3, 2.5))
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.axhline(0, color="k", linestyle="--", alpha=0.2)
+    ax.axvline(0, color="k", linestyle="--", alpha=0.2)
+    ax.set_xlabel("distance-to-goal (%)")
+    ax.set_ylabel("place-direction (%)")
+    # only include cells that have some variance explained across folds (in freature_tuned_df)
+    if remove_no_unique_variance_clusters:
+        _feature_tuned_df = feature_tuned_df[feature_tuned_df.any(axis=1)]
+    else:
+        _feature_tuned_df = feature_tuned_df.copy()
+
+    dist_tuned = _feature_tuned_df[_feature_tuned_df.distance_to_goal].index.get_level_values(1)
+    pd_tuned = _feature_tuned_df[_feature_tuned_df.place_direction].index.get_level_values(1)
+    dual_tuned = _feature_tuned_df[
+        _feature_tuned_df.distance_to_goal & _feature_tuned_df.place_direction
+    ].index.get_level_values(1)
+    not_tuned = _feature_tuned_df[
+        ~_feature_tuned_df.distance_to_goal & ~_feature_tuned_df.place_direction
+    ].index.get_level_values(1)
+    for group, color, label in zip(
+        [dist_tuned, pd_tuned, dual_tuned, not_tuned],
+        colors,
+        ["distance-to-goal", "place-direction", "both", "none"],
+    ):
+        filt_cpd_df = cpd_df.loc[cpd_df.index.get_level_values(0).isin(group)]
+        x = filt_cpd_df["distance_to_goal"]
+        y = filt_cpd_df["place_direction"]
+        ax.scatter(
+            x,
+            y,
+            c=color,
+            alpha=0.25,
+            edgecolor="none",
+            label=label,
+            s=10,
+        )
+    ax.legend(fontsize=6)
+    ax.set_xlim(-15, 75)
+    ax.set_ylim(-15, 75)
+
+
 # %% Unique variance explained acoss cells
 
 
@@ -59,7 +120,6 @@ def get_feature_tuned_df(
     reduced_models=[
         "remove_distance_to_goal",
         "remove_place_direction",
-        "remove_egocentric_action_action",
     ],
     multiple_comparisons_corrected=False,
     alpha=0.05,
@@ -75,6 +135,12 @@ def get_feature_tuned_df(
     _cpd_names = [m.split("_", 1)[1] for m in reduced_models]
     # calculate cpd (full model - reduced model) for each variable
     full_model = df["full_model"]
+    full_model_pval = df.full_model.unstack().apply(
+        lambda row: ttest_1samp(row, popmean=0, alternative="greater").pvalue, axis=1
+    )  # test full model across folds to see if any variance is explained
+    if multiple_comparisons_corrected:
+        _pval_corr = multipletests(full_model_pval, method="fdr_bh", alpha=alpha)[1]
+        full_model_pval = pd.Series(_pval_corr, index=full_model_pval.index)
     cpd_df = pd.DataFrame(index=df.index, columns=_cpd_names)
     for m, _name in zip(reduced_models, _cpd_names):
         cpd_df[_name] = (full_model - df[m]).mul(100)  # convert to percent
@@ -83,15 +149,15 @@ def get_feature_tuned_df(
     if multiple_comparisons_corrected:
         for _name in p_df.columns:
             p_df[_name] = multipletests(p_df[_name], method="fdr_bh", alpha=alpha)[1]
-    sig_df = p_df.lt(alpha)
-    # consider only neurons with significant cpd for at least one feature
-    sig_df = sig_df[sig_df.any(axis=1)]
+    # filter for only clusters with sig variance explained in the full model
+    sig_df = p_df.loc[full_model_pval.lt(alpha)]
+    sig_df = sig_df.lt(alpha)  # convert to bool
     return sig_df
 
 
 def plot_summary_pointplot(
-    df,
-    models,
+    feature_tuned_df,
+    models=["distance_to_goal", "place_direction"],
     ax=None,
 ):
     # set up fig
@@ -101,21 +167,18 @@ def plot_summary_pointplot(
     ax.axhline(0, color="k", linestyle="--", alpha=0.5)
     ax.set_ylabel("prop. neurons")
 
+    df = feature_tuned_df.copy()
     # counts cells in each condition
-    m1, m2, m3 = models
+    m1, m2 = models
     counts = []
     for subject in SUBJECT_IDS:
         _df = df.loc[subject]
         total_count = len(_df)
         counts.append(
             {
-                (m1): len(_df[(_df[m1]) & (~_df[m2]) & (~_df[m3])]) / total_count,
-                (m2): len(_df[(~_df[m1]) & (_df[m2]) & (~_df[m3])]) / total_count,
-                (m3): len(_df[(~_df[m1]) & (~_df[m2]) & (_df[m3])]) / total_count,
-                (m1, m2): len(_df[(_df[m1]) & (_df[m2]) & (~_df[m3])]) / total_count,
-                (m1, m3): len(_df[(_df[m1]) & (~_df[m2]) & (_df[m3])]) / total_count,
-                (m2, m3): len(_df[(~_df[m1]) & (_df[m2]) & (_df[m3])]) / total_count,
-                (m1, m2, m3): len(_df[(_df[m1]) & (_df[m2]) & (_df[m3])]) / total_count,
+                (m1): len(_df[(_df[m1]) & (~_df[m2])]) / total_count,
+                (m2): len(_df[(~_df[m1]) & (_df[m2])]) / total_count,
+                (m1, m2): len(_df[(_df[m1]) & (_df[m2])]) / total_count,
             }
         )
     counts_df = pd.DataFrame(counts)
@@ -128,7 +191,7 @@ def plot_summary_pointplot(
         )
     )
     # plot
-    order = [(m1), (m2), (m3), (m1, m2), (m1, m3), (m2, m3), (m1, m2, m3)]
+    order = [(m1), (m2), (m1, m2)]
     colors = sns.color_palette("hls", n_colors=len(SUBJECT_IDS))
     sns.pointplot(
         data=long_df,
@@ -166,31 +229,23 @@ def plot_summary_pointplot(
 
 def plot_summary_venn_diagram(df, models, ax=None):
     """ """
-    m1, m2, m3 = models
+    m1, m2 = models
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=(2, 2))
     venn_counts = {
-        "100": len(df[(df[m1]) & (~df[m2]) & (~df[m3])]),
-        "010": len(df[(~df[m1]) & (df[m2]) & (~df[m3])]),
-        "001": len(df[(~df[m1]) & (~df[m2]) & (df[m3])]),
-        "110": len(df[(df[m1]) & (df[m2]) & (~df[m3])]),
-        "101": len(df[(df[m1]) & (~df[m2]) & (df[m3])]),
-        "011": len(df[(~df[m1]) & (df[m2]) & (df[m3])]),
-        "111": len(df[(df[m1]) & (df[m2]) & (df[m3])]),
+        "10": len(df[(df[m1]) & (~df[m2])]),
+        "01": len(df[(~df[m1]) & (df[m2])]),
+        "11": len(df[(df[m1]) & (df[m2])]),
     }
 
     # Create the Venn diagram for 'distance', 'place_direction', and 'trial_phase'
-    venn = venn3(
+    venn = venn2(
         subsets=(
-            venn_counts["100"],
-            venn_counts["010"],
-            venn_counts["110"],
-            venn_counts["001"],
-            venn_counts["101"],
-            venn_counts["011"],
-            venn_counts["111"],
+            venn_counts["10"],
+            venn_counts["01"],
+            venn_counts["11"],
         ),
-        set_labels=(m1, m2, m3),
+        set_labels=(m1, m2),
         ax=ax,
     )
 
@@ -207,9 +262,9 @@ def group_ttest(g):
 
 def plot_variance_explained(
     cpd_df,
-    features=["distance_to_goal", "place_direction", "egocentric_action_action"],
+    features=["distance_to_goal", "place_direction"],
     print_stats=True,
-    plot_single_subject=False,
+    plot_single_subject=True,
     orientation="vertical",
     ax=None,
 ):
@@ -306,12 +361,11 @@ def _variance_explained_stats(cpd_df):
 
 def get_cpd_df(
     results_df,
-    outlier_threshold=-0.3,
+    outlier_threshold=-0.6,
     full_model_thres=0,
     reduced_models=[
         "remove_distance_to_goal",
         "remove_place_direction",
-        "remove_egocentric_action_action",
     ],
 ):
     """ """

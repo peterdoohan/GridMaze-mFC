@@ -27,9 +27,8 @@ def plot_performance_validation(
         "place",
         "place_direction",
         "place_direction_distance_to_goal",
-        "place_direction_distance_to_goal_egocentric_action",
     ],
-    outlier_threshold=-0.3,
+    outlier_threshold=-0.6,
     plot_single_subjects=False,
     print_stats=True,
     ax=None,
@@ -120,7 +119,7 @@ def _performance_validation_stats(subject_mean_df):
 
 def plot_interaction_validation(
     results_df,
-    outlier_threshold=-0.3,
+    outlier_threshold=-0.6,
     models=["place", "direction", "place_direction_factorised", "place_direction_nonlinear"],
     colors=["grey", "grey", "lightgreen", "mediumslateblue"],
     plot_single_subjects=False,
@@ -187,10 +186,77 @@ def _interaction_validation_stats(subj_avg):
     """
     _df = subj_avg.set_index(["subject_ID", "model_name"]).unstack(level=1).score
     model_names = _df.columns
-    lin_model = [m for m in model_names if "linear" in m][0]
+    lin_model = [m for m in model_names if "factorised" in m][0]
     nonlin_model = [m for m in model_names if "nonlinear" in m][0]
     t_stat, p_val = ttest_rel(_df[lin_model], _df[nonlin_model])
     return t_stat, p_val, (lin_model, nonlin_model)
+
+
+# %% plot other features
+
+
+def plot_other_feature_results(
+    results_df,
+    models=[
+        "place_direction",
+        "place_direction.distance_to_goal",
+        "place_direction.distance_to_goal.goal",
+        "place_direction.distance_to_goal.goal.egocentric_action",
+        "place_direction.distance_to_goal.goal.egocentric_action.velocity",
+    ],
+    outlier_threshold=-0.6,
+    plot_single_subjects=True,
+    print_stats=True,
+    ax=None,
+):
+    # set up figure
+    if ax is None:
+        f, ax = plt.subplots(figsize=(4, 3))
+    ax = _init_fig(ax=ax)
+    # process data
+    df = _average_over_folds(results_df, outlier_threshold=outlier_threshold)
+    # filter for input features and model types
+    if models != "all":
+        df = df[df.columns[df.columns.isin(models)]]
+        order = models
+    else:
+        order = None
+
+    df_long = df.stack().reset_index(name="score")
+    subj_avg = df_long.groupby(["subject_ID", "model_name"])["score"].mean().reset_index()
+    if plot_single_subjects:
+        sns.pointplot(
+            data=df_long,
+            x="model_name",
+            y="score",
+            hue="subject_ID",
+            order=order,
+            palette=sns.color_palette("hls", n_colors=len(SUBJECT_IDS)),
+            markers="o",
+            markersize=7,
+            markeredgewidth=0,
+            errorbar=None,
+            dodge=0.3,
+            linestyle="none",
+            legend=False,
+            alpha=0.8,
+            ax=ax,
+        )
+    sns.pointplot(
+        data=subj_avg,
+        x="model_name",
+        y="score",
+        marker="_",
+        markersize=10,
+        markeredgewidth=3,
+        errorbar="se",
+        linestyle="none",
+        color="black",
+        alpha=1,
+        ax=ax,
+    )
+
+    return subj_avg
 
 
 # %% main variable interactions
@@ -198,7 +264,7 @@ def _interaction_validation_stats(subj_avg):
 
 def plot_main_feature_interactions(
     results_df,
-    outlier_threshold=-0.3,
+    outlier_threshold=-0.6,
     models="all",
     colors=["lightgreen", "grey", "mediumslateblue"],
     plot_single_subjects=True,
@@ -276,7 +342,7 @@ def _main_feature_interaction_stats(subj_avg):
 # %% Utils
 
 
-def _average_over_folds(results_df, outlier_threshold=-0.3):
+def _average_over_folds(results_df, outlier_threshold=-0.6):
     """ """
     # prcoess data
     df = results_df.copy()
