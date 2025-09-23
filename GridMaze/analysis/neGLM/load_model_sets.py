@@ -12,7 +12,7 @@ import pandas as pd
 
 from GridMaze.paths import RESULTS_PATH
 
-RESULTS_DIR = RESULTS_PATH / "nbeGLM"
+RESULTS_DIR = RESULTS_PATH / "neGLM"
 
 # %% Functions
 

@@ -121,7 +121,7 @@ def _performance_validation_stats(subject_mean_df):
 def plot_interaction_validation(
     results_df,
     outlier_threshold=-0.3,
-    models=["place", "direction", "place_direction_linear", "place_direction_nonlinear"],
+    models=["place", "direction", "place_direction_factorised", "place_direction_nonlinear"],
     colors=["grey", "grey", "lightgreen", "mediumslateblue"],
     plot_single_subjects=False,
     print_stats=True,
