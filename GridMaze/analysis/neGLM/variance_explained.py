@@ -122,7 +122,7 @@ def get_feature_tuned_df(
         "remove_place_direction",
     ],
     multiple_comparisons_corrected=False,
-    alpha=0.05,
+    alpha=0.01,
 ):
     # filter models
     df = results_df.copy()
