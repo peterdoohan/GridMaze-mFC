@@ -207,6 +207,15 @@ def plot_other_feature_results(
     outlier_threshold=-0.6,
     plot_single_subjects=True,
     print_stats=True,
+    stats_comparisons=[
+        ("place_direction", "place_direction.distance_to_goal"),
+        ("place_direction.distance_to_goal", "place_direction.distance_to_goal.goal"),
+        ("place_direction.distance_to_goal.goal", "place_direction.distance_to_goal.goal.egocentric_action"),
+        (
+            "place_direction.distance_to_goal.goal.egocentric_action",
+            "place_direction.distance_to_goal.goal.egocentric_action.velocity",
+        ),
+    ],
     ax=None,
 ):
     # set up figure
@@ -255,8 +264,20 @@ def plot_other_feature_results(
         alpha=1,
         ax=ax,
     )
+    if print_stats:
+        df = subj_avg.set_index(["subject_ID", "model_name"]).unstack().score
+        stats_df = _get_other_feature_stats(df, stats_comparisons)
+        print(stats_df)
 
-    return subj_avg
+
+def _get_other_feature_stats(df, stats_comparisons):
+    results = []
+    for model_1, model_2 in stats_comparisons:
+        t_stat, p_val = ttest_rel(df[model_2], df[model_1], alternative="greater")
+        results.append({"model_1": model_1, "model_2": model_2, "t_stat": t_stat, "p_val": p_val})
+    stats_df = pd.DataFrame(results)
+    stats_df["p_val_corr"] = multipletests(stats_df.p_val, method="fdr_bh")[1]
+    return stats_df
 
 
 # %% main variable interactions
@@ -337,6 +358,90 @@ def _main_feature_interaction_stats(subj_avg):
     # account for muliple comparisons
     stats_df["p_val_corr"] = multipletests(stats_df.p_val, method="fdr_bh")[1]
     return stats_df
+
+
+# %%  full feature interactions
+
+
+def plot_full_feature_interactions(
+    results_df,
+    outlier_threshold=-0.6,
+    models=[
+        "place-direction-velocity-distance_to_goal-egocentric_action",
+        "place.direction-velocity-distance_to_goal-egocentric_action",
+        "place.direction.velocity-distance_to_goal-egocentric_action",
+        "place.direction.velocity.distance_to_goal.egocentric_action",
+    ],
+    colors=["lightgreen", "grey", "grey", "mediumslateblue"],
+    plot_single_subjects=False,
+    print_stats=True,
+    ax=None,
+):
+    if ax is None:
+        f, ax = plt.subplots(figsize=(1.5, 3))
+    ax = _init_fig(ax=ax)
+    # process data
+    df = _average_over_folds(results_df, outlier_threshold=outlier_threshold)
+    df_long = df.stack().reset_index(name="score")
+    subj_avg = df_long.groupby(["subject_ID", "model_name"])["score"].mean().reset_index()
+    if plot_single_subjects:
+        sns.pointplot(
+            data=df_long,
+            x="model_name",
+            y="score",
+            hue="subject_ID",
+            order=models,
+            palette=sns.color_palette("hls", n_colors=len(SUBJECT_IDS)),
+            markers="o",
+            markersize=7,
+            markeredgewidth=0,
+            errorbar=None,
+            dodge=0.3,
+            linestyle="none",
+            legend=False,
+            alpha=0.8,
+            ax=ax,
+        )
+    # plot
+    sns.pointplot(
+        data=subj_avg,
+        x="model_name",
+        y="score",
+        hue="model_name",
+        order=models,
+        marker="_",
+        markersize=10,
+        markeredgewidth=3,
+        errorbar="se",
+        palette=colors,
+        linestyle="none",
+        alpha=1,
+        ax=ax,
+    )
+    if print_stats:
+        stats_comparisons = [
+            (
+                "place-direction-velocity-distance_to_goal-egocentric_action",
+                "place.direction-velocity-distance_to_goal-egocentric_action",
+            ),
+            (
+                "place-direction-velocity-distance_to_goal-egocentric_action",
+                "place.direction.velocity-distance_to_goal-egocentric_action",
+            ),
+            (
+                "place.direction.velocity.distance_to_goal.egocentric_action",
+                "place.direction-velocity-distance_to_goal-egocentric_action",
+            ),
+            (
+                "place.direction.velocity.distance_to_goal.egocentric_action",
+                "place.direction.velocity-distance_to_goal-egocentric_action",
+            ),
+        ]
+        df = subj_avg.set_index(["subject_ID", "model_name"]).unstack().score
+        stats_df = _get_other_feature_stats(df, stats_comparisons)
+        print(stats_df)
+
+    return
 
 
 # %% Utils
