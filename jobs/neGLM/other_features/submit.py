@@ -35,8 +35,6 @@ def get_model_set_params(seed=0, subfolder="other_features", overwrite=False):
         "goal",
         "egocentric_action",
         "velocity",
-        "allocentric_angle_to_goal",
-        "egocentric_angle_to_goal",
     ]
     for maze_name in ["maze_1", "maze_2", "rooms_maze"]:
         input_features = []
@@ -76,8 +74,14 @@ def get_model_set_params(seed=0, subfolder="other_features", overwrite=False):
     # also run models upto the inclusion of goal, where goal is coded differently
     base_features = ["place_direction", "distance_to_goal"]
     for maze_name in ["maze_1", "maze_2", "rooms_maze"]:
-        for goal_feat in ["egocentric_angle_to_goal", "allocentric_angle_to_goal"]:
-            input_features = base_features + [goal_feat]
+        for other_features in [
+            ["head_direction"],
+            ["allocentric_angle_to_goal"],
+            ["allocentric_angle_to_goal", "head_direction"],
+            ["egocentric_angle_to_goal"],
+            ["egocentric_angle_to_goal", "head_direction"],
+        ]:
+            input_features = base_features + other_features
             model_name = ".".join(input_features)
             # update defualt input data kwargs
             input_data_kwargs = deepcopy(ju.DEFAULT_INPUT_DATA_KWARGS)
