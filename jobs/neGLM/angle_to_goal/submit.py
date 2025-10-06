@@ -66,6 +66,11 @@ def get_model_set_params(seed=0, subfolder="angle_to_goal"):
                 [("place_direction",), ("distance_to_goal",), ("egocentric_angle_to_goal",)],
                 "place_direction-distance_to_goal-egocentric_angle_to_goal",
             ),
+            (  # does head-direction and egocentric-action to goal explain the same variance?
+                ["place_direction", "distance_to_goal", "head_direction" "egocentric_angle_to_goal"],
+                None,
+                "place_direction.distance_to_goal.head_direction.egocentric_angle_to_goal",
+            ),
         ]:
             # update defualt input data kwargs
             input_data_kwargs = deepcopy(ju.DEFAULT_INPUT_DATA_KWARGS)
