@@ -141,3 +141,51 @@ EOF
     with open(script_path, "w") as f:
         f.write(script)
     return script_path
+
+
+def get_permutation_SLURM_script(
+    model_name, subfolder, maze_name, permutation, model_params, run_fn="run_cv_neGLM", resource_type="gpu", RAM="16G"
+):
+    """Create SLURM script for running neGLM experiment."""
+    # check jobs and results output folders exist
+    _job_name = ".".join([maze_name, model_name, f"permutation_{permutation}"])
+    results_output_path = RESULTS_DIR / subfolder / maze_name / str(permutation) / model_name
+    if not results_output_path.exists():
+        results_output_path.mkdir(parents=True, exist_ok=True)
+
+    # determine SLURM resource directives based on resource_type
+    if resource_type == "gpu":
+        partition = "gpu"
+        gres_directive = "#SBATCH --gres=gpu:1"
+    elif resource_type == "cpu":
+        partition = "cpu"
+        gres_directive = ""
+    else:
+        raise ValueError(f"Unknown resource_type: {resource_type}. Use 'gpu' or 'cpu'.")
+
+    # create SLURM script
+    script = f"""#!/bin/bash
+#SBATCH --job-name=neGLM_{_job_name}
+#SBATCH --output=jobs/neGLM/{subfolder}/out/{_job_name}.out
+#SBATCH --error=jobs/neGLM/{subfolder}/err/{_job_name}.err
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=24
+#SBATCH -p {partition}
+{gres_directive}
+#SBATCH --mem={RAM}
+#SBATCH --time=72:00:00
+
+module load miniconda
+module load cuda/11.8
+conda deactivate
+conda activate goalNav_mEC
+
+python <<EOF
+from GridMaze.analysis.neGLM import run_neGLM as rn
+rn.{run_fn}(**{model_params})
+EOF
+"""
+    script_path = f"jobs/neGLM/{subfolder}/slurm/{_job_name}.sh"
+    with open(script_path, "w") as f:
+        f.write(script)
+    return script_path
