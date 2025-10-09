@@ -4,7 +4,6 @@ Map from GridMaze session data to input for embedding model.
 
 # %% Imports
 import json
-import torch
 import numpy as np
 import pandas as pd
 from scipy.ndimage import gaussian_filter1d
@@ -13,6 +12,7 @@ from sklearn.preprocessing import OneHotEncoder
 from GridMaze.maze import representations as mr
 
 from GridMaze.analysis.core import convert
+from GridMaze.analysis.core import permute
 from GridMaze.analysis.core import filter as filt
 from GridMaze.analysis.core import downsample as ds
 from GridMaze.analysis.core import get_sessions as gs
@@ -47,6 +47,7 @@ def get_input_data(
     min_trials=20,
     input_groups=["distance_to_goal", "place_direction", "egocentric_action"],
     input_group_kwargs={},
+    permute_spikes=False,
     verbose=False,
 ):
     # load session objects
@@ -82,6 +83,7 @@ def get_input_data(
             min_spike_count,
             input_groups,
             input_group_kwargs,
+            permute_spikes,
             verbose,
         )
         if session_data is not None:
@@ -100,6 +102,7 @@ def get_session_input_data(
     min_spike_count=300,
     input_groups=["distance_to_goal", "place_direction", "egocentric_action", "velocity"],
     input_group_kwargs={"distance_to_goal": None, "place_direction": None, "egocentric_action": None},
+    permute_spikes=False,
     verbose=False,
 ):
     """
@@ -109,6 +112,12 @@ def get_session_input_data(
     input_kwargs.pop("session", None)
     # load data and update navigation variables
     df = init_navigation_spikes_df(session, input_groups)
+    # permute behaviour relative to neurons if specified
+    if permute_spikes:
+        df_feats = df.drop(columns="spike_count", level=0, axis=1)
+        df_spikes = df.xs("spike_count", level=0, axis=1, drop_level=False)
+        df_spike_shuff = permute.random_circular_shift(df_spikes)
+        df = pd.concat([df_feats, df_spike_shuff], axis=1)
     # downsample data
     df = ds.downsample_navigation_activity_df(df, resolution=resolution)
     # filter navigation data

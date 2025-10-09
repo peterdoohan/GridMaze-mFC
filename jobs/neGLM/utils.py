@@ -21,6 +21,7 @@ DEFAULT_INPUT_DATA_KWARGS = {
     "max_steps_to_goal": 30,
     "min_spike_count": 300,
     "moving_only": True,
+    "permute_spikes": False,
 }
 
 DEFAULT_MODEL_INIT_KWARGS = {
