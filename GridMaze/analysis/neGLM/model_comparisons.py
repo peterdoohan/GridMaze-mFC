@@ -444,6 +444,98 @@ def plot_full_feature_interactions(
     return
 
 
+# %% cover all replacement model comp plotting fn
+
+
+def plot_model_comparison(
+    results_df,
+    outlier_threshold=-0.6,
+    models=[
+        "place_direction.distance_to_goal",
+        "place_direction.distance_to_goal.goal",
+        "place_direction.distance_to_goal.head_direction",
+        "place_direction-distance_to_goal-head_direction",
+        "place_direction.distance_to_goal.head_direction",
+        "place_direction.distance_to_goal.egocentric_angle_to_goal",
+        "place_direction-distance_to_goal-egocentric_angle_to_goal",
+    ],
+    colors=None,
+    plot_single_subjects=True,
+    stats_comparisons=[
+        (
+            "place_direction.distance_to_goal.head_direction",
+            "place_direction-distance_to_goal-head_direction",
+        ),
+        (
+            "place_direction.distance_to_goal.head_direction",
+            "place_direction.distance_to_goal.egocentric_angle_to_goal",
+        ),
+        (
+            "place_direction.distance_to_goal.egocentric_angle_to_goal",
+            "place_direction-distance_to_goal-egocentric_angle_to_goal",
+        ),
+    ],
+    ax=None,
+):
+    if ax is None:
+        f, ax = plt.subplots(figsize=(1.5, 3))
+    ax = _init_fig(ax=ax)
+    # process data
+    df = _average_over_folds(results_df, outlier_threshold=outlier_threshold)
+    df_long = df.stack().reset_index(name="score")
+    subj_avg = df_long.groupby(["subject_ID", "model_name"])["score"].mean().reset_index()
+    if plot_single_subjects:
+        sns.pointplot(
+            data=df_long,
+            x="model_name",
+            y="score",
+            hue="subject_ID",
+            order=models,
+            palette=sns.color_palette("hls", n_colors=len(SUBJECT_IDS)),
+            markers="o",
+            markersize=7,
+            markeredgewidth=0,
+            errorbar=None,
+            dodge=0.3,
+            linestyle="none",
+            legend=False,
+            alpha=0.8,
+            ax=ax,
+        )
+    # plot
+    sns.pointplot(
+        data=subj_avg,
+        x="model_name",
+        y="score",
+        order=models,
+        marker="_",
+        markersize=10,
+        markeredgewidth=3,
+        errorbar="se",
+        palette=colors,
+        color="black" if colors is None else None,
+        linestyle="none",
+        alpha=1,
+        ax=ax,
+    )
+    ax.set_xticks(range(len(models)))
+    ax.set_xticklabels(models, rotation=45, ha="right")
+    if stats_comparisons:
+        stats_df = _model_comparison_ttests(subj_avg, stats_comparisons)
+        return stats_df
+
+
+def _model_comparison_ttests(subj_avg, model_comparisons):
+    df = subj_avg.set_index(["subject_ID", "model_name"]).unstack().score
+    results = []
+    for model_1, model_2 in model_comparisons:
+        t_stat, p_val = ttest_rel(df[model_2], df[model_1])
+        results.append({"model_1": model_1, "model_2": model_2, "t_stat": t_stat, "p_val": p_val})
+    stats_df = pd.DataFrame(results)
+    stats_df["p_val_corr"] = multipletests(stats_df.p_val, method="fdr_bh")[1]
+    return stats_df
+
+
 # %% Utils
 
 
