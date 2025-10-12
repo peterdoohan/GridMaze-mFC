@@ -12,7 +12,7 @@ RESULTS_DIR = ju.RESULTS_DIR
 # %% Functions
 
 
-def run_permutation_jobs(seed=0, subfolder="variance_explained_permuted", n_permutations=2):
+def run_permutation_jobs(subfolder="variance_explained_permuted", n_permutations=1):
     """ """
     # check if any permutations have already been run
     permutation_results = RESULTS_DIR / subfolder
@@ -27,7 +27,7 @@ def run_permutation_jobs(seed=0, subfolder="variance_explained_permuted", n_perm
             perm_path.mkdir(parents=True, exist_ok=True)
     # run a set of spike permuted models for n_permutations
     for permutation in perms:
-        model_set_params = get_model_set_params(seed=seed, subfolder=subfolder, permutation=permutation)
+        model_set_params = get_model_set_params(seed=permutation, subfolder=subfolder, permutation=permutation)
         # save model set params to json
         with open(RESULTS_DIR / subfolder / str(permutation) / f"model_set_params.json", "w") as f:
             json.dump(model_set_params, f, indent=4)
@@ -74,7 +74,7 @@ def get_model_set_params(seed=0, subfolder="variance_explained_permuted", permut
                         "score_kwargs": score_kwargs,
                         "seed": seed,
                         "verbose": True,
-                        "save_path": str(RESULTS_DIR / subfolder / maze_name / str(permutation) / model_name),
+                        "save_path": str(RESULTS_DIR / subfolder / str(permutation) / maze_name / model_name),
                     },
                     "resource_type": "gpu",
                     "run_fn": "run_cv_neGLM",

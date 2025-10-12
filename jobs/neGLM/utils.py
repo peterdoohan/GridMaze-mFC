@@ -149,7 +149,7 @@ def get_permutation_SLURM_script(
     """Create SLURM script for running neGLM experiment."""
     # check jobs and results output folders exist
     _job_name = ".".join([maze_name, model_name, f"permutation_{permutation}"])
-    results_output_path = RESULTS_DIR / subfolder / maze_name / str(permutation) / model_name
+    results_output_path = RESULTS_DIR / subfolder / str(permutation) / maze_name / model_name
     if not results_output_path.exists():
         results_output_path.mkdir(parents=True, exist_ok=True)
 
