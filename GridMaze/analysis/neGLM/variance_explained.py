@@ -33,6 +33,7 @@ def plot_cpd_clusters(
     feature_tuned_df,
     features=["distance_to_goal", "place_direction"],
     remove_no_unique_variance_clusters=False,
+    n_bins=30,
     ax=None,
 ):
     """ """
@@ -55,7 +56,7 @@ def plot_cpd_clusters(
     sns.histplot(
         x=x,
         y=y,
-        bins=40,
+        bins=n_bins,
         ax=ax,
         cbar=True,
     )
@@ -65,8 +66,14 @@ def plot_cpd_scatter(
     cpd_df,
     feature_tuned_df,
     remove_no_unique_variance_clusters=False,
-    colors=["royalblue", "crimson", "mediumspringgreen", "silver"],
+    colors=[
+        "silver",
+        "royalblue",
+        "crimson",
+        "mediumspringgreen",
+    ],
     ax=None,
+    lims=(-15, 75),
 ):
     """ """
     if ax is None:
@@ -91,9 +98,9 @@ def plot_cpd_scatter(
         ~_feature_tuned_df.distance_to_goal & ~_feature_tuned_df.place_direction
     ].index.get_level_values(1)
     for group, color, label in zip(
-        [dist_tuned, pd_tuned, dual_tuned, not_tuned],
+        [not_tuned, dist_tuned, pd_tuned, dual_tuned],
         colors,
-        ["distance-to-goal", "place-direction", "both", "none"],
+        ["none", "distance-to-goal", "place-direction", "both"],
     ):
         filt_cpd_df = cpd_df.loc[cpd_df.index.get_level_values(0).isin(group)]
         x = filt_cpd_df["distance_to_goal"]
@@ -107,9 +114,18 @@ def plot_cpd_scatter(
             label=label,
             s=10,
         )
+    sns.kdeplot(
+        x=cpd_df["distance_to_goal"],
+        y=cpd_df["place_direction"],
+        levels=6,
+        color="k",
+        linewidths=0.5,
+        ax=ax,
+        alpha=0.5,
+    )
     ax.legend(fontsize=6)
-    ax.set_xlim(-15, 75)
-    ax.set_ylim(-15, 75)
+    ax.set_xlim(*lims)
+    ax.set_ylim(*lims)
 
 
 # %% Unique variance explained acoss cells
@@ -122,6 +138,7 @@ def get_feature_tuned_df(
         "remove_place_direction",
     ],
     multiple_comparisons_corrected=False,
+    filter_for_full_model_significance=True,
     alpha=0.01,
 ):
     # filter models
@@ -150,7 +167,10 @@ def get_feature_tuned_df(
         for _name in p_df.columns:
             p_df[_name] = multipletests(p_df[_name], method="fdr_bh", alpha=alpha)[1]
     # filter for only clusters with sig variance explained in the full model
-    sig_df = p_df.loc[full_model_pval.lt(alpha)]
+    if filter_for_full_model_significance:
+        sig_df = p_df.loc[full_model_pval.lt(alpha)]
+    else:
+        sig_df = p_df.copy()
     sig_df = sig_df.lt(alpha)  # convert to bool
     return sig_df
 
