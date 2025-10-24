@@ -90,43 +90,60 @@ def get_theta_mod_metrics_df(
     return df
 
 
-def get_theta_metrics(nav_spike_counts_df, n=50):
+def get_theta_metrics(nav_spike_counts_df, n=50, min_spikes=100):
     """ """
-    # compute split-half correlation
-    trials = nav_spike_counts_df.trial.unique()
-    n_trials = len(trials)
-    split_half_corrs = np.zeros(n)
-    for i in range(n):
-        shuffled_trials = np.random.permutation(trials)
-        trials_split_1 = shuffled_trials[: n_trials // 2]
-        trials_split_2 = shuffled_trials[n_trials // 2 :]
-        data_split_1 = nav_spike_counts_df[nav_spike_counts_df.trial.isin(trials_split_1)]
-        data_split_2 = nav_spike_counts_df[nav_spike_counts_df.trial.isin(trials_split_2)]
-        # get theta mod for each split
-        theta_mod_1 = data_split_1.spike_count.sum()
-        theta_mod_2 = data_split_2.spike_count.sum()
-        # compute correlation between splits
-        correlation = np.corrcoef(theta_mod_1.values, theta_mod_2.values)[0, 1]
-        split_half_corrs[i] = correlation
-    split_half_corr = np.mean(split_half_corrs)
-
     # fit vonmises-shaped theta-mod tuning curve
     theta_mod = nav_spike_counts_df.spike_count.sum()
-    theta_mod = theta_mod.div(theta_mod.mean())  # norm to mean 1
-    vm_params = fit_vonmises(theta_mod)
+    if theta_mod.sum() > min_spikes:
+        theta_mod = theta_mod.div(theta_mod.mean())  # norm to mean 1
+        vm_params = fit_vonmises(theta_mod)
 
-    # do rayleigh test for non-uniformity
-    z, p = circ_rayleigh(theta_mod.values, d=theta_mod.index.values)
+        # do rayleigh test for non-uniformity
+        z, p = circ_rayleigh(theta_mod.values, d=theta_mod.index.values)
 
-    # get mean firing rate (some cells have low rates that are tuned outside of navigation)
-    fr = nav_spike_counts_df.spike_count.sum().sum() / (nav_spike_counts_df.shape[0] / FRAME_RATE)
-    return {
-        ("split_half_corr", ""): split_half_corr,
-        **{(f"vonmises", k): v for k, v in vm_params.items()},
-        ("rayleigh", "z"): z,
-        ("rayleigh", "p"): p,
-        ("mean_firing_rate", ""): fr,
-    }
+        # get mean firing rate (some cells have low rates that are tuned outside of navigation)
+        fr = nav_spike_counts_df.spike_count.sum().sum() / (nav_spike_counts_df.shape[0] / FRAME_RATE)
+
+        # compute split-half correlation
+        trials = nav_spike_counts_df.trial.unique()
+        n_trials = len(trials)
+        split_half_corrs = np.zeros(n)
+        for i in range(n):
+            shuffled_trials = np.random.permutation(trials)
+            trials_split_1 = shuffled_trials[: n_trials // 2]
+            trials_split_2 = shuffled_trials[n_trials // 2 :]
+            data_split_1 = nav_spike_counts_df[nav_spike_counts_df.trial.isin(trials_split_1)]
+            data_split_2 = nav_spike_counts_df[nav_spike_counts_df.trial.isin(trials_split_2)]
+            # get theta mod for each split
+            theta_mod_1 = data_split_1.spike_count.sum()
+            theta_mod_2 = data_split_2.spike_count.sum()
+            # compute correlation between splits
+            correlation = np.corrcoef(theta_mod_1.values, theta_mod_2.values)[0, 1]
+            split_half_corrs[i] = correlation
+        split_half_corr = np.mean(split_half_corrs)
+
+        return {
+            ("split_half_corr", ""): split_half_corr,
+            **{(f"vonmises", k): v for k, v in vm_params.items()},
+            ("rayleigh", "z"): z,
+            ("rayleigh", "p"): p,
+            ("mean_firing_rate", ""): fr,
+        }
+    else:  # too few spikes
+        return {
+            ("split_half_corr", ""): np.nan,
+            ("vonmises", "baseline"): np.nan,
+            ("vonmises", "amp"): np.nan,
+            ("vonmises", "kappa"): np.nan,
+            ("vonmises", "mu"): np.nan,
+            ("vonmises", "phase_max_rad"): np.nan,
+            ("vonmises", "phase_min_rad"): np.nan,
+            ("vonmises", "modulation_depth"): np.nan,
+            ("vonmises", "r2"): np.nan,
+            ("rayleigh", "z"): np.nan,
+            ("rayleigh", "p"): np.nan,
+            ("mean_firing_rate", ""): np.nan,
+        }
 
 
 # %%
