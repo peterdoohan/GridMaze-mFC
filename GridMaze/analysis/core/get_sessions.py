@@ -42,6 +42,7 @@ MAZE_ANALYSIS_DATA_STRUCTURE2FILENAME = {
     "cluster_movement_metrics": "clusters.movementMetrics.parquet",
     "navigation_theta_spike_counts_df": "frames.thetaSpikeCounts.parquet",
     "navigation_4Hz_spike_counts_df": "frames.4HzSpikeCounts.parquet",
+    "cluster_theta_modulation_metrics": "clusters.thetaModulationMetrics.parquet",
 }
 
 ALL_MAZE_DATA_STRUCTURES2FILENAME = {**MAZE_PROCESSED_DATA_STRUCTURE2FILENAME, **MAZE_ANALYSIS_DATA_STRUCTURE2FILENAME}

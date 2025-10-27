@@ -5,7 +5,6 @@ Make analysis data structure that contains theta mod metrics for every cluster
 # %% Imports
 import pandas as pd
 import numpy as np
-from requests import session
 from scipy.optimize import curve_fit
 from matplotlib import pyplot as plt
 from pingouin import circ_rayleigh
@@ -99,7 +98,7 @@ def get_theta_metrics(nav_spike_counts_df, n=50, min_spikes=100):
         vm_params = fit_vonmises(theta_mod)
 
         # do rayleigh test for non-uniformity
-        z, p = circ_rayleigh(theta_mod.values, d=theta_mod.index.values)
+        z, p = circ_rayleigh(theta_mod.values)
 
         # get mean firing rate (some cells have low rates that are tuned outside of navigation)
         fr = nav_spike_counts_df.spike_count.sum().sum() / (nav_spike_counts_df.shape[0] / FRAME_RATE)
@@ -194,7 +193,7 @@ def fit_vonmises(series, plot=False):
 
     # Reasonable bounds
     bounds_lower = [0.8, 0.0, 0.0, -np.pi]
-    bounds_upper = [1.2, np.inf, 1e3, np.pi]
+    bounds_upper = [1.2, np.inf, 5, np.pi]
 
     # Fit model
     popt, _ = curve_fit(
@@ -228,8 +227,27 @@ def fit_vonmises(series, plot=False):
         ax.plot(theta_dense, y_fit_dense, label="Von Mises fit")
         ax.set_xlabel("Phase (rad.)")
         ax.set_ylabel("Norm Rate")
-        ax.set_title(f"Von Mises Fit\n$R^2$={r2:.3f}, depth={modulation_depth:.3f}")
-        ax.legend()
+        params_text = (
+            f"baseline={baseline:.3f}\n"
+            f"amp={amp:.3f}\n"
+            f"kappa={kappa:.3f}\n"
+            f"mu={mu:.3f} rad\n"
+            f"phase_max={phase_max:.3f} rad\n"
+            f"phase_min={phase_min:.3f} rad\n"
+            f"mod_depth={modulation_depth:.3f}\n"
+            f"r2={r2:.3f}"
+        )
+        ax.text(
+            0.01,
+            0.98,
+            params_text,
+            transform=ax.transAxes,
+            fontsize=7,
+            va="top",
+            ha="left",
+            family="monospace",
+            bbox=dict(facecolor="white", alpha=0.75, edgecolor="none"),
+        )
 
     return {
         "baseline": float(baseline),

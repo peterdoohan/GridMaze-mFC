@@ -6,6 +6,7 @@ by cluster tuning
 
 # %% Imports
 import json
+from os import error
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -23,119 +24,166 @@ from GridMaze.paths import EXPERIMENT_INFO_PATH
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
 
-VARIANCE_EXPLAINED_DF = cve.get_cluster_unique_variance_explained(
-    late_sessions=True, full_features=False, add_missing_clusters=True
-)
-
 
 # %% Functions
 
 
-def test(late_sessions=True):
-    theta_df = get_theta_mod_clusters(late_sessions=late_sessions)
-    theta_mod_clusters = theta_df.cluster_unique_ID.values
-    ve_df = cve.get_cluster_unique_variance_explained(
-        late_sessions=late_sessions, full_features=False, add_missing_clusters=True
-    )
-    theta_df[("unique_ve", "distance_to_goal")] = ve_df.loc[theta_mod_clusters].distance_to_goal.values
-    theta_df[("unique_ve", "place_direction")] = ve_df.loc[theta_mod_clusters].place_direction.values
-    return theta_df
+# %% stratify theta-modulation by cluster representation (distance-to-goal, place-direction, etc.)
 
 
-def get_theta_mod_clusters(late_sessions=True):
-    sessions = gs.get_maze_sessions(
-        subject_IDs="all",
-        maze_names="all",
-        days_on_maze="late" if late_sessions else "all",
-        with_data=["cluster_theta_modulation_metrics"],
-        must_have_data=True,
-    )
-    dfs = []
-    for session in sessions:
-        theta_mod_metrics = session.cluster_theta_modulation_metrics.copy()
-        theta_mod_metrics = theta_mod_metrics[theta_mod_metrics.single_unit]
-        dfs.append(theta_mod_metrics)
-    combined_df = pd.concat(dfs)
-    return combined_df
-
-
-# def get_session_theta_mod_clusters(session, single_units=True, min_firing_rate=1, min_split_half_corr=0.4, min_r2=0.75):
-#     """ """
-#     theta_mod_metrics = session.cluster_theta_modulation_metrics.copy()
-#     theta_mod_masks = []
-#     if single_units:
-#         theta_mod_masks.append(theta_mod_metrics.single_unit)
-#     if min_firing_rate is not None:
-#         theta_mod_masks.append(theta_mod_metrics.mean_firing_rate >= min_firing_rate)
-#     if min_split_half_corr is not None:
-#         theta_mod_masks.append(theta_mod_metrics.split_half_corr >= min_split_half_corr)
-#     if min_r2 is not None:
-#         theta_mod_masks.append(theta_mod_metrics.vonmises.r2 >= min_r2)
-#     if len(theta_mod_masks) > 0:
-#         combined_mask = np.logical_and.reduce(theta_mod_masks)
-#     df = theta_mod_metrics[combined_mask]
-#     return df
-
-
-def plot_tuning(cuID):
-    Cluster = gc.get_cluster(cuID)
-    Cluster.plot_tuning(feature="place_direction")
-    Cluster.plot_tuning(feature="distance_to_goal")
-    plt.show()
-
-
-# %%
-
-
-def plot_cluster_theta_mod(
-    session,
-    cuID="m6.2022-07-04.maze_cluster4",
-    navigation_only=True,
-    moving_only=True,
-    max_steps_to_goal=30,
-    n_perm=1_000,
+def get_theta_mod_split_tuning(
+    df_type="feature_tuned", late_sessions=False, corr_thres=0.45, r2_thres=0.7, fr_thres=1, ax=None
 ):
     """ """
-    # load data
-    navigation_df = session.navigation_df
-    df = session.navigation_theta_spike_counts_df.spike_count[cuID]
-    # filter for moving, navigation, on task etc.
-    mask = []
-    if navigation_only:
-        mask.append((navigation_df.trial_phase == "navigation").values)
-    if moving_only:
-        mask.append(navigation_df.moving.values)
-    if max_steps_to_goal is not None:
-        mask.append(navigation_df.steps_to_goal.future.le(max_steps_to_goal).values)
-    if len(mask) > 0:
-        combined_mask = np.logical_and.reduce(mask)
-        df = df[combined_mask]
+    # load data unique var exp df or feature tuned df
+    if df_type == "feature_tuned":
+        ft_df = cve.get_cluster_feature_tuned_df(
+            late_sessions=late_sessions, full_features=False, add_missing_clusters=False
+        )
+    elif df_type == "variance_explained":
+        ft_df = cve.get_cluster_unique_variance_explained(
+            late_sessions=late_sessions, full_features=False, add_missing_clusters=False
+        )
+        ft_df = ft_df.swaplevel(axis=0)
+    else:
+        raise ValueError("df_type must be 'feature_tuned' or 'variance_explained'")
 
-    # shuffle procedure
-    T = df.values
-    null = np.zeros((n_perm, T.shape[1]), dtype=np.float32)
-    for i in range(n_perm):
-        null[i] = np.apply_along_axis(np.random.permutation, 1, T).sum(axis=0)
-
-    # rng = np.random.default_rng(seed=0)
-    # n_rows, n_cols = T.shape
-    # rand = rng.random(size=(n_perm, n_rows, n_cols), dtype=np.float32)
-    # # Argsort to produce permutation indices along columns for each (perm, row)
-    # idxs = np.argsort(rand, axis=2).astype(np.int32, copy=False)  # (n_perm, n_rows, n_cols)
-    # T_expanded = T[None, :, :]  # (1, n_rows, n_cols)
-    # shuffled = np.take_along_axis(T_expanded, idxs, axis=2)  # (n_perm, n_rows, n_cols)
-    # null = shuffled.sum(axis=1)  # (n_perm, n_cols)
-
-    # plot
-    phases = df.columns.astype(float).values
-    plt.plot(phases, T.sum(axis=0), color="k", linewidth=2)
-    plt.fill_between(
-        phases, np.percentile(null, 2.5, axis=0), np.percentile(null, 97.5, axis=0), color="gray", alpha=0.5
+    # load theta metrics
+    metrics_df = get_pop_theta_mod_metrics(late_sessions=late_sessions)
+    theta_mod_df = _filter_for_theta_mod_neurons(
+        metrics_df, corr_thres=corr_thres, r2_thres=r2_thres, fr_thres=fr_thres
     )
-    return null
+    theta_mod_clusters = theta_mod_df.cluster_unique_ID.values
+
+    ft_df["theta_modulated"] = ft_df.index.get_level_values(1).isin(theta_mod_clusters)
+
+    df = (
+        ft_df.reset_index("subject_ID")
+        .groupby(["subject_ID", "theta_modulated"])[["distance_to_goal", "place_direction"]]
+        .mean()
+    )
+    df = df.reset_index()
+
+    df_long = df.melt(
+        id_vars=["subject_ID", "theta_modulated"],
+        value_vars=["distance_to_goal", "place_direction"],
+        var_name="measure",
+        value_name="value",
+    )
+    return df_long
 
 
-# %% stratify theta-modulation by cluster representation (distance-to-goal, place-direction, etc.)
+def plot_theta_mod_split_tuning(df):
+    fig, axes = plt.subplots(1, 2, figsize=(3, 2), sharey=True)
+    for ax in axes:
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.axhline(0, color="k", ls="--", alpha=0.5)
+
+    palette = sns.color_palette("hls", n_colors=len(SUBJECT_IDS))
+    for (
+        ax,
+        measure,
+    ) in zip(
+        axes,
+        ["distance_to_goal", "place_direction"],
+    ):
+        subdf = df[df["measure"] == measure]
+        sns.pointplot(
+            data=subdf,
+            x="theta_modulated",
+            y="value",
+            hue="subject_ID",
+            dodge=False,
+            markers="o",
+            linestyle="none",
+            palette=palette,
+            errorbar=None,
+            legend=False,
+            ax=ax,
+        )
+        sns.pointplot(
+            data=subdf,
+            x="theta_modulated",
+            y="value",
+            dodge=False,
+            markers="_",
+            linestyle="none",
+            errorbar="se",
+            color="k",
+            ax=ax,
+        )
+        ax.set_ylabel("prop. neurons")
+        ax.set_xlabel(measure)
+    return
+
+
+def plot_feature_rep_by_theta_phase_pref(late_sessions=False, corr_thres=0.45, r2_thres=0.7, fr_thres=1, axes=None):
+    """ """
+    # set up fig
+    if axes is None:
+        f, axes = plt.subplots(1, 2, figsize=(4, 2))
+    for ax in axes:
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.axhline(0, color="k", ls="--", alpha=0.5)
+
+    # load theta mod and variance explained data
+    metrics_df = get_pop_theta_mod_metrics(late_sessions=late_sessions)
+    filt_metrics_df = _filter_for_theta_mod_neurons(
+        metrics_df, corr_thres=corr_thres, r2_thres=r2_thres, fr_thres=fr_thres
+    )
+    unique_ve_df = cve.get_cluster_unique_variance_explained(
+        late_sessions=late_sessions, full_features=False, add_missing_clusters=True
+    )
+    theta_mod_clusters = filt_metrics_df.cluster_unique_ID.values
+    filt_metrics_df[("unique_ve", "distance_to_goal")] = unique_ve_df.loc[theta_mod_clusters].distance_to_goal.values
+    filt_metrics_df[("unique_ve", "place_direction")] = unique_ve_df.loc[theta_mod_clusters].place_direction.values
+
+    # only include clusters that have unique ve data
+    filt_metrics_df = filt_metrics_df[~filt_metrics_df.unique_ve.isna().any(axis=1)].copy()
+
+    # bin phase pref
+    bins = np.linspace(-np.pi, np.pi, 6)
+    filt_metrics_df[("phase_max_bin", "")] = pd.cut(
+        filt_metrics_df.loc[:, ("vonmises", "phase_max_rad")], bins=bins, include_lowest=True
+    )
+
+    subject_phase_by_ve = (
+        filt_metrics_df.groupby(["subject_ID", "phase_max_bin"], observed=True).unique_ve.mean().unique_ve
+    )
+
+    # plot variance explained phase preference
+    x = filt_metrics_df.vonmises.phase_max_rad
+    for ft, ax, color1, color2 in zip(
+        ["distance_to_goal", "place_direction"],
+        axes,
+        ["cornflowerblue", "palevioletred"],
+        ["darkblue", "darkred"],
+    ):
+        # plot background scatter plot
+        y = filt_metrics_df[("unique_ve", ft)]
+        sns.scatterplot(x=x, y=y, ax=ax, color=color1, alpha=0.5, s=5)
+
+        ve_df = subject_phase_by_ve[ft].unstack()
+        _mean = ve_df.mean()
+        _sem = ve_df.sem()
+        _phase = [b.mid for b in _mean.index]
+        ax.errorbar(
+            x=_phase,
+            y=_mean,
+            yerr=_sem,
+            marker="o",
+            markersize=3,
+            linestyle="none",
+            color=color2,
+            capsize=0,
+        )
+        # set log scale
+        ax.set_ylim(-10, 60)
+        ax.set_ylabel(ft)
+        ax.set_xlabel("θ Phase")
+        ax.set_xticks([-np.pi, -np.pi / 2, 0, np.pi / 2, np.pi])
+        ax.set_xticklabels([r"$-\pi$", r"$-\pi/2$", "0", r"$\pi/2$", r"$\pi$"])
+    return
 
 
 # %% define theta-modulated clusters
@@ -201,7 +249,9 @@ def plot_theta_phase_by_mod_depth(metrics_df, corr_thres=0.45, r2_thres=0.7, axe
         )
 
     axes[0, 0].set_ylabel("Prop.")
-    axes[1, 0].set_xlabel("Theta Phase (Rad)")
+    axes[1, 0].set_xlabel("θ Phase")
+    axes[1, 0].set_xticks([-np.pi, -np.pi / 2, 0, np.pi / 2, np.pi])
+    axes[1, 0].set_xticklabels([r"$-\pi$", r"$-\pi/2$", "0", r"$\pi/2$", r"$\pi$"])
     axes[1, 0].set_ylabel("Modulation Depth")
     axes[1, 1].set_xlabel("Prop.")
     return
