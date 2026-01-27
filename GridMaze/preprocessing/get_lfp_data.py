@@ -46,12 +46,18 @@ def get_LFP_signal(
         downsample_frequency (int): Frequency to downsample LFP data to
     """
     # load data and configre probe with spike interface
-    raw_rec, probe = _load_recording(session_dir)
+    raw_rec = _load_recording(session_dir)
+    probe = raw_rec.get_probe()
+    contact_id2channel_label = (  # contact id in probe_df mapped to channel labels in raw_rec (non-fucking trivial)
+        pd.DataFrame(raw_rec.get_property("contact_vector"))
+        .set_index("contact_ids")
+        .device_channel_indices.apply(lambda x: f"CH{x+1}")
+    ).to_dict()
     probe_df = probe.to_dataframe()
     bp_recording_LFP = sp.bandpass_filter(recording=raw_rec, freq_min=1, freq_max=bandpass_max)
     downsampled_LFP = sp.resample(recording=bp_recording_LFP, resample_rate=downsample_frequency)
     channels_to_keep = get_lfp_channels_to_keep(probe_df)
-    downchanneled_LFP = downsampled_LFP.channel_slice([f"CH{i}" for i in channels_to_keep])
+    downchanneled_LFP = downsampled_LFP.channel_slice([contact_id2channel_label[str(c)] for c in channels_to_keep])
     lfp_np32 = downchanneled_LFP.get_traces(return_scaled=True)  # units = uV
     lfp_np16 = lfp_np32.astype(np.float16)  # minimal loss of precision while decreasing file size
     return lfp_np16
@@ -69,7 +75,7 @@ def get_LFP_times(session_dir, downsample_frequency=1500):
     Returns:
         lfp_times (np.array): Array of LFP times in seconds from start of session
     """
-    raw_rec, _ = _load_recording(session_dir)
+    raw_rec = _load_recording(session_dir)
     original_sample_rate = int(raw_rec.get_sampling_frequency())  # Hz
     if session_dir.session_type == "rest":
         lfp_times = raw_rec.get_times()  # seconds
@@ -96,17 +102,24 @@ def get_LFP_metrics(session_dir, downsample_frequency=1500):
     """
     Generates a dataframe of LFP metrics.
     """
-    _, probe = _load_recording(session_dir)
+    raw_rec = _load_recording(session_dir)
+    probe = raw_rec.get_probe()
     probe_df = probe.to_dataframe()
+    contact_id2channel_label = (  # contact id in probe_df mapped to channel labels in raw_rec (non-fucking trivial)
+        pd.DataFrame(raw_rec.get_property("contact_vector"))
+        .set_index("contact_ids")
+        .device_channel_indices.apply(lambda x: f"CH{x+1}")
+    ).to_dict()
+    channel_label2contact_id = {v: k for k, v in contact_id2channel_label.items()}
     channel_assignments = _load_channel_assignments(session_dir)
+    # map from channel labels to contact ids
+    channel_assignments = {channel_label2contact_id[k]: v for k, v in channel_assignments.items()}
     probe_anatomy_df = ed.load_subject_probe(session_dir.subject_ID)
     tissue_sample = ed._get_tissue_sample(session_dir.subject_ID, session_dir.date)
     probe_anatomy_df = probe_anatomy_df[probe_anatomy_df.tissue_sample == tissue_sample]
     channels_to_keep = get_lfp_channels_to_keep(probe_df)
     lfp_metrics_df = probe_anatomy_df[probe_anatomy_df.contact.id.isin(channels_to_keep)].copy()
-    lfp_metrics_df.loc[:, ("contact", "qc")] = lfp_metrics_df.contact.id.apply(lambda x: f"CH{x}").map(
-        channel_assignments
-    )
+    lfp_metrics_df.loc[:, ("contact", "qc")] = lfp_metrics_df.contact.id.map(channel_assignments)
     lfp_metrics_df.loc[:, ("sampling_rate", "")] = downsample_frequency
     return lfp_metrics_df
 
@@ -146,7 +159,7 @@ def _load_recording(session_dir):
         new_channel_IDs = [f"CH{i}" for i in np.arange(1, raw_rec.get_num_channels() + 1)]
         raw_rec = raw_rec.channel_slice(channel_IDs, new_channel_IDs)
     raw_rec = raw_rec.set_probe(probe)
-    return raw_rec, probe
+    return raw_rec
 
 
 def get_lfp_channels_to_keep(probe_df):
