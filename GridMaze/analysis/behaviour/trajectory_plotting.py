@@ -3,6 +3,7 @@
 # %% imports
 import numpy as np
 import pandas as pd
+import seaborn as sns
 from GridMaze.maze import plotting as mp
 import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter1d
@@ -57,7 +58,7 @@ def plot_trial_trajectories(
     session,
     trials=[42, 43, 44],
     smooth_SD=5,
-    traj_colors=["purple", "royalblue", "limegreen"],
+    cmap="plasma",
     start_color="grey",
     goal_color="deepskyblue",
     linewidth=4,
@@ -97,11 +98,12 @@ def plot_trial_trajectories(
     mp.plot_simple_maze_silhouette(
         simple_maze,
         ax,
-        color="lightgrey",
+        color="silver",
         special_location2color={**{s: start_color for s in starts}, **{g: goal_color for g in goals}},
         node_size=150,
         edge_size=6,
     )
+    traj_colors = sns.color_palette(cmap, n_colors=len(trajectories))
     for i, traj in enumerate(trajectories):
         x_traj, y_traj = traj
         ax.plot(x_traj, y_traj, color=traj_colors[i], linewidth=linewidth, alpha=0.7, zorder=3)

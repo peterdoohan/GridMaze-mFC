@@ -14,6 +14,7 @@ import seaborn as sns
 from matplotlib import pyplot as plt
 from GridMaze.analysis.core import get_sessions as gs
 
+from scipy.stats import zscore
 import statsmodels.formula.api as smf
 from statsmodels.stats.anova import anova_lm
 from statsmodels.stats.anova import AnovaRM
@@ -99,8 +100,9 @@ def _plot_n_excess_steps(basic_behaviour_df, ax=None, legend=False, cmap="plasma
     ax.set_ylabel("n Excess Steps")
     if print_stats:
         df = n_excess_steps_df.dropna()
+        df["maze_order"] = df["maze_name"].map({"maze_1": 1, "maze_2": 2, "rooms_maze": 3})
         m = smf.mixedlm(
-            "n_excess_steps ~ C(maze_name) * day_on_maze",
+            "n_excess_steps ~ maze_order * day_on_maze",
             data=df,
             groups=df["subject_ID"],
         ).fit(reml=False)
@@ -174,8 +176,10 @@ def _plot_trials(basic_behaviour_df, ax=None, legend=False, cmap="plasma", print
     ax.set_ylabel("Trials")
     if print_stats:
         df = trial_counts_df.dropna()
+        df["maze_order"] = df["maze_name"].map({"maze_1": 1, "maze_2": 2, "rooms_maze": 3})
+
         m = smf.mixedlm(
-            "trial ~ C(maze_name) * day_on_maze",
+            "trial ~ maze_order * day_on_maze",
             data=df,
             groups=df["subject_ID"],
         ).fit(reml=False)

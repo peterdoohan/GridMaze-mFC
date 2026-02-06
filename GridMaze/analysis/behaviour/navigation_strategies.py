@@ -18,6 +18,7 @@ import seaborn as sns
 from matplotlib.cm import ScalarMappable
 import statsmodels.api as sm
 from statsmodels.formula.api import ols
+from scipy.stats import ttest_1samp
 
 # %% Global variables
 from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
@@ -153,23 +154,31 @@ def plot_strategy_weights_cross_subject(
         value_name="value",
     )
     df_long["x_shift"] = df_long["maze_name"].map(
-        {"fully_connected": 1, "maze_1": 2, "maze_2": 3, "rooms_maze": 4}
-    ) + df_long["variable"].map({"weight_vector": -0.1, "weight_structure": 0.1})
+        {"fully_connected": 1.0, "maze_1": 2.0, "maze_2": 3.0, "rooms_maze": 4.0}
+    ) + df_long["variable"].map({"weight_vector": -0.01, "weight_structure": 0.01}).astype(float)
 
-    sns.swarmplot(
-        data=df_long, x="x_shift", y="value", color="grey", size=6, alpha=0.5, dodge=False, zorder=1, legend=False
+    sns.stripplot(
+        data=df_long,
+        x="x_shift",
+        y="value",
+        color="grey",
+        size=4,
+        alpha=0.5,
+        dodge=False,
+        zorder=1,
+        legend=False,
     )
     sns.pointplot(
         data=df_long,
         x="x_shift",
         y="value",
         hue="variable",
-        capsize=0.1,
         estimator=np.mean,
         linestyles="",
         dodge=False,
         palette=colormap,
         linestyle="none",
+        markersize=5,
     )
     plt.ylim(0, 1)
     plt.xticks(
@@ -189,6 +198,12 @@ def plot_strategy_weights_cross_subject(
         model = ols("weight_value ~ C(maze_name) + C(weight_type) + C(maze_name):C(weight_type)", data=df_melted).fit()
         anova_table = sm.stats.anova_lm(model, typ=2)
         print(anova_table)
+        # also do t-tests against zero for each weight type and maze
+        for maze in mazes:
+            for weight in ["weight_vector", "weight_structure"]:
+                subset = df_melted[(df_melted.maze_name == maze) & (df_melted.weight_type == weight)]
+                t_stat, p_value = ttest_1samp(subset.weight_value, 0)
+                print(f"{maze} - {weight}: t({len(subset)-1})={t_stat:.3f}, p={p_value:.3f}")
 
 
 # %% weights over sessions functions
@@ -259,8 +274,8 @@ def plot_nav_strategy_weights_over_sessions(nav_strategy_weights_df, cmap="virid
         # ax.set_aspect("equal")
         ax.spines["right"].set_visible(False)
         ax.spines["top"].set_visible(False)
-        ax.axvline(0, color="silver", linestyle="--", alpha=0.5, lw=1.5)
-        ax.axhline(0, color="silver", linestyle="--", alpha=0.5, lw=1.5)
+        ax.axvline(0, color="silver", linestyle="--", alpha=1, lw=1.5)
+        ax.axhline(0, color="silver", linestyle="--", alpha=1, lw=1.5)
         sm = ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0.2, vmax=0.95))
         sm.set_array([])
         cbar = fig.colorbar(sm, ax=ax, orientation="horizontal", shrink=0.5, pad=-0.1)
@@ -279,9 +294,9 @@ def plot_scatter_with_error_bars(x, y, xerr, yerr, colors, marker, ax):
             color=color,
             capsize=0,
             marker=marker,
-            markersize=10,
-            alpha=0.8,
-            elinewidth=2,
+            markersize=5,
+            alpha=1,
+            elinewidth=1,
         )
     return
 
