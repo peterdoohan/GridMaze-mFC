@@ -61,7 +61,13 @@ with open(Path(EXPERIMENT_INFO_PATH) / "maze_day2date.json", "r") as input_file:
 
 
 def get_maze_sessions(
-    subject_IDs="all", maze_names="all", days_on_maze="all", goal_subsets="all", with_data="all", must_have_data=True
+    subject_IDs="all",
+    maze_names="all",
+    days_on_maze="all",
+    goal_subsets="all",
+    with_data="all",
+    must_have_data=True,
+    verbose=False,
 ):
     """ """
     return _get_sessions(
@@ -73,11 +79,20 @@ def get_maze_sessions(
         goal_subsets,
         with_data,
         must_have_data,
+        verbose,
     )
 
 
 def _get_sessions(
-    session_type, data2filename, subject_IDs, maze_names, days_on_maze, goal_subsets, with_data, must_have_data
+    session_type,
+    data2filename,
+    subject_IDs,
+    maze_names,
+    days_on_maze,
+    goal_subsets,
+    with_data,
+    must_have_data,
+    verbose,
 ):
     """ """
     session_type2session_class = {
@@ -112,7 +127,7 @@ def _get_sessions(
                     if not session_info["goal_subset"] in goal_subsets:
                         continue
                 SessionClass = session_type2session_class[session_type]
-                requested_sessions.append(SessionClass(subject, session_name, with_data=with_data))
+                requested_sessions.append(SessionClass(subject, session_name, with_data=with_data, verbose=verbose))
     # ensure all data is available
     if must_have_data:
         requested_sessions = [s for s in requested_sessions if all(data in s.has_data for data in with_data)]
@@ -145,7 +160,7 @@ def _check_request_inputs(subject_IDs, maze_names, days_on_maze, goal_subsets):
 class MazeSession:
     """ """
 
-    def __init__(self, subject, session_name, with_data):
+    def __init__(self, subject, session_name, with_data, verbose):
         """ """
         self.has_data = []
         processed_data_path = PROCESSED_DATA_PATH / subject / session_name
@@ -170,7 +185,8 @@ class MazeSession:
                     if data is not None:
                         self.has_data.append(attr_name)
                 except FileNotFoundError:
-                    print(f"{file_name} not found for {self.name}")
+                    if verbose:
+                        print(f"{file_name} not found for {self.name}")
                     data = None
             else:
                 data = None
