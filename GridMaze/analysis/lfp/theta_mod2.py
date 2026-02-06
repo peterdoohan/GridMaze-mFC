@@ -6,7 +6,6 @@ by cluster tuning
 
 # %% Imports
 import json
-from os import error
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -14,6 +13,9 @@ from matplotlib import pyplot as plt
 
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import get_clusters as gc
+from GridMaze.analysis.core import convert
+from GridMaze.analysis.core import filter as filt
+
 
 from GridMaze.analysis.processing import get_cluster_unique_variance_explained as cve
 from matplotlib.patches import Rectangle
@@ -26,6 +28,133 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 
 
 # %% Functions
+
+
+def plot_population_theta_mod_tuning(
+    theta_mod_df, norm_clusters=True, norm_session=False, plot_single_subjects=True, ax=None
+):
+    """ """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(3, 3))
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.axhline(1, color="k", ls="--", alpha=0.5)
+
+    df = theta_mod_df.copy()
+    df["spike_count"] = df["spike_count"].astype(float)
+    if norm_clusters:
+        T = df.spike_count.values
+        T = T / T.mean(axis=1, keepdims=True)
+        df.loc[:, ("spike_count", slice(None))] = T
+    # average theta mod per session
+
+    session_df = df.groupby(["subject_ID", "maze_name", "day_on_maze"]).spike_count.mean().spike_count
+    if norm_session:
+        S = session_df.values
+        S = S / S.mean(axis=1, keepdims=True)
+        session_df.loc[:, :] = S
+
+    # average over subjects
+    _df = session_df.groupby("subject_ID").mean()
+    mean = _df.mean()
+    sem = _df.sem()
+
+    # plot
+    if plot_single_subjects:
+        palette = sns.color_palette("hls", n_colors=len(SUBJECT_IDS))
+        for subject, color in zip(SUBJECT_IDS, palette):
+            subj_mean = _df.loc[subject]
+            ax.plot(subj_mean.index, subj_mean.values, lw=1, color=color, alpha=1)
+    ax.errorbar(
+        x=mean.index,
+        y=mean.values,
+        yerr=sem.values,
+        marker="o",
+        markersize=5,
+        lw=2,
+        elinewidth=2,
+        linestyle="-",
+        color="k",
+        # capsize=3,
+        label="cross-subject mean",
+    )
+    ax.set_ylabel("Pop. θ Mod")
+    ax.set_xlabel("θ Phase")
+    ax.set_xticks([-np.pi, -np.pi / 2, 0, np.pi / 2, np.pi])
+    ax.set_xticklabels([r"$-\pi$", r"$-\pi/2$", "0", r"$\pi/2$", r"$\pi$"])
+
+
+def get_population_theta_mod_tuning(late_sessions=False, include_multi_units=True):
+    """ """
+    dfs = []
+    for subject in SUBJECT_IDS:
+        for maze_name in ["maze_1", "maze_2", "rooms_maze"]:
+            sessions = gs.get_maze_sessions(
+                subject_IDs=[subject],
+                maze_names=[maze_name],
+                days_on_maze="late" if late_sessions else "all",
+                with_data=["navigation_df", "navigation_theta_spike_counts_df", "cluster_metrics"],
+                must_have_data=True,
+            )
+            for session in sessions:
+                df = get_session_theta_mod_tuning(
+                    session,
+                    include_multi_units=include_multi_units,
+                    navigation_only=True,
+                    moving_only=True,
+                    norm=False,
+                    max_steps_to_goal=30,
+                    min_spikes=300,
+                )
+                dfs.append(df)
+    combined_df = pd.concat(dfs)
+    return combined_df
+
+
+def get_session_theta_mod_tuning(
+    session,
+    include_multi_units=True,
+    navigation_only=True,
+    moving_only=True,
+    norm=False,
+    max_steps_to_goal=30,
+    min_spikes=300,
+):
+    """ """
+    # load data
+    session_info = session.session_info
+    cluster_metrics = session.cluster_metrics
+    navigation_df = session.navigation_df.copy()
+    theta_spike_counts_df = session.navigation_theta_spike_counts_df.reset_index(drop=True)
+    # filter for single units
+    if not include_multi_units:
+        keep_units = cluster_metrics[cluster_metrics.single_unit].cluster_ID
+    else:
+        keep_units = cluster_metrics[cluster_metrics.single_unit | cluster_metrics.multi_unit].cluster_ID
+    keep_units = convert.cluster_IDs2scluster_unique_IDs(session_info, keep_units)
+    theta_spike_counts_df = theta_spike_counts_df[
+        theta_spike_counts_df.columns[[c in keep_units for c in theta_spike_counts_df.columns.get_level_values(1)]]
+    ]
+    # combine nav and spikes
+    navigation_df.columns = pd.MultiIndex.from_tuples([(*c, "") for c in navigation_df.columns])
+    nav_spike_counts_df = pd.concat([navigation_df, theta_spike_counts_df], axis=1)
+    # filter for moving, navigation, on task etc.
+    nav_spike_counts_df = filt.filter_navigation_rates_df(
+        nav_spike_counts_df, navigation_only, moving_only, max_steps_to_goal=max_steps_to_goal
+    )
+    cluster_phase_spike_counts = nav_spike_counts_df.spike_count.sum().unstack()
+    # filter for cluster with few spikes in filtered data (eg, non-navigation tuned)
+    cluster_phase_spike_counts = cluster_phase_spike_counts[cluster_phase_spike_counts.sum(axis=1) > min_spikes]
+    # normalise each to avg 1
+    if norm:
+        df = cluster_phase_spike_counts.div(cluster_phase_spike_counts.mean(axis=1), axis=0)
+    else:
+        df = cluster_phase_spike_counts.copy()
+    df.columns = pd.MultiIndex.from_product([["spike_count"], df.columns])
+    # add other info
+    df[("subject_ID", "")] = session.subject_ID
+    df[("maze_name", "")] = session.maze_name
+    df[("day_on_maze", "")] = session.day_on_maze
+    return df
 
 
 # %% stratify theta-modulation by cluster representation (distance-to-goal, place-direction, etc.)

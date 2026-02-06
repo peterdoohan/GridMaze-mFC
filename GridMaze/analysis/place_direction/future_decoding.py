@@ -89,7 +89,7 @@ def _filter_for_decision_points(summary_df, decision_points="future"):
     return df
 
 
-def _plot_decoding_diff(subject_means, colors=["hotpink", "blueviolet"], ax=None):
+def _plot_decoding_diff(subject_means, colors=["hotpink", "blueviolet"], style="shaded", ax=None):
     # set up fig
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=(5, 2.5))
@@ -109,18 +109,24 @@ def _plot_decoding_diff(subject_means, colors=["hotpink", "blueviolet"], ax=None
         x_vals = grand_mean[mode].index.values
         if mode == "past":
             x_vals = -1 * x_vals
-        ax.errorbar(
-            x_vals,
-            mean,
-            yerr=sem,
-            marker="o",
-            linestyle=None,
-            color=color,
-            linewidth=2,
-            elinewidth=2,
-            capsize=0,
-            markersize=6,
-        )
+        if style == "errorbars":
+            ax.errorbar(
+                x_vals,
+                mean,
+                yerr=sem,
+                marker="o",
+                linestyle=None,
+                color=color,
+                linewidth=2,
+                elinewidth=2,
+                capsize=0,
+                markersize=6,
+            )
+        elif style == "shaded":
+            ax.plot(x_vals, mean, color=color, label=f"{mode}", lw=2)
+            ax.fill_between(x_vals, mean - sem, mean + sem, color=color, alpha=0.2)
+        else:
+            raise ValueError(f"Unknown style: {style}. Must be 'errorbars' or 'shaded'.")
 
 
 def _plot_decoding_raw(subject_means, colors=[("hotpink", "mediumvioletred"), ("blueviolet", "indigo")], ax=None):
