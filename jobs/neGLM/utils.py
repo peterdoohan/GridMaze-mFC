@@ -20,6 +20,7 @@ DEFAULT_INPUT_DATA_KWARGS = {
     "resolution": 0.2,
     "max_steps_to_goal": 30,
     "min_spike_count": 300,
+    "include_multiunit": False,
     "moving_only": True,
     "permute_spikes": False,
 }

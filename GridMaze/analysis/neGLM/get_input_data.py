@@ -100,6 +100,7 @@ def get_session_input_data(
     max_steps_to_goal=30,
     moving_only=False,
     min_spike_count=300,
+    include_multiunit=False,
     input_groups=["distance_to_goal", "place_direction", "egocentric_action", "velocity"],
     input_group_kwargs={"distance_to_goal": None, "place_direction": None, "egocentric_action": None},
     permute_spikes=False,
@@ -111,7 +112,7 @@ def get_session_input_data(
     input_kwargs = locals()
     input_kwargs.pop("session", None)
     # load data and update navigation variables
-    df = init_navigation_spikes_df(session, input_groups)
+    df = init_navigation_spikes_df(session, input_groups, include_multiunit)
     # permute behaviour relative to neurons if specified
     if permute_spikes:
         df_feats = df.drop(columns="spike_count", level=0, axis=1)
@@ -162,9 +163,11 @@ def get_session_input_data(
     }
 
 
-def init_navigation_spikes_df(session, input_features):
+def init_navigation_spikes_df(session, input_features, include_multiunit=False):
     # load data (single units only)
-    df = session.get_navigation_activity_df(type="spikes", cluster_kwargs={"single_units": True, "multi_units": False})
+    df = session.get_navigation_activity_df(
+        type="spikes", cluster_kwargs={"single_units": True, "multi_units": include_multiunit}
+    )
     # get cleaned up speed and acceleration
     if "speed" in input_features or "acceleration" in input_features or "velocitys" in input_features:
         _speed, _velocities, _acceleration = _get_smoothed_movement_variables(
