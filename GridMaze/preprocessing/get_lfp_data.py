@@ -48,16 +48,18 @@ def get_LFP_signal(
     # load data and configre probe with spike interface
     raw_rec = _load_recording(session_dir)
     probe = raw_rec.get_probe()
+    probe_df = probe.to_dataframe()
     contact_id2channel_label = (  # contact id in probe_df mapped to channel labels in raw_rec (non-fucking trivial)
         pd.DataFrame(raw_rec.get_property("contact_vector"))
         .set_index("contact_ids")
         .device_channel_indices.apply(lambda x: f"CH{x+1}")
     ).to_dict()
-    probe_df = probe.to_dataframe()
-    bp_recording_LFP = sp.bandpass_filter(recording=raw_rec, freq_min=1, freq_max=bandpass_max)
+    bp_recording_LFP = sp.bandpass_filter(recording=raw_rec, freq_min=0.1, freq_max=bandpass_max)
     downsampled_LFP = sp.resample(recording=bp_recording_LFP, resample_rate=downsample_frequency)
-    channels_to_keep = get_lfp_channels_to_keep(probe_df)
-    downchanneled_LFP = downsampled_LFP.channel_slice([contact_id2channel_label[str(c)] for c in channels_to_keep])
+    channels_to_keep = get_lfp_channels_to_keep(probe_df)  # "contact ids" from probe_df, not channel labels in raw_rec
+    downchanneled_LFP = downsampled_LFP.channel_slice(
+        [contact_id2channel_label[str(c)] for c in channels_to_keep]
+    )  # convert contact ids to channel labels for slicing
     lfp_np32 = downchanneled_LFP.get_traces(return_scaled=True)  # units = uV
     lfp_np16 = lfp_np32.astype(np.float16)  # minimal loss of precision while decreasing file size
     return lfp_np16
@@ -117,7 +119,7 @@ def get_LFP_metrics(session_dir, downsample_frequency=1500):
     probe_anatomy_df = ed.load_subject_probe(session_dir.subject_ID)
     tissue_sample = ed._get_tissue_sample(session_dir.subject_ID, session_dir.date)
     probe_anatomy_df = probe_anatomy_df[probe_anatomy_df.tissue_sample == tissue_sample]
-    channels_to_keep = get_lfp_channels_to_keep(probe_df)
+    channels_to_keep = get_lfp_channels_to_keep(probe_df)  # "contact ids" so can map directly to contact id in probe_df
     lfp_metrics_df = probe_anatomy_df[probe_anatomy_df.contact.id.isin(channels_to_keep)].copy()
     lfp_metrics_df.loc[:, ("contact", "qc")] = lfp_metrics_df.contact.id.map(channel_assignments)
     lfp_metrics_df.loc[:, ("sampling_rate", "")] = downsample_frequency
@@ -166,6 +168,7 @@ def get_lfp_channels_to_keep(probe_df):
     """
     Takes one column of contacts for each shank of the cambridge neurotech probes, returning the channel IDs to keep
     under this criteria
+    output is actually probe_df "contact_ids"
     """
     keep_channel_ids = []
     for shank in range(6):
