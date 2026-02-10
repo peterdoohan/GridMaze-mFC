@@ -6,30 +6,21 @@ when it is wrong?
 """
 
 # %% Imports
+from cProfile import label
 import json
 import numpy as np
 import pandas as pd
 from joblib import delayed, Parallel
 from matplotlib import pyplot as plt
-from matplotlib.colors import LogNorm, Normalize
-from matplotlib.ticker import MaxNLocator
-import seaborn as sns
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
+from GridMaze.maze import representations as mr
 from GridMaze.analysis.core import convert
 from GridMaze.analysis.core import downsample as ds
 from GridMaze.analysis.core import folds
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.distance_to_goal import distributions as dd
-
-# %% Global Variables
-
-# %% Functions
-
-
-# %% Imports
-
 
 # %% Global Variables
 
@@ -44,7 +35,7 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 # %% plot decoding aligned to errors
 
 
-def plot_error_aligned_decoding_delta(results_df, error_type="nav_error", window=(-2, 2), color="royalblue", ax=None):
+def plot_error_aligned_decoding_delta(results_df, aligned_df=None, window=(-10, 10), color="royalblue", ax=None):
     """ """
     # set up figure
     if ax is None:
@@ -52,22 +43,29 @@ def plot_error_aligned_decoding_delta(results_df, error_type="nav_error", window
     ax.spines[["top", "right"]].set_visible(False)
     ax.axhline(0, color="k", linestyle="--", alpha=0.5)
     ax.axvline(0, color="k", linestyle="--", alpha=0.5)
-    ax.set_xlabel("error (s)")
+    ax.set_xlabel("decision (s)")
     ax.set_ylabel("Δ distance (m)\n(decoded - true)")
 
     # process for plotting
-    aligned_df = align_decoding_to_errors(results_df, error_type, window)
-    subj_avg = aligned_df.groupby("subject_ID").decoding_delta.mean().decoding_delta
+    if aligned_df is None:
+        aligned_df = align_decoding_to_errors(results_df, error_type="nav_error", window=window)
+    subj_avg = aligned_df.groupby(["subject_ID", "error"]).decoding_delta.mean().decoding_delta
     times = subj_avg.columns.values.astype(float)
-    _mean = subj_avg.mean().values
-    _sem = subj_avg.sem().values
+    _means = subj_avg.groupby(level=1).mean()
+    _sems = subj_avg.groupby(level=1).sem()
+    for error, color in zip(
+        [False, True],
+        ["gray", color],
+    ):
+        _mean = _means.loc[error].values
+        _sem = _sems.loc[error].values
+        # plot
+        ax.plot(times, _mean, color=color, label=f"error:{error}")
+        ax.fill_between(times, _mean - _sem, _mean + _sem, color=color, alpha=0.2)
+    ax.legend(frameon=False, fontsize=6)
 
-    # plot
-    ax.plot(times, _mean, color=color)
-    ax.fill_between(times, _mean - _sem, _mean + _sem, color=color, alpha=0.2)
 
-
-def align_decoding_to_errors(results_df, error_type="nav_error", window=(-2, 2), resolution=0.2):
+def align_decoding_to_errors(results_df, error_type="nav_error", window=(-8, 8), resolution=0.2):
     """ """
     df = results_df.copy()
     df.reset_index(inplace=True)
@@ -75,31 +73,43 @@ def align_decoding_to_errors(results_df, error_type="nav_error", window=(-2, 2),
     rows_before = int(-window[0] / resolution)
     rows_after = int(window[1] / resolution)
     expected_length = rows_before + rows_after + 1
+    aligned_times = np.arange(window[0], window[1] + resolution, resolution).round(2)
     dfs = []
     for subject_ID in SUBJECT_IDS:
         # get decoding delta aliged each error
-        subj_df = df[df.subject_ID == subject_ID]
-        error_idxs = subj_df[subj_df[error_type]].index
-        aligned_deltas = []
-        for i in error_idxs:
-            try:
-                start_idx = i - rows_before
-                end_idx = i + rows_after
-                aligned_delta = subj_df.loc[start_idx:end_idx, ("decoding_delta", "")].values.astype(float)
-            except IndexError:
-                continue
-            if aligned_delta.shape[0] != expected_length:
-                continue
-            aligned_deltas.append(aligned_delta)
-        # organise into dataframe
-        aligned_times = np.arange(window[0], window[1] + resolution, resolution).round(2)
-        aligned_df = pd.DataFrame(
-            data=np.stack(aligned_deltas), columns=pd.MultiIndex.from_product([["decoding_delta"], aligned_times])
-        )
-        aligned_df[("subject_ID", "")] = subject_ID
-        dfs.append(aligned_df)
-    aligned_df = pd.concat(dfs, ignore_index=True)
+        subj_df = df[df.subject_ID == subject_ID].copy()
+        for err in [True, False]:
+            # filter for either errors or correct decisions at decision points
+            idxs = subj_df[(subj_df[error_type] == err) & subj_df.node_degree.gt(2)].index
+            aligned_deltas = []
+            for i in idxs:
+                try:
+                    start_idx = i - rows_before
+                    end_idx = i + rows_after
+                    aligned_delta = subj_df.loc[start_idx:end_idx, ("decoding_delta", "")].values.astype(float)
+                except IndexError:
+                    continue
+                if aligned_delta.shape[0] != expected_length:
+                    continue
+                aligned_deltas.append(aligned_delta)
+            # organise into dataframe
+            aligned_df = pd.DataFrame(
+                data=np.stack(aligned_deltas), columns=pd.MultiIndex.from_product([["decoding_delta"], aligned_times])
+            )
+            aligned_df[("error", "")] = err
+            aligned_df[("subject_ID", "")] = subject_ID
+            dfs.append(aligned_df)
+        aligned_df = pd.concat(dfs, ignore_index=True)
     return aligned_df
+
+
+def _add_node_degree(pos, maze_name, mazes=None, label2coord=None):
+    """ """
+    if mazes is None:
+        mazes = {m: mr.get_simple_maze(m) for m in ["maze_1", "maze_2", "rooms_maze"]}
+    if label2coord is None:
+        label2coord = {k: v for d in [mr.get_maze_label2coord(m) for m in mazes.values()] for k, v in d.items()}
+    return mazes[maze_name].degree(label2coord[pos])
 
 
 # %% experiment level decoding (run over all sessions)
@@ -141,7 +151,18 @@ def get_distance_to_goal_decoding_df(sessions=None, resolution=0.2, verbose=True
             decode_session_distance_to_goal(session, resolution=resolution, verbose=verbose) for session in sessions
         ]
     distance_to_goal_decoding_df = pd.concat(results_dfs, ignore_index=True)
-
+    # hacky solution to add node degree to results df
+    df = results_df.copy()
+    mazes = {m: mr.get_simple_maze(m) for m in ["maze_1", "maze_2", "rooms_maze"]}
+    extended_mazes = {m: mr.get_extended_simple_maze(n) for m, n in mazes.items()}
+    label2coord = {k: v for d in [mr.get_maze_label2coord(m) for m in mazes.values()] for k, v in d.items()}
+    df[("node_degree", "")] = df.apply(
+        lambda row: _add_node_degree(
+            row[("maze_position", "simple")], row[("maze_name", "")], extended_mazes, label2coord
+        ),
+        axis=1,
+    )
+    # save
     if save:
         if not save_path.parent.exists():
             save_path.parent.mkdir(parents=True)
