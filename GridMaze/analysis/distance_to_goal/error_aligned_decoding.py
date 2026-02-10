@@ -35,7 +35,7 @@ from GridMaze.analysis.distance_to_goal import distributions as dd
 
 from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
 
-RESULTS_DIR = RESULTS_PATH / "distance_to_goal" / "logreg_decoding"
+RESULTS_DIR = RESULTS_PATH / "distance_to_goal" / "errors"
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
@@ -44,33 +44,61 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 # %% plot decoding aligned to errors
 
 
-def test(results_df, error_type="nav_error", window=(-2, 2), resolution=0.2):
+def plot_error_aligned_decoding_delta(results_df, error_type="nav_error", window=(-2, 2), color="royalblue", ax=None):
+    """ """
+    # set up figure
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(2, 1.5))
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.axhline(0, color="k", linestyle="--", alpha=0.5)
+    ax.axvline(0, color="k", linestyle="--", alpha=0.5)
+    ax.set_xlabel("error (s)")
+    ax.set_ylabel("Δ distance (m)\n(decoded - true)")
+
+    # process for plotting
+    aligned_df = align_decoding_to_errors(results_df, error_type, window)
+    subj_avg = aligned_df.groupby("subject_ID").decoding_delta.mean().decoding_delta
+    times = subj_avg.columns.values.astype(float)
+    _mean = subj_avg.mean().values
+    _sem = subj_avg.sem().values
+
+    # plot
+    ax.plot(times, _mean, color=color)
+    ax.fill_between(times, _mean - _sem, _mean + _sem, color=color, alpha=0.2)
+
+
+def align_decoding_to_errors(results_df, error_type="nav_error", window=(-2, 2), resolution=0.2):
     """ """
     df = results_df.copy()
     df.reset_index(inplace=True)
-    df[("decoded_distance", "")] = results_df.decoded_distance_prob.idxmax(
-        axis=1
-    )  # could map this to fancier weighted decoded distance later
-    df[("decoding_delta", "")] = results_df.distance_bin_mid - df.decoded_distance
-    # get decoding delta aliged each error
+    df[("decoding_delta", "")] = df.decoded_distance - results_df.distance_bin_mid
     rows_before = int(-window[0] / resolution)
     rows_after = int(window[1] / resolution)
     expected_length = rows_before + rows_after + 1
-    error_idxs = df[df[error_type]].index
-    aligned_deltas = []
-    for i in error_idxs:
-        try:
-            start_idx = i - rows_before
-            end_idx = i + rows_after
-            aligned_delta = df.loc[start_idx:end_idx, ("decoding_delta", "")].values.astype(float)
-        except IndexError:
-            continue
-        if aligned_delta.shape[0] != expected_length:
-            continue
-        aligned_deltas.append(aligned_delta)
-    # organise into dataframe
-    aligned_times = np.arange(window[0], window[1] + resolution, resolution).round(2)
-    aligned_df = pd.DataFrame(data=np.stack(aligned_deltas), columns=aligned_times)
+    dfs = []
+    for subject_ID in SUBJECT_IDS:
+        # get decoding delta aliged each error
+        subj_df = df[df.subject_ID == subject_ID]
+        error_idxs = subj_df[subj_df[error_type]].index
+        aligned_deltas = []
+        for i in error_idxs:
+            try:
+                start_idx = i - rows_before
+                end_idx = i + rows_after
+                aligned_delta = subj_df.loc[start_idx:end_idx, ("decoding_delta", "")].values.astype(float)
+            except IndexError:
+                continue
+            if aligned_delta.shape[0] != expected_length:
+                continue
+            aligned_deltas.append(aligned_delta)
+        # organise into dataframe
+        aligned_times = np.arange(window[0], window[1] + resolution, resolution).round(2)
+        aligned_df = pd.DataFrame(
+            data=np.stack(aligned_deltas), columns=pd.MultiIndex.from_product([["decoding_delta"], aligned_times])
+        )
+        aligned_df[("subject_ID", "")] = subject_ID
+        dfs.append(aligned_df)
+    aligned_df = pd.concat(dfs, ignore_index=True)
     return aligned_df
 
 
@@ -79,7 +107,7 @@ def test(results_df, error_type="nav_error", window=(-2, 2), resolution=0.2):
 
 def get_distance_to_goal_decoding_df(sessions=None, resolution=0.2, verbose=True, save=False, n_jobs=-1):
     """ """
-    save_path = RESULTS_DIR / "errors" / f"distance_to_goal_decoding_df_res{resolution}.parquet"
+    save_path = RESULTS_DIR / f"distance_to_goal_decoding_df.parquet"
     if not save and save_path.exists():
         if verbose:
             print(f"Loading existing decoding df from {save_path}")
@@ -115,6 +143,8 @@ def get_distance_to_goal_decoding_df(sessions=None, resolution=0.2, verbose=True
     distance_to_goal_decoding_df = pd.concat(results_dfs, ignore_index=True)
 
     if save:
+        if not save_path.parent.exists():
+            save_path.parent.mkdir(parents=True)
         distance_to_goal_decoding_df.to_parquet(save_path)
         if verbose:
             print(f"Saved decoding df to {save_path}")
@@ -140,6 +170,7 @@ def decode_session_distance_to_goal(
     sqrt_spikes=True,
     standardise_spikes=True,
     alpha="opt",
+    output="weighted",
     verbose=False,
 ):
     """ """
@@ -159,18 +190,10 @@ def decode_session_distance_to_goal(
         n_log_bins,
         balance_distances,
     )
-    distance_bin_mids = sorted(input_data.distance_bin_mid.unique())
+    distance_bin_mids = distance_bin_mids = np.array(sorted([b.mid for b in input_data.distance_bin.unique()]))
     # set up output df
-    results_df = pd.concat(
-        [
-            input_data,
-            pd.DataFrame(
-                columns=pd.MultiIndex.from_product([["decoded_distance_prob"], distance_bin_mids]),
-                index=input_data.index,
-            ),
-        ],
-        axis=1,
-    )
+    results_df = input_data.drop("spike_count", axis=1, level=0).copy()
+    results_df[("decoded_distance", "")] = np.nan  # will store predicted
     # decode distance CV
     folds_df = folds.get_folds_df(session, goal_stratified=False, return_unique_IDs=True, n_folds=n_folds)
     _folds = folds_df.columns.get_level_values(0).unique()
@@ -187,6 +210,7 @@ def decode_session_distance_to_goal(
                 sqrt_spikes=sqrt_spikes,
                 standardise_spikes=standardise_spikes,
                 return_as="best",
+                output=output,
                 verbose=verbose,
             )
         else:
@@ -204,8 +228,13 @@ def decode_session_distance_to_goal(
         model = LogisticRegression(penalty="l2", C=opt_alpha, max_iter=10_000, random_state=0, class_weight="balanced")
         model.fit(X_train, y_train)
         # predict
-        y_prob = model.predict_proba(X_test)
-        results_df.loc[test_df.index, "decoded_distance_prob"] = y_prob
+        if output == "weighted":
+            y_prob = model.predict_proba(X_test)
+            decoded_dist = np.dot(y_prob, distance_bin_mids)  # weighted average of decoded distances
+        elif output == "max":
+            y_pred = model.predict(X_test)
+            decoded_dist = distance_bin_mids[y_pred]
+        results_df.loc[test_df.index, "decoded_distance"] = decoded_dist
     return results_df
 
 
