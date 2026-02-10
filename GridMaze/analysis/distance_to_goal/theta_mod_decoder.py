@@ -24,6 +24,7 @@ from GridMaze.analysis.distance_to_goal import distributions as dd
 from GridMaze.analysis.distance_to_goal import logreg_decoder as ld
 from GridMaze.analysis.place_direction.future_decoding import get_decision_points
 
+
 # %% Global Variables
 
 from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
