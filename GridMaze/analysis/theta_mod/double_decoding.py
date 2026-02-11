@@ -109,7 +109,10 @@ def _get_decoding_bias_stats(phase_mean_decoding):
 
 
 def get_double_decoding_df(verbose=True, n_jobs=-1, save=False):
-    """ """
+    """
+    versions (hacky):
+    "... _close_low_res": first attempt that was at 0.2 res (same for samples and sum_spikes) w/ max dist = 0.8
+    """
     save_path = RESULTS_DIR / "double_decoding_df.parquet"
     if save_path.exists() and not save:
         if verbose:
@@ -405,7 +408,9 @@ def _get_place_pred_distance(
     return_as="dist",  # value to return
     distance_ref="pos",  # pos or goal
 ):
-    """ """
+    """
+    This is complicated, should write doc-string
+    """
     # check inputs
     if output not in ["max", "weighted"]:
         raise ValueError(f"Output must be 'max' or 'weighted'.")
@@ -425,6 +430,7 @@ def _get_place_pred_distance(
     in_train = np.ones(samples, dtype=bool)
     for i in range(samples):
         y = Y_test[i]  # place
+        goal = goals[i]
         if y not in decoder_classes:
             full_traj_defined[i] = False
             pred_dist[i] = np.nan
@@ -432,20 +438,46 @@ def _get_place_pred_distance(
             continue
         probs = Yprob[i]
         loc2prob = dict(zip(decoder_classes, probs))
-        _measure2 = goals[i] if distance_ref == "goal" else y
         if restrict_to_traj:
             traj = traj_envelope.iloc[i]
             if traj.isnull().any():
                 full_traj_defined[i] = False
             include_locs = traj.dropna().unique()
+            past_locs = traj.loc["past"].iloc[1:].dropna().unique()
+            future_locs = traj.loc["future"].iloc[1:].dropna().unique()
+            if distance_ref == "goal":
+                probs = np.array([loc2prob[loc] if loc in loc2prob.keys() else np.nan for loc in include_locs])
+                distances = np.array([all_pairs_path_length[loc][goal] for loc in include_locs])
+                if output == "weighted":
+                    pred_dist[i] = np.nansum(probs * distances) / np.nansum(probs)
+                if output == "max":
+                    pred_dist[i] = distances[np.nanargmax(probs)]
+            else:  # pos
+                assert output == "weighted", "max output not implemented for position ('pos') ref"
+                past_probs = [loc2prob[loc] if loc in loc2prob.keys() else np.nan for loc in past_locs]
+                past_dists = np.array([all_pairs_path_length[y][loc] for loc in past_locs])
+                future_probs = [loc2prob[loc] if loc in loc2prob.keys() else np.nan for loc in future_locs]
+                future_dists = np.array([all_pairs_path_length[y][loc] for loc in future_locs])
+                # calculate decoding error distance over the trajectory (+ve = more past, -ve = more future)
+                weighted_past, weighted_future = np.nansum(future_probs * future_dists), np.nansum(
+                    past_probs * past_dists
+                )
+                pred_dist[i] = weighted_past - weighted_future
         else:
             include_locs = decoder_classes
-        probs = np.array([loc2prob[loc] if loc in loc2prob.keys() else np.nan for loc in include_locs])
-        distances = np.array([all_pairs_path_length[loc][_measure2] for loc in include_locs])
-        if output == "weighted":
-            pred_dist[i] = np.nansum(probs * distances) / np.nansum(probs)
-        if output == "max":
-            pred_dist[i] = distances[np.nanargmax(probs)]
+            if distance_ref == "goal":
+                distances = np.array([all_pairs_path_length[loc][goal] for loc in include_locs])
+                if output == "weighted":
+                    pred_dist[i] = np.nansum(probs * distances) / np.nansum(probs)
+                if output == "max":
+                    pred_dist[i] = distances[np.nanargmax(probs)]
+            else:  # pos
+                distances = np.array([all_pairs_path_length[y][loc] for loc in include_locs])
+                if output == "weighted":
+                    pred_dist[i] = np.nansum(probs * distances) / np.nansum(probs)
+                if output == "max":
+                    pred_dist[i] = distances[np.nanargmax(probs)]
+
     if return_as == "dist":
         return pred_dist
     else:
@@ -457,6 +489,7 @@ def _get_place_pred_distance(
 
 def get_input_data(
     session,
+    theta_split=True,
     resolution=0.1,
     sum_spike_window=0.4,
     metric=("distance_to_goal", "geodesic"),
@@ -465,17 +498,22 @@ def get_input_data(
     navigation_only=True,
     remove_time_at_goal=True,
     max_steps_to_goal=30,
-    bin_spacing=0.08,
+    bin_spacing=0.04,
     bin_method="uniform",
-    max_distance=None,
+    max_distance=0.8,
     n_log_bins=25,
     place_offset=2,
 ):
     """ """
     # load data
     navigation_df = session.navigation_df.copy()
-    spike_counts_df = session.navigation_theta_spike_counts_df  # [frames, clusters * 12 lfp phase bins]
-    spike_counts_df.reset_index(inplace=True, drop=True)
+    if theta_split:
+        spike_counts_df = session.navigation_theta_spike_counts_df  # [frames, clusters * 12 lfp phase bins]
+        spike_counts_df.reset_index(inplace=True, drop=True)
+    else:
+        spike_counts_df = session.navigation_spike_counts_df  # [frames, clusters]
+        spike_counts_df.reset_index(inplace=True, drop=True)
+        spike_counts_df.columns = pd.MultiIndex.from_tuples([(*c, "") for c in spike_counts_df.columns])
 
     # filter clusters
     keep_clusters = gc.filter_clusters(
@@ -506,7 +544,6 @@ def get_input_data(
         every_n_frames = int(resolution * FRAME_RATE)
         ds_spike_counts_df = spike_counts_df.iloc[::every_n_frames].reset_index(drop=True)
         ds_nav_df = navigation_df.iloc[::every_n_frames].reset_index(drop=True)
-
     ds_nav_df.columns = pd.MultiIndex.from_tuples([(*c, "") for c in ds_nav_df.columns])
     input_df = pd.concat([ds_nav_df, ds_spike_counts_df], axis=1).reset_index(drop=True)
 
@@ -591,6 +628,9 @@ def compare_decoding_profiles(print_stats=True, ax=None):
     # load data: note summary dfs formated slighly differently
     distance_mod_df = tdd.load_decoding_results(lfp_type="theta_mid")
     place_mod_df = tpd.get_summary_df(verbose=False)
+    # note signed error in place_mod_df is future-past, so pos is closer to goal
+    # but in distance_mod_df, error is pred-true, so pos is further from goal, FIX
+    place_mod_df.loc[:, "signed_error"] *= -1
 
     # process distance to get subject by norm decoding bias
     dist_bias = distance_mod_df.groupby(["subject_ID"]).lfp_phase.mean().lfp_phase
