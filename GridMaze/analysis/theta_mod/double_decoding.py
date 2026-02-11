@@ -150,18 +150,19 @@ def get_double_decoding_df(verbose=True, n_jobs=-1, save=False):
 
 def get_session_double_decoding_df(
     session,
-    resolution=0.2,
+    resolution=0.1,
+    sum_spike_window=0.4,
     moving_only=True,
-    bin_spacing=0.04,
-    max_distance=0.8,
+    bin_spacing=0.08,
+    max_distance=None,
     max_steps_from_goal=30,
-    place_offset=6,
-    n_folds=10,
+    place_offset=2,
+    n_folds=8,
     sqrt_spikes=True,
     normalise_X=True,
     alpha="opt",
     output="weighted",
-    distance_ref="goal",
+    distance_ref="pos",
     restrict_to_traj=True,
     verbose=True,
 ):
@@ -172,6 +173,7 @@ def get_session_double_decoding_df(
     input_data = get_input_data(
         session,
         resolution=resolution,
+        sum_spike_window=sum_spike_window,
         moving_only=moving_only,
         bin_spacing=bin_spacing,
         max_distance=max_distance,
@@ -305,7 +307,7 @@ def get_opt_alpha(
     sqrt_spikes=True,
     reg_range=np.logspace(-4, 4, 10),
     output="weighted",
-    distance_ref="goal",
+    distance_ref="pos",
     restrict_to_traj=True,
     all_pairs_path_length=None,
     distances=None,
@@ -401,7 +403,7 @@ def _get_place_pred_distance(
     restrict_to_traj=True,
     output="weighted",  # 'max' or 'weighted'
     return_as="dist",  # value to return
-    distance_ref="goal",  # pos or goal
+    distance_ref="pos",  # pos or goal
 ):
     """ """
     # check inputs
@@ -455,18 +457,19 @@ def _get_place_pred_distance(
 
 def get_input_data(
     session,
-    resolution=0.2,
+    resolution=0.1,
+    sum_spike_window=0.4,
     metric=("distance_to_goal", "geodesic"),
     include_multiunits=True,
     moving_only=True,
     navigation_only=True,
     remove_time_at_goal=True,
     max_steps_to_goal=30,
-    bin_spacing=0.04,
+    bin_spacing=0.08,
     bin_method="uniform",
-    max_distance=1.6,
+    max_distance=None,
     n_log_bins=25,
-    place_offset=6,
+    place_offset=2,
 ):
     """ """
     # load data
@@ -486,16 +489,26 @@ def get_input_data(
         spike_counts_df.columns[spike_counts_df.columns.get_level_values(1).isin(keep_clusters)]
     ]
 
-    # downsample data
-    ds_nav_df, ds_spike_counts_df = ds.downsample_nav_spikes_data(
-        navigation_df,
-        spike_counts_df,
-        resolution=resolution,
-        distance_metrics=[("steps_to_goal", "future"), metric],
-    )
+    if sum_spike_window is None or sum_spike_window == resolution:
+        # sum spikes and downsample behaviour to same resolution
+        ds_nav_df, ds_spike_counts_df = ds.downsample_nav_spikes_data(
+            navigation_df,
+            spike_counts_df,
+            resolution=resolution,
+            distance_metrics=[("steps_to_goal", "future"), metric],
+        )
+
+    else:
+        # sum spikes over spike_window (smooth)
+        sum_frames = int(sum_spike_window * FRAME_RATE)
+        spike_counts_df = spike_counts_df.rolling(window=sum_frames, center=True).sum().fillna(0).astype(int)
+        # downsample (usually higher rate than sum_spikes)
+        every_n_frames = int(resolution * FRAME_RATE)
+        ds_spike_counts_df = spike_counts_df.iloc[::every_n_frames].reset_index(drop=True)
+        ds_nav_df = navigation_df.iloc[::every_n_frames].reset_index(drop=True)
+
     ds_nav_df.columns = pd.MultiIndex.from_tuples([(*c, "") for c in ds_nav_df.columns])
-    metric = (*metric, "")
-    input_df = pd.concat([ds_nav_df, ds_spike_counts_df], axis=1)
+    input_df = pd.concat([ds_nav_df, ds_spike_counts_df], axis=1).reset_index(drop=True)
 
     # add future, past state (place) information
     input_df[("place_direction", "", "")] = input_df.maze_position.simple + "_" + input_df.cardinal_movement_direction
@@ -504,6 +517,7 @@ def get_input_data(
     )
     offset_df.columns = pd.MultiIndex.from_tuples([(*col, "") for col in offset_df.columns])
     input_df = pd.concat([input_df, offset_df], axis=1)
+    input_df = input_df.sort_index(axis=1)  # sort columns for easier indexing later
 
     # get binned distance to goal
     if max_distance is None:
@@ -555,9 +569,6 @@ def _get_all_pairs_path_length(session):
 
 
 # %%
-from pingouin import circ_rayleigh
-from GridMaze.analysis.theta_mod import trajectory_decoding as tpd
-from GridMaze.analysis.distance_to_goal import theta_mod_decoder as tdd
 
 
 def compare_decoding_profiles(print_stats=True, ax=None):
@@ -613,7 +624,7 @@ def compare_decoding_profiles(print_stats=True, ax=None):
             elinewidth=1.5,
         )
         # plot curvefit
-        _x, _y = fit_sinusoid_period_2pi(phases, mean, fit_constant=True, return_as="curve")
+        _x, _y = fit_sinusoid(phases, mean, fit_constant=True, return_as="curve")
         ax.plot(_x, _y, color=color, linewidth=1.5, label=label)
     ax.legend(frameon=False, fontsize=8)
 
@@ -622,9 +633,9 @@ def compare_decoding_profiles(print_stats=True, ax=None):
         offsets = []
         for subject in SUBJECT_IDS:
             _dist_curve = dist_bias_norm.loc[subject].values
-            dist_fit = fit_sinusoid_period_2pi(phases, _dist_curve, fit_constant=True, return_as="params")
+            dist_fit = fit_sinusoid(phases, _dist_curve, fit_constant=True, return_as="params")
             _place_curve = place_bias_norm.loc[subject].values
-            place_fit = fit_sinusoid_period_2pi(phases, _place_curve, fit_constant=True, return_as="params")
+            place_fit = fit_sinusoid(phases, _place_curve, fit_constant=True, return_as="params")
             # get phase offset
             off = place_fit["phi"] - dist_fit["phi"]
             # wrap to [-pi, pi]
@@ -634,7 +645,7 @@ def compare_decoding_profiles(print_stats=True, ax=None):
         print(f"offset rayleigh test: z={z:.3f}, p={p:.3f}")
 
 
-def fit_sinusoid_period_2pi(x, y, fit_constant=True, return_as="params"):
+def fit_sinusoid(x, y, fit_constant=True, return_as="params"):
     """
     Fit y(x) ≈ alpha*sin(x) + beta*cos(x) + C  (period = 2π -> ω = 1)
     Returns dict with alpha, beta, C, A, phi (radians), residuals.
