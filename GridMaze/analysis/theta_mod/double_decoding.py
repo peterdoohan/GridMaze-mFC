@@ -9,16 +9,15 @@ import json
 import numpy as np
 import pandas as pd
 import networkx as nx
-from matplotlib import pyplot as plt
 import seaborn as sns
+from matplotlib import axes, pyplot as plt
 from joblib import Parallel, delayed
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
-from scipy.stats import ttest_1samp
-from scipy.ndimage import gaussian_filter1d
-from statsmodels.stats.multitest import multipletests
-from matplotlib.ticker import ScalarFormatter
+from pingouin import multivariate_ttest, circ_rayleigh
 
+
+from GridMaze.maze import representations as mr
 from GridMaze.analysis.core import folds
 from GridMaze.analysis.core import convert
 from GridMaze.analysis.core import downsample as ds
@@ -26,15 +25,124 @@ from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import get_clusters as gc
 from GridMaze.analysis.core import filter as filt
 from GridMaze.analysis.distance_to_goal import distributions as dd
-from GridMaze.analysis.distance_to_goal import logreg_decoder as ld
 from GridMaze.analysis.place_direction import future_decoding as fd
-from GridMaze.analysis.place_direction.future_decoding import get_decision_points
-from GridMaze.analysis.theta_mod import distance_to_goal_tuning as gt
-from GridMaze.maze import representations as mr
-from GridMaze.maze import plotting as mp
+
+from GridMaze.analysis.theta_mod import trajectory_decoding as tpd
+from GridMaze.analysis.distance_to_goal import theta_mod_decoder as tdd
 
 # %% global variables
 FRAME_RATE = 60
+
+from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
+
+RESULTS_DIR = RESULTS_PATH / "theta_mod" / "double_decoding"
+
+with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
+    SUBJECT_IDS = json.load(input_file)
+
+# %% plotting
+
+
+def test_plot(results_df, demean="subject", print_stats=True, axes=None):
+    """ """
+    # set up fig
+    if axes is None:
+        f, axes = plt.subplots(1, 2, figsize=(4, 2))
+    for ax in axes:
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.axhline(0, color="k", ls="--", lw=0.5)
+        ax.set_xlabel("theta phase (rad)")
+        ax.set_ylabel("decoding bias")
+
+    # calculate decoding bias (pred - true)
+    df = results_df.copy()
+    bias_dfs = []
+    for rep in ["from_distance", "from_place"]:
+        bias_df = df.decoded_distance[rep].sub(df.distance_bin_mid, axis=0)
+        if demean == "sample":
+            bias_df = bias_df.sub(bias_df.mean(axis=1), axis=0)
+        bias_df.columns = pd.MultiIndex.from_product([["decoding_bias"], [rep], bias_df.columns])
+        bias_dfs.append(bias_df)
+    df = pd.concat([df] + bias_dfs, axis=1)
+
+    # average over subjects
+    subject_avg = df.groupby(["subject_ID"]).decoding_bias.mean()
+    for rep, ax in zip(["from_distance", "from_place"], axes):
+        rep_decoding = subject_avg.decoding_bias[rep]
+        if demean == "subject":  # demean (normalise across subjects)
+            rep_decoding = rep_decoding.sub(rep_decoding.mean(axis=1), axis=0)
+        phases = rep_decoding.columns.values.astype(float)
+        _mean = rep_decoding.mean().values
+        _sem = rep_decoding.sem().values
+        # plot
+        ax.errorbar(
+            phases,
+            _mean,
+            yerr=_sem,
+            fmt="o-",
+            # color="k",
+            markersize=6,
+            linewidth=2,
+            capsize=None,
+            elinewidth=2,
+        )
+        if print_stats:
+            print(rep)
+            _get_decoding_bias_stats(rep_decoding)
+
+    return
+
+
+def _get_decoding_bias_stats(phase_mean_decoding):
+    """ """
+    phis = phase_mean_decoding.columns.astype(float)
+    data = phase_mean_decoding.values
+    beta_cos = data.dot(np.cos(phis))
+    beta_sin = data.dot(np.sin(phis))
+    betas = np.column_stack([beta_cos, beta_sin])
+    zeros = np.zeros_like(betas)
+    mv_test = multivariate_ttest(betas, zeros, paired=False)
+    return print(mv_test)
+
+
+# %%  Exp level function
+
+
+def get_double_decoding_df(verbose=True, n_jobs=-1, save=False):
+    """ """
+    save_path = RESULTS_DIR / "double_decoding_df.parquet"
+    if save_path.exists() and not save:
+        if verbose:
+            print(f"Loading existing double results from {save_path} ...")
+        return pd.read_parquet(save_path)
+    results_dfs = []
+    for subject_ID in SUBJECT_IDS:
+        for maze_name in ["maze_1", "maze_2", "rooms_maze"]:
+            if verbose:
+                print(f"Loading sessions for {subject_ID} - {maze_name} ...")
+            sessions = gs.get_maze_sessions(
+                subject_IDs=[subject_ID],
+                maze_names=[maze_name],
+                days_on_maze="late",
+                with_data=[
+                    "navigation_df",
+                    "cluster_metrics",
+                    "trials_df",
+                    "navigation_theta_spike_counts_df",
+                ],
+                must_have_data=True,
+            )
+            if n_jobs:
+                dfs = Parallel(n_jobs=n_jobs)(delayed(get_session_double_decoding_df)(session) for session in sessions)
+            else:
+                dfs = [get_session_double_decoding_df(session) for session in sessions]
+            results_dfs.extend(dfs)
+    results_df = pd.concat(results_dfs, axis=0, ignore_index=True)
+    if save:
+        results_df.to_parquet(save_path)
+        if verbose:
+            print(f"Saved double decoding results to {save_path}.")
+    return results_df
 
 
 # %% session level double decoding function
@@ -60,7 +168,7 @@ def get_session_double_decoding_df(
     """ """
     # load data
     if verbose:
-        print("Loading input data...")
+        print(f"{session.name}: loading input data...")
     input_data = get_input_data(
         session,
         resolution=resolution,
@@ -73,6 +181,7 @@ def get_session_double_decoding_df(
 
     # generate variables to be used across folds, reg validation etc.
     distances = np.sort(input_data.distance_bin_mid.unique())  # in order corresponding to bin_id [0, 1, ...]
+    distance_bin_ids = np.sort(input_data.distance_bin_id.unique())
     lfp_phases = input_data.spike_count.columns.get_level_values(1).unique().values
     all_pairs_path_length = _get_all_pairs_path_length(session)
     folds_df = folds.get_folds_df(
@@ -126,6 +235,7 @@ def get_session_double_decoding_df(
                 normalise_X=normalise_X,
                 sqrt_spikes=sqrt_spikes,
                 distances=distances,
+                distance_bin_ids=distance_bin_ids,
                 output=output,
                 verbose=verbose,
             )
@@ -148,6 +258,7 @@ def get_session_double_decoding_df(
         # train decoders
         d_decoder = LogisticRegression(C=d_alpha, random_state=0, max_iter=10_000, class_weight="balanced")
         d_decoder.fit(X_train_mean, Yd_train)
+        train_distances_bin_ids = d_decoder.classes_
         p_decoder = LogisticRegression(C=p_alpha, random_state=0, max_iter=10_000, class_weight="balanced")
         p_decoder.fit(X_train_mean, Yp_train)
         train_locations = p_decoder.classes_
@@ -159,7 +270,13 @@ def get_session_double_decoding_df(
             if normalise_X:
                 X_theta_test = scaler.transform(X_theta_test)
             Yd_prob = d_decoder.predict_proba(X_theta_test)
-            d_pred = _get_distance_pred_distance(Yd_prob, distances=distances)
+            d_pred = _get_distance_pred_distance(
+                Yd_prob,
+                distances=distances,
+                distance_bin_ids=distance_bin_ids,
+                decoder_classes=train_distances_bin_ids,
+                output=output,
+            )
             results_df.loc[test_df.index, ("decoded_distance", "from_distance", phase)] = d_pred
             Yp_prob = p_decoder.predict_proba(X_theta_test)
             p_pred, p_traj_defined, p_in_train = _get_place_pred_distance(
@@ -177,7 +294,7 @@ def get_session_double_decoding_df(
         results_df.loc[test_df.index, ("place_decoding_info", "traj_defined", "")] = p_traj_defined
         results_df.loc[test_df.index, ("place_decoding_info", "in_train", "")] = p_in_train
 
-    return results_df
+    return results_df.reset_index(drop=True)
 
 
 def get_opt_alpha(
@@ -192,6 +309,7 @@ def get_opt_alpha(
     restrict_to_traj=True,
     all_pairs_path_length=None,
     distances=None,
+    distance_bin_ids=None,
     verbose=False,
 ):
     """ """
@@ -235,7 +353,13 @@ def get_opt_alpha(
             decoder_classes = decoder.classes_
             Yprob = decoder.predict_proba(X_val)
             if var == "distance_to_goal":
-                pred_dist = _get_distance_pred_distance(Yprob=Yprob, distances=distances, output=output)
+                pred_dist = _get_distance_pred_distance(
+                    Yprob=Yprob,
+                    distances=distances,
+                    distance_bin_ids=distance_bin_ids,
+                    decoder_classes=decoder_classes,
+                    output=output,
+                )
             if var == "place":
                 pred_dist = _get_place_pred_distance(
                     Yprob,
@@ -249,17 +373,22 @@ def get_opt_alpha(
                     return_as="dist",
                 )
             scores = val_distance_to_goal - pred_dist
+            if not np.isfinite(scores).any():
+                results[i, j] = np.nan
+                continue
             results[i, j] = np.nanmean(scores**2)
     opt_alpha = reg_range[np.nanmean(results, axis=0).argmin()]
     return opt_alpha
 
 
-def _get_distance_pred_distance(Yprob, distances, output="weighted"):
+def _get_distance_pred_distance(Yprob, distances, decoder_classes, distance_bin_ids, output="weighted"):
     """ """
+    # filter distances_bins for those that were in training
+    _distances = distances[np.isin(distance_bin_ids, decoder_classes)]
     if output == "weighted":
-        pred_dist = Yprob.dot(distances)
+        pred_dist = Yprob.dot(_distances)
     elif output == "max":
-        pred_dist = distances[np.argmax(Yprob, axis=1)]
+        pred_dist = _distances[np.argmax(Yprob, axis=1)]
     return pred_dist
 
 
@@ -326,7 +455,7 @@ def _get_place_pred_distance(
 
 def get_input_data(
     session,
-    resolution=0.4,
+    resolution=0.2,
     metric=("distance_to_goal", "geodesic"),
     include_multiunits=True,
     moving_only=True,
@@ -402,6 +531,10 @@ def get_input_data(
         exclude_time_at_goal=remove_time_at_goal,
         max_steps_to_goal=max_steps_to_goal,
     )
+    # add other info
+    input_df[("subject_ID", "", "")] = session.subject_ID
+    input_df[("maze_name", "", "")] = session.maze_name
+    input_df[("day_on_maze", "", "")] = session.day_on_maze
     return input_df
 
 
@@ -419,3 +552,113 @@ def _get_all_pairs_path_length(session):
                     __dists[coord2label[targ].split("_")[0]] = src_dists[targ]
                 _dists[coord2label[src].split("_")[0]] = __dists
     return _dists
+
+
+# %%
+from pingouin import circ_rayleigh
+from GridMaze.analysis.theta_mod import trajectory_decoding as tpd
+from GridMaze.analysis.distance_to_goal import theta_mod_decoder as tdd
+
+
+def compare_decoding_profiles(print_stats=True, ax=None):
+    """
+    load data separate summary dfs from:
+        - theta mod distance decoding
+        - theta mod trajectory decoding
+    and compare the modulation sinusoids and offsets
+    """
+    # set up figure
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(2, 2))
+    ax.axhline(0, color="k", ls="--", alpha=0.5)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_xlabel("theta phase")
+    ax.set_ylabel("decoding bias \n (norm.)")
+    ax.set_xticks(np.arange(-np.pi, np.pi + 0.1, np.pi / 2))
+    ax.set_xticklabels(["-π", "-π/2", "0", "π/2", "π"])
+
+    # load data: note summary dfs formated slighly differently
+    distance_mod_df = tdd.load_decoding_results(lfp_type="theta_mid")
+    place_mod_df = tpd.get_summary_df(verbose=False)
+
+    # process distance to get subject by norm decoding bias
+    dist_bias = distance_mod_df.groupby(["subject_ID"]).lfp_phase.mean().lfp_phase
+    dist_bias_norm = dist_bias.sub(dist_bias.mean(axis=1), axis=0)
+    phases = dist_bias_norm.columns.values.astype(float)
+
+    # process place to get same
+    place_bias = place_mod_df.groupby(["subject_ID", "theta_phase"])[f"signed_error"].mean().unstack(0)
+    place_bias_norm = place_bias.sub(place_bias.mean(), axis=1).T
+
+    # plot a nice summary
+    for _df, color, label in zip(
+        [dist_bias_norm, place_bias_norm],
+        ["darkviolet", "darkred"],
+        ["distance", "place"],
+    ):
+        # normalise df to max
+        plot_df = _df / np.max(np.abs(_df.values))
+        mean = plot_df.mean().values
+        sem = plot_df.sem().values
+        # plot datapoints
+        ax.errorbar(
+            phases,
+            mean,
+            yerr=sem,
+            fmt="o",
+            color=color,
+            markersize=5,
+            linewidth=None,
+            capsize=None,
+            elinewidth=1.5,
+        )
+        # plot curvefit
+        _x, _y = fit_sinusoid_period_2pi(phases, mean, fit_constant=True, return_as="curve")
+        ax.plot(_x, _y, color=color, linewidth=1.5, label=label)
+    ax.legend(frameon=False, fontsize=8)
+
+    # for each subject fit each modulation with a sinusoid and compare offsets
+    if print_stats:
+        offsets = []
+        for subject in SUBJECT_IDS:
+            _dist_curve = dist_bias_norm.loc[subject].values
+            dist_fit = fit_sinusoid_period_2pi(phases, _dist_curve, fit_constant=True, return_as="params")
+            _place_curve = place_bias_norm.loc[subject].values
+            place_fit = fit_sinusoid_period_2pi(phases, _place_curve, fit_constant=True, return_as="params")
+            # get phase offset
+            off = place_fit["phi"] - dist_fit["phi"]
+            # wrap to [-pi, pi]
+            w_off = (off + np.pi) % (2 * np.pi) - np.pi
+            offsets.append(w_off)
+        z, p = circ_rayleigh(offsets)
+        print(f"offset rayleigh test: z={z:.3f}, p={p:.3f}")
+
+
+def fit_sinusoid_period_2pi(x, y, fit_constant=True, return_as="params"):
+    """
+    Fit y(x) ≈ alpha*sin(x) + beta*cos(x) + C  (period = 2π -> ω = 1)
+    Returns dict with alpha, beta, C, A, phi (radians), residuals.
+    Notes:
+      - A = sqrt(alpha^2 + beta^2)
+      - phi = atan2(beta, alpha)  (so model = A * sin(x + phi) + C)
+    """
+    x = np.asarray(x)
+    y = np.asarray(y)
+    # design matrix: columns [sin(x), cos(x), (1)]
+    X = np.column_stack([np.sin(x), np.cos(x)])
+    if fit_constant:
+        X = np.column_stack([X, np.ones_like(x)])
+    coeffs, residuals, rank, s = np.linalg.lstsq(X, y, rcond=None)
+    alpha = coeffs[0]
+    beta = coeffs[1]
+    C = coeffs[2] if fit_constant else 0.0
+    A = np.hypot(alpha, beta)
+    phi = np.atan2(beta, alpha)  # returns phase in radians
+    if return_as == "params":
+        return {"alpha": alpha, "beta": beta, "C": C, "A": A, "phi": phi}
+    elif return_as == "curve":
+        _x = np.linspace(-np.pi, np.pi, 100)
+        _y = A * np.sin(_x + phi) + C
+        return _x, _y
+    else:
+        raise ValueError(f"return_as must be 'params' or 'curve'.")
