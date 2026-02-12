@@ -7,9 +7,13 @@ Decode both place-direction and distance to goal (over all spikes) and see if er
 import json
 import numpy as np
 import pandas as pd
+from polars import corr
+import seaborn as sns
+from matplotlib import pyplot as plt
 from joblib import Parallel, delayed
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
+from scipy.stats import ttest_1samp
 
 from GridMaze.analysis.core import folds
 from GridMaze.analysis.core import get_sessions as gs
@@ -52,6 +56,92 @@ def get_tuned_neurons():
 # %% Functions
 
 
+def plot_double_decoding_errors(
+    results_df, error_range=(-1.0, 1.0), n_bins=40, pthresh=1e-3, print_stats=True, ax=None
+):
+    """ """
+    # set up figure
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(2.5, 2))
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_xlabel("decoding error (m) \n from distance-to-goal neurons")
+    ax.set_ylabel("decoding error (m) \n from place-direction neurons")
+    ax.axhline(0, color="k", ls="--", alpha=0.5)
+    ax.axvline(0, color="k", ls="--", alpha=0.5)
+
+    df = results_df.copy()
+    # remove any nans (from no-training data for test in place decoding insts)
+    nan_mask = df.decoded_distance.isna().any(axis=1)
+    df = results_df[~nan_mask].copy()
+    # calc distance errors
+    df[("decoding_error", "from_distance")] = df.decoded_distance.from_distance.sub(df.distance_bin_mid)
+    df[("decoding_error", "from_place")] = df.decoded_distance.from_place.sub(df.distance_bin_mid)
+
+    # bin distance errors
+    bins = np.linspace(error_range[0], error_range[1], n_bins + 1)
+    df[("decoding_error_bin", "from_distance")] = pd.cut(df[("decoding_error", "from_distance")], bins=bins)
+    df[("decoding_error_bin_mid", "from_distance")] = df.decoding_error_bin.from_distance.apply(lambda x: x.mid)
+    df[("decoding_error_bin", "from_place")] = pd.cut(df[("decoding_error", "from_place")], bins=bins)
+    df[("decoding_error_bin_mid", "from_place")] = df.decoding_error_bin.from_place.apply(lambda x: x.mid)
+
+    # plot heatmap
+    group_cols = [
+        ("subject_ID", ""),
+        ("decoding_error_bin_mid", "from_distance"),
+        ("decoding_error_bin_mid", "from_place"),
+    ]
+    counts = df.groupby(group_cols, observed=True).size()
+    # normalise each subject by the total numer of samples
+    norm_counts = counts.groupby(level=0).transform(lambda x: x / x.sum())
+    # average over subjects to get
+    hm = norm_counts.groupby(level=[1, 2], observed=True).mean().unstack(level=1)
+    if pthresh is not None:
+        hm[hm < pthresh] = np.nan
+    im = ax.imshow(
+        hm.values.T,
+        origin="lower",
+        extent=[error_range[0], error_range[1], error_range[0], error_range[1]],
+        aspect="auto",
+        cmap="Purples",
+    )
+    cbar = f.colorbar(im, ax=ax, shrink=0.8)  # shrink factor < 1
+    cbar.set_label("density")
+    cbar.outline.set_visible(False)
+
+    # plot linear fit for each subject
+    subjects = df.subject_ID.unique()
+    slopes, intercepts, corrs = [], [], []
+    for subject in subjects:
+        subj_df = df[df.subject_ID == subject]
+        _x = subj_df[("decoding_error", "from_distance")].values
+        _y = subj_df[("decoding_error", "from_place")].values
+        corrs.append(np.corrcoef(_x, _y)[0, 1])
+        # get linear fit with intercept
+        slope, intercept = np.polyfit(_x, _y, 1)
+        slopes.append(slope)
+        intercepts.append(intercept)
+    mean_slope, mean_int = np.mean(slopes), np.mean(intercepts)
+    sem_slope, sem_int = np.std(slopes) / np.sqrt(len(slopes)), np.std(intercepts) / np.sqrt(len(intercepts))
+    _x_plot = np.linspace(error_range[0] + 0.3, error_range[1] - 0.3, 100)
+    _y_plot = mean_slope * _x_plot + mean_int
+    ax.plot(_x_plot, _y_plot, color="darkred")
+    ax.fill_between(
+        _x_plot,
+        _y_plot - sem_slope * _x_plot - sem_int,
+        _y_plot + sem_slope * _x_plot + sem_int,
+        color="darkred",
+        alpha=0.2,
+    )
+    if print_stats:
+        # t-test slopes from 0
+        t_stat, p_val = ttest_1samp(slopes, 0)
+        print(f"t-test: (t{(len(slopes)-1)})={t_stat:.3f}, p={p_val:.3f}")
+        # mean corr
+        mean_corr = np.mean(corrs)
+        sem_corr = np.std(corrs) / np.sqrt(len(corrs))
+        print(f"mean corr.: r={mean_corr:.3f} +/- {sem_corr:.3f}")
+
+
 def get_double_decoding_df(verbose=True, n_jobs=-1, save=False):
     """ """
     save_path = RESULTS_DIR / "double_decoding_simple_df.parquet"
@@ -76,7 +166,7 @@ def get_double_decoding_df(verbose=True, n_jobs=-1, save=False):
                 "navigation_df",
                 "cluster_metrics",
                 "trials_df",
-                "navigation_theta_spike_counts_df",
+                "navigation_spike_counts_df",
             ],
             must_have_data=True,
         )
