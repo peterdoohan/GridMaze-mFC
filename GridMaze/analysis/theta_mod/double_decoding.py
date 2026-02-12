@@ -45,17 +45,8 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 
 
 # %%
-def plot_double_theta_mod_decoding(results_df, demean="subject", print_stats=True, axes=None):
+def plot_double_theta_mod_decoding(results_df, demean="subject", print_stats=True, ax=None):
     """ """
-    # set up fig
-    if axes is None:
-        f, axes = plt.subplots(1, 2, figsize=(6, 3))
-    for ax in axes:
-        ax.spines[["top", "right"]].set_visible(False)
-        ax.axhline(0, color="k", ls="--", lw=0.5)
-        ax.set_xlabel("theta phase (rad)")
-        ax.set_ylabel("decoding bias")
-
     # calculate decoding bias (pred - true)
     df = results_df.copy()
     bias_dfs = []
@@ -70,44 +61,14 @@ def plot_double_theta_mod_decoding(results_df, demean="subject", print_stats=Tru
         bias_dfs.append(bias_df)
     df = pd.concat([df] + bias_dfs, axis=1)
 
-    # average over subjects
     subject_avg = df.groupby(["subject_ID"]).decoding_bias.mean()
-    for rep, ax in zip(["from_distance", "from_place"], axes):
-        rep_decoding = subject_avg.decoding_bias[rep]
-        if demean == "subject":  # demean (normalise across subjects)
-            rep_decoding = rep_decoding.sub(rep_decoding.mean(axis=1), axis=0)
-        phases = rep_decoding.columns.values.astype(float)
-        _mean = rep_decoding.mean().values
-        _sem = rep_decoding.sem().values
-        # plot
-        ax.errorbar(
-            phases,
-            _mean,
-            yerr=_sem,
-            fmt="o-",
-            # color="k",
-            markersize=6,
-            linewidth=2,
-            capsize=None,
-            elinewidth=2,
-        )
-        ax.set_title(rep)
-        if print_stats:
-            print(rep)
-            _get_decoding_bias_stats(rep_decoding)
-    f.tight_layout()
+    dist_bias = subject_avg.decoding_bias["from_distance"]
+    place_bias = subject_avg.decoding_bias["from_place"]
+    if demean:
+        dist_bias = dist_bias.sub(dist_bias.mean(axis=1), axis=0)
+        place_bias = place_bias.sub(place_bias.mean(axis=1), axis=0)
 
-
-def _get_decoding_bias_stats(phase_mean_decoding):
-    """ """
-    phis = phase_mean_decoding.columns.astype(float)
-    data = phase_mean_decoding.values
-    beta_cos = data.dot(np.cos(phis))
-    beta_sin = data.dot(np.sin(phis))
-    betas = np.column_stack([beta_cos, beta_sin])
-    zeros = np.zeros_like(betas)
-    mv_test = multivariate_ttest(betas, zeros, paired=False)
-    return print(mv_test)
+    _plot_double_decoding_bias(dist_bias, place_bias, print_stats=print_stats, ax=ax)
 
 
 # %%  Exp level function
@@ -164,7 +125,7 @@ def get_session_double_decoding_df(
     bin_spacing=0.08,
     max_distance=None,
     max_steps_from_goal=30,
-    place_offset=2,
+    place_offset=4,
     n_folds=8,
     sqrt_spikes=True,
     normalise_X=True,
@@ -613,22 +574,13 @@ def _get_all_pairs_path_length(session):
 # %%
 
 
-def compare_decoding_profiles(print_stats=True, ax=None):
+def compare_previous_decoding_profiles(print_stats=True, ax=None):
     """
     load data separate summary dfs from:
         - theta mod distance decoding
         - theta mod trajectory decoding
     and compare the modulation sinusoids and offsets
     """
-    # set up figure
-    if ax is None:
-        f, ax = plt.subplots(1, 1, figsize=(2, 2))
-    ax.axhline(0, color="k", ls="--", alpha=0.5)
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.set_xlabel("theta phase")
-    ax.set_ylabel("decoding bias \n (norm.)")
-    ax.set_xticks(np.arange(-np.pi, np.pi + 0.1, np.pi / 2))
-    ax.set_xticklabels(["-π", "-π/2", "0", "π/2", "π"])
 
     # load data: note summary dfs formated slighly differently
     distance_mod_df = tdd.load_decoding_results(lfp_type="theta_mid")
@@ -640,15 +592,36 @@ def compare_decoding_profiles(print_stats=True, ax=None):
     # process distance to get subject by norm decoding bias
     dist_bias = distance_mod_df.groupby(["subject_ID"]).lfp_phase.mean().lfp_phase
     dist_bias_norm = dist_bias.sub(dist_bias.mean(axis=1), axis=0)
-    phases = dist_bias_norm.columns.values.astype(float)
 
     # process place to get same
     place_bias = place_mod_df.groupby(["subject_ID", "theta_phase"])[f"signed_error"].mean().unstack(0)
     place_bias_norm = place_bias.sub(place_bias.mean(), axis=1).T
 
     # plot a nice summary
+    _plot_double_decoding_bias(
+        dist_bias_norm,
+        place_bias_norm,
+        print_stats=print_stats,
+        ax=ax,
+    )
+
+
+def _plot_double_decoding_bias(dist_bias, place_bias, print_stats=True, ax=None):
+    # set up figure
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(2, 2))
+    ax.axhline(0, color="k", ls="--", alpha=0.5)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_xlabel("theta phase")
+    ax.set_ylabel("decoding bias \n (norm.)")
+    ax.set_xticks(np.arange(-np.pi, np.pi + 0.1, np.pi / 2))
+    ax.set_xticklabels(["-π", "-π/2", "0", "π/2", "π"])
+
+    phases = dist_bias.columns.values.astype(float)
+
+    # plot a nice summary
     for _df, color, label in zip(
-        [dist_bias_norm, place_bias_norm],
+        [dist_bias, place_bias],
         ["darkviolet", "darkred"],
         ["distance", "place"],
     ):
@@ -671,22 +644,28 @@ def compare_decoding_profiles(print_stats=True, ax=None):
         # plot curvefit
         _x, _y = fit_sinusoid(phases, mean, fit_constant=True, return_as="curve")
         ax.plot(_x, _y, color=color, linewidth=1.5, label=label)
+
+        # test sinusoidal random effects across subjects
+        if print_stats:
+            print(label)
+            _get_decoding_bias_stats(_df)
+
     ax.legend(frameon=False, fontsize=8)
 
     # for each subject fit each modulation with a sinusoid and compare offsets
     if print_stats:
         offsets = []
         for subject in SUBJECT_IDS:
-            _dist_curve = dist_bias_norm.loc[subject].values
+            _dist_curve = dist_bias.loc[subject].values
             dist_fit = fit_sinusoid(phases, _dist_curve, fit_constant=True, return_as="params")
-            _place_curve = place_bias_norm.loc[subject].values
+            _place_curve = place_bias.loc[subject].values
             place_fit = fit_sinusoid(phases, _place_curve, fit_constant=True, return_as="params")
             # get phase offset
             off = place_fit["phi"] - dist_fit["phi"]
             # wrap to [-pi, pi]
             w_off = (off + np.pi) % (2 * np.pi) - np.pi
             offsets.append(w_off)
-        z, p = circ_rayleigh(offsets)
+        z, p = circ_rayleigh(offsets, d=np.pi / 6)
         print(f"offset rayleigh test: z={z:.3f}, p={p:.3f}")
 
 
@@ -718,3 +697,15 @@ def fit_sinusoid(x, y, fit_constant=True, return_as="params"):
         return _x, _y
     else:
         raise ValueError(f"return_as must be 'params' or 'curve'.")
+
+
+def _get_decoding_bias_stats(phase_mean_decoding):
+    """ """
+    phis = phase_mean_decoding.columns.astype(float)
+    data = phase_mean_decoding.values
+    beta_cos = data.dot(np.cos(phis))
+    beta_sin = data.dot(np.sin(phis))
+    betas = np.column_stack([beta_cos, beta_sin])
+    zeros = np.zeros_like(betas)
+    mv_test = multivariate_ttest(betas, zeros, paired=False)
+    return print(mv_test)
