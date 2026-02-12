@@ -56,9 +56,7 @@ def get_tuned_neurons():
 # %% Functions
 
 
-def plot_double_decoding_errors(
-    results_df, error_range=(-1.0, 1.0), n_bins=40, pthresh=1e-3, print_stats=True, ax=None
-):
+def plot_double_decoding_errors(results_df, error_range=(0, 2.0), n_bins=40, pthresh=1e-3, print_stats=True, ax=None):
     """ """
     # set up figure
     if ax is None:
@@ -74,8 +72,8 @@ def plot_double_decoding_errors(
     nan_mask = df.decoded_distance.isna().any(axis=1)
     df = results_df[~nan_mask].copy()
     # calc distance errors
-    df[("decoding_error", "from_distance")] = df.decoded_distance.from_distance.sub(df.distance_bin_mid)
-    df[("decoding_error", "from_place")] = df.decoded_distance.from_place.sub(df.distance_bin_mid)
+    df[("decoding_error", "from_distance")] = df.decoded_distance.from_distance  # .sub(df.distance_bin_mid)
+    df[("decoding_error", "from_place")] = df.decoded_distance.from_place  # .sub(df.distance_bin_mid)
 
     # bin distance errors
     bins = np.linspace(error_range[0], error_range[1], n_bins + 1)
@@ -120,6 +118,7 @@ def plot_double_decoding_errors(
         slope, intercept = np.polyfit(_x, _y, 1)
         slopes.append(slope)
         intercepts.append(intercept)
+    print(slopes)
     mean_slope, mean_int = np.mean(slopes), np.mean(intercepts)
     sem_slope, sem_int = np.std(slopes) / np.sqrt(len(slopes)), np.std(intercepts) / np.sqrt(len(intercepts))
     _x_plot = np.linspace(error_range[0] + 0.3, error_range[1] - 0.3, 100)
@@ -134,7 +133,7 @@ def plot_double_decoding_errors(
     )
     if print_stats:
         # t-test slopes from 0
-        t_stat, p_val = ttest_1samp(slopes, 0)
+        t_stat, p_val = ttest_1samp(slopes, 0, alternative="greater")
         print(f"t-test: (t{(len(slopes)-1)})={t_stat:.3f}, p={p_val:.3f}")
         # mean corr
         mean_corr = np.mean(corrs)
@@ -219,6 +218,7 @@ def get_session_double_decoding_df(
     verbose=True,
     place_tuned_neurons=None,
     distance_tuned_neurons=None,
+    permute=False,
 ):
     """ """
     # load data
@@ -233,6 +233,7 @@ def get_session_double_decoding_df(
         bin_spacing=bin_spacing,
         max_distance=max_distance,
         max_steps_to_goal=max_steps_from_goal,
+        permute=permute,
     )
     input_data = input_data.droplevel(2, axis=1)
     # split neurons by place and distanced tunned
@@ -241,6 +242,7 @@ def get_session_double_decoding_df(
         place_tuned_neurons, distance_tuned_neurons = get_tuned_neurons()
     place_neurons = [n for n in cluster_unique_IDs if n in place_tuned_neurons]
     dist_neurons = [n for n in cluster_unique_IDs if n in distance_tuned_neurons]
+    not_dist_neurons = [n for n in cluster_unique_IDs if n not in distance_tuned_neurons]
     # only proceed with decoding if we have enough neurons of each type
     if len(place_neurons) < min_neurons_for_decoding or len(dist_neurons) < min_neurons_for_decoding:
         if verbose:
