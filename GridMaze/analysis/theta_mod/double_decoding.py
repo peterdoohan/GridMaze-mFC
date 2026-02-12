@@ -10,11 +10,14 @@ import numpy as np
 import pandas as pd
 import networkx as nx
 import seaborn as sns
+from copy import deepcopy
 from matplotlib import axes, pyplot as plt
 from joblib import Parallel, delayed
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from pingouin import multivariate_ttest, circ_rayleigh
+from scipy.ndimage import gaussian_filter
+from sympy import true
 
 
 from GridMaze.maze import representations as mr
@@ -40,14 +43,101 @@ RESULTS_DIR = RESULTS_PATH / "theta_mod" / "double_decoding"
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
 
-# %% plotting
+# %% xcorr analysis
 
 
-def test_plot(results_df, demean="subject", print_stats=True, axes=None):
+def test(results_df, demean=True, smooth_SD=1, ax=None):
+    # set up figure
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(3, 3))
+    ax.spines[["top", "right", "bottom", "left"]].set_visible(False)
+    ax.axhline(0, color="k", ls="--", alpha=0.5)
+    ax.axvline(0, color="k", ls="--", alpha=0.5)
+    ax.set_xticks(np.arange(-np.pi, np.pi + 0.1, np.pi / 2))
+    ax.set_xticklabels(["-π", "-π/2", "0", "π/2", "π"])
+    ax.set_yticks(np.arange(-np.pi, np.pi + 0.1, np.pi / 2))
+    ax.set_yticklabels(["-π", "-π/2", "0", "π/2", "π"])
+    ax.set_xlabel("place rep err")
+    ax.set_ylabel("distance rep err")
+
+    # process data
+    df = results_df.copy()
+    subj_corrs = [theta_xcorr(df[df.subject_ID == subject], demean=demean) for subject in SUBJECT_IDS]
+    mean_corr = np.mean(subj_corrs, axis=0)
+    if smooth_SD:
+        mean_corr = gaussian_filter(mean_corr, sigma=smooth_SD)
+    # plot
+    abs_max = np.max(np.abs(mean_corr))
+    im = ax.imshow(
+        mean_corr,
+        origin="lower",
+        extent=[-np.pi, np.pi, -np.pi, np.pi],
+        vmin=-abs_max,
+        vmax=abs_max,
+        cmap="RdBu_r",
+    )
+    cbar = f.colorbar(im, ax=ax, shrink=0.8)
+    cbar.set_label("corr.")
+    cbar.outline.set_visible(False)
+    return mean_corr
+
+
+def test_stats2(results_df, demean=True, smooth_SD=1, n=10):
+    df = results_df.copy()
+    subj_corrs = [theta_xcorr(df[df.subject_ID == subject], demean=demean) for subject in SUBJECT_IDS]
+    mean_corr = np.mean(subj_corrs, axis=0)
+    if smooth_SD:
+        mean_corr = gaussian_filter(mean_corr, sigma=smooth_SD)
+    true_diag = _diag_mean(mean_corr)
+    perm_diags = np.zeros((n, len(true_diag)))
+    for i in range(n):
+        perm_corrs = deepcopy(subj_corrs)
+        perm_corrs = [_shuffle_mat(corr) for corr in perm_corrs]
+        perm_mean = np.mean(perm_corrs, axis=0)
+        if smooth_SD:
+            perm_mean = gaussian_filter(perm_mean, sigma=smooth_SD)
+        perm_diags[i] = _diag_mean(perm_mean)
+    return true_diag, perm_diags
+
+
+def _shuffle_mat(m):
+    flat = m.ravel().copy()
+    np.random.shuffle(flat)
+    return flat.reshape(m.shape)
+
+
+def theta_xcorr(df, demean=True):
+    dist_error = df.decoded_distance.from_distance.sub(df.distance_bin_mid, axis=0)  # samples, phases
+    place_error = df.decoded_distance.from_place
+    nan_mask = dist_error.isna().any(axis=1) | place_error.isna().any(axis=1)
+    dist_error, place_error = dist_error[~nan_mask], place_error[~nan_mask]
+    if demean:  # demean
+        dist_error = dist_error.sub(dist_error.mean(axis=1), axis=0)
+        place_error = place_error.sub(place_error.mean(axis=1), axis=0)
+    phases = dist_error.columns.values.astype(float)
+    n_phases = len(phases)
+    xcorr = np.corrcoef(dist_error.T, place_error.T)
+    xcorr = xcorr[:n_phases, n_phases:]
+    return xcorr
+
+
+def _diag_mean(mat):
+    """ """
+    N = mat.shape[0]
+    offsets = range(-(N - 1), N)
+    means = []
+    for k in offsets:
+        diag = np.diag(mat, k=k)
+        means.append(diag.mean())
+    return np.array(means)
+
+
+# %%
+def plot_double_theta_mod_decoding(results_df, demean="subject", print_stats=True, axes=None):
     """ """
     # set up fig
     if axes is None:
-        f, axes = plt.subplots(1, 2, figsize=(4, 2))
+        f, axes = plt.subplots(1, 2, figsize=(6, 3))
     for ax in axes:
         ax.spines[["top", "right"]].set_visible(False)
         ax.axhline(0, color="k", ls="--", lw=0.5)
@@ -58,7 +148,10 @@ def test_plot(results_df, demean="subject", print_stats=True, axes=None):
     df = results_df.copy()
     bias_dfs = []
     for rep in ["from_distance", "from_place"]:
-        bias_df = df.decoded_distance[rep].sub(df.distance_bin_mid, axis=0)
+        if rep == "from_distance":
+            bias_df = df.decoded_distance[rep].sub(df.distance_bin_mid, axis=0)
+        else:
+            bias_df = df.decoded_distance[rep]  # as error from place
         if demean == "sample":
             bias_df = bias_df.sub(bias_df.mean(axis=1), axis=0)
         bias_df.columns = pd.MultiIndex.from_product([["decoding_bias"], [rep], bias_df.columns])
@@ -86,11 +179,11 @@ def test_plot(results_df, demean="subject", print_stats=True, axes=None):
             capsize=None,
             elinewidth=2,
         )
+        ax.set_title(rep)
         if print_stats:
             print(rep)
             _get_decoding_bias_stats(rep_decoding)
-
-    return
+    f.tight_layout()
 
 
 def _get_decoding_bias_stats(phase_mean_decoding):
