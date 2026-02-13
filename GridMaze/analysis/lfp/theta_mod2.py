@@ -263,7 +263,7 @@ def get_session_theta_mod_tuning(
     return df
 
 
-# %% stratify theta-modulation by cluster representation (distance-to-goal, place-direction, etc.)
+# %% More detailed analysis of single cell modulation profiles
 
 
 def get_theta_mod_split_tuning(
