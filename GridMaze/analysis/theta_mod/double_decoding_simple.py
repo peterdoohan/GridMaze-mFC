@@ -30,42 +30,42 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 # %% load summary of what feature each neurons is tuned to from neGLM model comparisons
 
 
-def get_tuned_neurons():
+def get_tuned_neurons(place_tuned_criteria="non-dist"):
     from GridMaze.analysis.neGLM import load_model_sets as lms
     from GridMaze.analysis.neGLM import variance_explained as ve
 
-    FEATURE_TUNNED_DF = ve.get_feature_tuned_df(
+    feature_tuned_df = ve.get_feature_tuned_df(
         lms.load_model_set_cv_scores("variance_explained_multiunit"),
         reduced_models=["remove_distance_to_goal", "remove_place_direction"],
     )
 
-    DISTANCE_TUNNED = (
-        FEATURE_TUNNED_DF[(~FEATURE_TUNNED_DF.distance_to_goal & FEATURE_TUNNED_DF.place_direction)]
+    distance_tuned = (
+        feature_tuned_df[(feature_tuned_df.distance_to_goal & ~feature_tuned_df.place_direction)]
         .index.get_level_values(1)
         .values
     )
-
-    PLACE_DIRECTION_TUNNED = (
-        FEATURE_TUNNED_DF[(FEATURE_TUNNED_DF.distance_to_goal & ~FEATURE_TUNNED_DF.place_direction)]
-        .index.get_level_values(1)
-        .values
-    )
-    return PLACE_DIRECTION_TUNNED, DISTANCE_TUNNED
+    if place_tuned_criteria == "non-dist":
+        place_tuned = feature_tuned_df[~feature_tuned_df.distance_to_goal].index.get_level_values(1).values
+    elif place_tuned_criteria == "place-only":
+        place_tuned = (
+            feature_tuned_df[(feature_tuned_df.place_direction & ~feature_tuned_df.distance_to_goal)]
+            .index.get_level_values(1)
+            .values
+        )
+    return distance_tuned, place_tuned
 
 
 # %% Functions
 
 
-def plot_double_decoding_errors(results_df, error_range=(0, 2.0), n_bins=40, pthresh=1e-3, print_stats=True, ax=None):
+def plot_double_decoding_errors(results_df, error_range=(0, 1.8), n_bins=10, pthresh=1e-3, print_stats=True, ax=None):
     """ """
     # set up figure
     if ax is None:
         f, ax = plt.subplots(1, 1, figsize=(2.5, 2))
     ax.spines[["top", "right"]].set_visible(False)
-    ax.set_xlabel("decoding error (m) \n from distance-to-goal neurons")
-    ax.set_ylabel("decoding error (m) \n from place-direction neurons")
-    ax.axhline(0, color="k", ls="--", alpha=0.5)
-    ax.axvline(0, color="k", ls="--", alpha=0.5)
+    ax.set_xlabel("decoded distance-to-goal (m) \n from distance-to-goal neurons")
+    ax.set_ylabel("decoded distance-to-goal (m) \n from place-direction neurons")
 
     df = results_df.copy()
     # remove any nans (from no-training data for test in place decoding insts)
@@ -118,7 +118,6 @@ def plot_double_decoding_errors(results_df, error_range=(0, 2.0), n_bins=40, pth
         slope, intercept = np.polyfit(_x, _y, 1)
         slopes.append(slope)
         intercepts.append(intercept)
-    print(slopes)
     mean_slope, mean_int = np.mean(slopes), np.mean(intercepts)
     sem_slope, sem_int = np.std(slopes) / np.sqrt(len(slopes)), np.std(intercepts) / np.sqrt(len(intercepts))
     _x_plot = np.linspace(error_range[0] + 0.3, error_range[1] - 0.3, 100)
@@ -134,7 +133,7 @@ def plot_double_decoding_errors(results_df, error_range=(0, 2.0), n_bins=40, pth
     if print_stats:
         # t-test slopes from 0
         t_stat, p_val = ttest_1samp(slopes, 0, alternative="greater")
-        print(f"t-test: (t{(len(slopes)-1)})={t_stat:.3f}, p={p_val:.3f}")
+        print(f"t-test: t({(len(slopes)-1)})={t_stat:.3f}, p={p_val:.3f}")
         # mean corr
         mean_corr = np.mean(corrs)
         sem_corr = np.std(corrs) / np.sqrt(len(corrs))
@@ -142,8 +141,12 @@ def plot_double_decoding_errors(results_df, error_range=(0, 2.0), n_bins=40, pth
 
 
 def get_double_decoding_df(verbose=True, n_jobs=-1, save=False):
-    """ """
-    save_path = RESULTS_DIR / "double_decoding_simple_df.parquet"
+    """
+    version notes:
+    - _df: first attempt strictly dist only and pd only neurons into decoders
+    - _df2: use only dist neurons for dist deocder, and all other for pd decoder (still orth, gives pd best we can do)
+    """
+    save_path = RESULTS_DIR / "double_decoding_simple_df2.parquet"
     if save_path.exists() and not save:
         if verbose:
             print(f"Loading existing double results from {save_path} ...")
@@ -173,7 +176,7 @@ def get_double_decoding_df(verbose=True, n_jobs=-1, save=False):
             dfs = Parallel(n_jobs=n_jobs)(
                 delayed(get_session_double_decoding_df)(
                     session,
-                    place_tuned_neurons=place_tuned_neurons,
+                    place_tuned_neurons=None,  # use non-dist neurons
                     distance_tuned_neurons=distance_tuned_neurons,
                     verbose=verbose,
                 )
@@ -183,7 +186,7 @@ def get_double_decoding_df(verbose=True, n_jobs=-1, save=False):
             dfs = [
                 get_session_double_decoding_df(
                     session,
-                    place_tuned_neurons=place_tuned_neurons,
+                    place_tuned_neurons=None,
                     distance_tuned_neurons=distance_tuned_neurons,
                     verbose=verbose,
                 )
@@ -209,7 +212,7 @@ def get_session_double_decoding_df(
     bin_spacing=0.08,
     max_distance=None,
     max_steps_from_goal=30,
-    min_neurons_for_decoding=10,
+    min_neurons_for_decoding=5,
     n_folds=8,
     sqrt_spikes=True,
     normalise_X=True,
@@ -218,6 +221,7 @@ def get_session_double_decoding_df(
     verbose=True,
     place_tuned_neurons=None,
     distance_tuned_neurons=None,
+    place_offset=6,
     permute=False,
 ):
     """ """
@@ -233,16 +237,17 @@ def get_session_double_decoding_df(
         bin_spacing=bin_spacing,
         max_distance=max_distance,
         max_steps_to_goal=max_steps_from_goal,
+        place_offset=place_offset,
         permute=permute,
     )
     input_data = input_data.droplevel(2, axis=1)
     # split neurons by place and distanced tunned
     cluster_unique_IDs = input_data.spike_count.columns.values
-    if place_tuned_neurons is None or distance_tuned_neurons is None:
+    if distance_tuned_neurons is None:
         place_tuned_neurons, distance_tuned_neurons = get_tuned_neurons()
-    place_neurons = [n for n in cluster_unique_IDs if n in place_tuned_neurons]
     dist_neurons = [n for n in cluster_unique_IDs if n in distance_tuned_neurons]
-    not_dist_neurons = [n for n in cluster_unique_IDs if n not in distance_tuned_neurons]
+    place_neurons = [n for n in cluster_unique_IDs if n in place_tuned_neurons]
+
     # only proceed with decoding if we have enough neurons of each type
     if len(place_neurons) < min_neurons_for_decoding or len(dist_neurons) < min_neurons_for_decoding:
         if verbose:
@@ -272,8 +277,10 @@ def get_session_double_decoding_df(
         ],
         axis=1,
     )
-    results_df[("place_decoding_info", "traj_defined")] = False
-    results_df[("place_decoding_info", "in_train")] = False
+    results_df[("decoding_info", "place_in_train")] = False
+    results_df[("decoding_info", "all_traj_defined")] = False
+    results_df[("decoding_info", "n_dist_neurons")] = len(dist_neurons)
+    results_df[("decoding_info", "n_place_neurons")] = len(place_neurons)
 
     _folds = folds_df.columns.get_level_values(0).unique()
     for fold in _folds:
@@ -345,19 +352,20 @@ def get_session_double_decoding_df(
         )
         results_df.loc[test_df.index, ("decoded_distance", "from_distance")] = d_pred
         Yp_prob = p_decoder.predict_proba(Xp_test)
-        p_pred, _, p_in_train = tdd._get_place_pred_distance(
+        p_pred, p_traj_def, p_in_train = tdd._get_place_pred_distance(
             Yp_prob,
             Yp_test,
             test_df,
             decoder_classes=train_locations,
             all_pairs_path_length=all_pairs_path_length,
-            restrict_to_traj=False,
+            restrict_to_traj=True,
             output=output,
-            distance_ref="goal",
+            distance_ref="place",
             return_as="all",
         )
         results_df.loc[test_df.index, ("decoded_distance", "from_place")] = p_pred
-        results_df.loc[test_df.index, ("place_decoding_info", "in_train")] = p_in_train
+        results_df.loc[test_df.index, ("decoding_info", "place_in_train")] = p_in_train
+        results_df.loc[test_df.index, ("decoding_info", "all_traj_defined")] = p_traj_def
 
     return results_df.reset_index(drop=True)
 
@@ -435,8 +443,8 @@ def get_opt_alpha(
                     decoder_classes,
                     all_pairs_path_length,
                     output=output,
-                    distance_ref="goal",
-                    restrict_to_traj=False,
+                    distance_ref="place",
+                    restrict_to_traj=True,
                     return_as="dist",
                 )
             scores = val_distance_to_goal - pred_dist
