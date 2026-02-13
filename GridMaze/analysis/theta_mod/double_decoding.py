@@ -6,18 +6,14 @@ structure in the decoding outputs
 
 # %% imports
 import json
-from cv2 import mean
 import numpy as np
 import pandas as pd
 import networkx as nx
-import seaborn as sns
-from copy import deepcopy
-from matplotlib import axes, pyplot as plt
+from matplotlib import pyplot as plt
 from joblib import Parallel, delayed
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from pingouin import multivariate_ttest, circ_rayleigh
-from scipy.ndimage import gaussian_filter
 from scipy.stats import circmean, circstd
 
 
@@ -130,10 +126,11 @@ def get_session_double_decoding_df(
     n_folds=8,
     sqrt_spikes=True,
     normalise_X=True,
-    alpha="opt",
+    alphas="opt",
     output="weighted",
     distance_ref="pos",
     restrict_to_traj=True,
+    all_offset_defined=True,
     verbose=True,
 ):
     """ """
@@ -149,8 +146,8 @@ def get_session_double_decoding_df(
         max_distance=max_distance,
         max_steps_to_goal=max_steps_from_goal,
         place_offset=place_offset,
+        all_offset_defined=all_offset_defined,
     )
-
     # generate variables to be used across folds, reg validation etc.
     distances = np.sort(input_data.distance_bin_mid.unique())  # in order corresponding to bin_id [0, 1, ...]
     distance_bin_ids = np.sort(input_data.distance_bin_id.unique())
@@ -197,7 +194,7 @@ def get_session_double_decoding_df(
         Yd_train, Yd_test = [df.distance_bin_id.values for df in [train_df, test_df]]
         Yp_train, Yp_test = [df.maze_position.simple.values for df in [train_df, test_df]]
         # optionaly find optimal xval regularisation
-        if alpha == "opt":
+        if alphas == "opt":
             if verbose:
                 print("    Finding optimal alpha for distance decoder...")
             d_alpha = get_opt_alpha(
@@ -226,7 +223,7 @@ def get_session_double_decoding_df(
                 verbose=verbose,
             )
         else:
-            d_alpha, p_alpha = alpha, alpha
+            d_alpha, p_alpha = alphas
         # train decoders
         d_decoder = LogisticRegression(C=d_alpha, random_state=0, max_iter=10_000, class_weight="balanced")
         d_decoder.fit(X_train_mean, Yd_train)
@@ -358,7 +355,7 @@ def _get_distance_pred_distance(Yprob, distances, decoder_classes, distance_bin_
     # filter distances_bins for those that were in training
     _distances = distances[np.isin(distance_bin_ids, decoder_classes)]
     if output == "weighted":
-        pred_dist = Yprob.dot(_distances)
+        pred_dist = Yprob.dot(_distances) / Yprob.sum(axis=1)
     elif output == "max":
         pred_dist = _distances[np.argmax(Yprob, axis=1)]
     return pred_dist
@@ -420,16 +417,20 @@ def _get_place_pred_distance(
                 if output == "max":
                     pred_dist[i] = distances[np.nanargmax(probs)]
             else:  # pos
-                assert output == "weighted", "max output not implemented for position ('pos') ref"
-                past_probs = [loc2prob[loc] if loc in loc2prob.keys() else np.nan for loc in past_locs]
-                past_dists = np.array([all_pairs_path_length[y][loc] for loc in past_locs])
-                future_probs = [loc2prob[loc] if loc in loc2prob.keys() else np.nan for loc in future_locs]
-                future_dists = np.array([all_pairs_path_length[y][loc] for loc in future_locs])
-                # calculate decoding error distance over the trajectory (+ve = more past, -ve = more future)
-                weighted_past, weighted_future = np.nansum(future_probs * future_dists), np.nansum(
-                    past_probs * past_dists
-                )
-                pred_dist[i] = weighted_past - weighted_future
+                if output == "weighted":
+                    past_probs = [loc2prob[loc] if loc in loc2prob.keys() else np.nan for loc in past_locs]
+                    past_dists = np.array([all_pairs_path_length[y][loc] for loc in past_locs])
+                    future_probs = [loc2prob[loc] if loc in loc2prob.keys() else np.nan for loc in future_locs]
+                    future_dists = np.array([all_pairs_path_length[y][loc] for loc in future_locs])
+                    # calculate decoding error distance over the trajectory (+ve = more past, -ve = more future)
+                    weighted_past, weighted_future = np.nansum(future_probs * future_dists), np.nansum(
+                        past_probs * past_dists
+                    )
+                    pred_dist[i] = weighted_past - weighted_future
+                elif output == "max":
+                    probs = np.array([loc2prob[loc] if loc in loc2prob.keys() else np.nan for loc in include_locs])
+                    distances = np.array([all_pairs_path_length[y][loc] for loc in include_locs])
+                    pred_dist[i] = distances[np.nanargmax(probs)]
         else:
             include_locs = decoder_classes
             if distance_ref == "goal":
@@ -467,9 +468,10 @@ def get_input_data(
     max_steps_to_goal=30,
     bin_spacing=0.04,
     bin_method="uniform",
-    max_distance=0.8,
+    max_distance=None,
     n_log_bins=25,
-    place_offset=2,
+    place_offset=4,
+    all_offset_defined=True,
     permute=False,
 ):
     """ """
@@ -527,6 +529,10 @@ def get_input_data(
     offset_df.columns = pd.MultiIndex.from_tuples([(*col, "") for col in offset_df.columns])
     input_df = pd.concat([input_df, offset_df], axis=1)
     input_df = input_df.sort_index(axis=1)  # sort columns for easier indexing later
+
+    # ensure data is balanced for past and future on traj is defined
+    if all_offset_defined:
+        input_df = input_df[input_df[["past", "future"]].notnull().all(axis=1)]
 
     # get binned distance to goal
     if max_distance is None:
