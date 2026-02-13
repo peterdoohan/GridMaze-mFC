@@ -137,10 +137,15 @@ def _get_place_df(
     moving_only=True,
     exclude_time_at_goal=True,
     minimum_occupancy=1,
+    max_steps_from_goal=30,
 ):
     """ """
     navigation_rates_df = filt.filter_navigation_rates_df(
-        navigation_rates_df, navigation_only, moving_only, exclude_time_at_goal
+        navigation_rates_df,
+        navigation_only,
+        moving_only,
+        exclude_time_at_goal,
+        max_steps_from_goal,
     )
     place_direction_grouped_df = navigation_rates_df.groupby([("maze_position", "simple")])
     cluster_unique_IDs = navigation_rates_df.firing_rate.columns.to_numpy()
