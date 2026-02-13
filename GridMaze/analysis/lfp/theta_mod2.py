@@ -45,8 +45,12 @@ def get_tuned_neurons():
 # %% Functions
 
 
-def test(theta_mod_df, print_stats=True, ax=None):
-    """ """
+def plot_subpopulation_theta_mod(theta_mod_df, print_stats=True, ax=None):
+    """
+    Plots the average theta modulation of all neurons, and specific subpopulations of
+    distance-to-goal tuned neurons and place-direction tuned neurons as identified in
+    neGLM analyses
+    """
     # set up fig
     if ax is None:
         fig, ax = plt.subplots(figsize=(3, 3))
@@ -114,59 +118,6 @@ def test(theta_mod_df, print_stats=True, ax=None):
 
 
 # %% population theta modulation tuning curves
-
-
-def plot_population_theta_mod_tuning(
-    theta_mod_df, norm_clusters=True, norm_session=False, plot_single_subjects=True, ax=None
-):
-    """ """
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(3, 3))
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.axhline(1, color="k", ls="--", alpha=0.5)
-
-    df = theta_mod_df.copy()
-    df["spike_count"] = df["spike_count"].astype(float)
-    if norm_clusters:
-        T = df.spike_count.values
-        T = T / T.mean(axis=1, keepdims=True)
-        df.loc[:, ("spike_count", slice(None))] = T
-    # average theta mod per session
-
-    session_df = df.groupby(["subject_ID", "maze_name", "day_on_maze"]).spike_count.mean().spike_count
-    if norm_session:
-        S = session_df.values
-        S = S / S.mean(axis=1, keepdims=True)
-        session_df.loc[:, :] = S
-
-    # average over subjects
-    _df = session_df.groupby("subject_ID").mean()
-    mean = _df.mean()
-    sem = _df.sem()
-
-    # plot
-    if plot_single_subjects:
-        palette = sns.color_palette("hls", n_colors=len(SUBJECT_IDS))
-        for subject, color in zip(SUBJECT_IDS, palette):
-            subj_mean = _df.loc[subject]
-            ax.plot(subj_mean.index, subj_mean.values, lw=1, color=color, alpha=1)
-    ax.errorbar(
-        x=mean.index,
-        y=mean.values,
-        yerr=sem.values,
-        marker="o",
-        markersize=5,
-        lw=2,
-        elinewidth=2,
-        linestyle="-",
-        color="k",
-        # capsize=3,
-        label="cross-subject mean",
-    )
-    ax.set_ylabel("Pop. θ Mod")
-    ax.set_xlabel("θ Phase")
-    ax.set_xticks([-np.pi, -np.pi / 2, 0, np.pi / 2, np.pi])
-    ax.set_xticklabels([r"$-\pi$", r"$-\pi/2$", "0", r"$\pi/2$", r"$\pi$"])
 
 
 def get_population_theta_mod_tuning(late_sessions=True, include_multi_units=True):
