@@ -6,6 +6,7 @@ structure in the decoding outputs
 
 # %% imports
 import json
+from cv2 import mean
 import numpy as np
 import pandas as pd
 import networkx as nx
@@ -17,7 +18,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from pingouin import multivariate_ttest, circ_rayleigh
 from scipy.ndimage import gaussian_filter
-from sympy import true
+from scipy.stats import circmean, circstd
 
 
 from GridMaze.maze import representations as mr
@@ -469,6 +470,7 @@ def get_input_data(
     max_distance=0.8,
     n_log_bins=25,
     place_offset=2,
+    permute=False,
 ):
     """ """
     # load data
@@ -480,6 +482,10 @@ def get_input_data(
         spike_counts_df = session.navigation_spike_counts_df  # [frames, clusters]
         spike_counts_df.reset_index(inplace=True, drop=True)
         spike_counts_df.columns = pd.MultiIndex.from_tuples([(*c, "") for c in spike_counts_df.columns])
+    if permute:
+        # circular shift of spikes in time to break rel between neurons and behaviour
+        _n = len(spike_counts_df)
+        spike_counts_df = spike_counts_df.iloc[np.roll(np.arange(_n), np.random.randint(_n))]
 
     # filter clusters
     keep_clusters = gc.filter_clusters(
@@ -654,19 +660,31 @@ def _plot_double_decoding_bias(dist_bias, place_bias, print_stats=True, ax=None)
 
     # for each subject fit each modulation with a sinusoid and compare offsets
     if print_stats:
-        offsets = []
-        for subject in SUBJECT_IDS:
-            _dist_curve = dist_bias.loc[subject].values
-            dist_fit = fit_sinusoid(phases, _dist_curve, fit_constant=True, return_as="params")
-            _place_curve = place_bias.loc[subject].values
-            place_fit = fit_sinusoid(phases, _place_curve, fit_constant=True, return_as="params")
-            # get phase offset
-            off = place_fit["phi"] - dist_fit["phi"]
-            # wrap to [-pi, pi]
-            w_off = (off + np.pi) % (2 * np.pi) - np.pi
-            offsets.append(w_off)
-        z, p = circ_rayleigh(offsets, d=np.pi / 6)
-        print(f"offset rayleigh test: z={z:.3f}, p={p:.3f}")
+        test_theta_offset(dist_bias, place_bias, subject_IDs=SUBJECT_IDS, phases=phases)
+
+
+def test_theta_offset(mod_df1, mod_df2, subject_IDs=None, phases=None):
+    """ """
+    if subject_IDs is None:
+        subject_IDs = mod_df1.index.values
+    if phases is None:
+        phases = mod_df1.columns.values.astype(float)
+
+    offsets = []
+    for subject in subject_IDs:
+        _dist_curve = mod_df1.loc[subject].values
+        dist_fit = fit_sinusoid(phases, _dist_curve, fit_constant=True, return_as="params")
+        _place_curve = mod_df2.loc[subject].values
+        place_fit = fit_sinusoid(phases, _place_curve, fit_constant=True, return_as="params")
+        # get phase offset
+        off = place_fit["phi"] - dist_fit["phi"]
+        # wrap to [-pi, pi]
+        w_off = (off + np.pi) % (2 * np.pi) - np.pi
+        offsets.append(w_off)
+    z, p = circ_rayleigh(offsets, d=np.pi / 6)
+    mean_offset = circmean(offsets, high=np.pi, low=-np.pi)
+    sem_offset = circstd(offsets, high=np.pi, low=-np.pi) / np.sqrt(len(offsets))
+    print(f"offset: {mean_offset:.3f} ± {sem_offset:.3f}. Rayleigh test: z={z:.3f}, p={p:.3f}")
 
 
 def fit_sinusoid(x, y, fit_constant=True, return_as="params"):

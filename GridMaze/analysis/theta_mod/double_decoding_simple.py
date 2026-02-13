@@ -144,9 +144,10 @@ def get_double_decoding_df(verbose=True, n_jobs=-1, save=False):
     """
     version notes:
     - _df: first attempt strictly dist only and pd only neurons into decoders
-    - _df2: use only dist neurons for dist deocder, and all other for pd decoder (still orth, gives pd best we can do)
+    - _df2: use only dist neurons for dist decoder, and all other for pd decoder (still orth, gives pd best we can do)
+    -_df3: linearised +/- 3 decoding from place, fixed bug in neuron tuned defs?
     """
-    save_path = RESULTS_DIR / "double_decoding_simple_df2.parquet"
+    save_path = RESULTS_DIR / "double_decoding_simple_df3.parquet"
     if save_path.exists() and not save:
         if verbose:
             print(f"Loading existing double results from {save_path} ...")
@@ -154,7 +155,7 @@ def get_double_decoding_df(verbose=True, n_jobs=-1, save=False):
 
     if verbose:
         print("Loading tuned neurons from neGLM results...")
-    place_tuned_neurons, distance_tuned_neurons = get_tuned_neurons()
+    place_tuned_neurons, distance_tuned_neurons = get_tuned_neurons(place_tuned_criteria="non-dist")
 
     results_dfs = []
     for subject_ID in SUBJECT_IDS:
@@ -176,7 +177,7 @@ def get_double_decoding_df(verbose=True, n_jobs=-1, save=False):
             dfs = Parallel(n_jobs=n_jobs)(
                 delayed(get_session_double_decoding_df)(
                     session,
-                    place_tuned_neurons=None,  # use non-dist neurons
+                    place_tuned_neurons=place_tuned_neurons,  # use non-dist neurons
                     distance_tuned_neurons=distance_tuned_neurons,
                     verbose=verbose,
                 )
@@ -186,7 +187,7 @@ def get_double_decoding_df(verbose=True, n_jobs=-1, save=False):
             dfs = [
                 get_session_double_decoding_df(
                     session,
-                    place_tuned_neurons=None,
+                    place_tuned_neurons=place_tuned_neurons,
                     distance_tuned_neurons=distance_tuned_neurons,
                     verbose=verbose,
                 )
@@ -321,17 +322,17 @@ def get_session_double_decoding_df(
             )
             if verbose:
                 print("    Finding optimal alpha for place decoder...")
-                p_alpha = get_opt_alpha(
-                    fold_df,
-                    train_df,
-                    var="place",
-                    include_neurons=place_neurons,
-                    normalise_X=normalise_X,
-                    sqrt_spikes=sqrt_spikes,
-                    output=output,
-                    all_pairs_path_length=all_pairs_path_length,
-                    verbose=verbose,
-                )
+            p_alpha = get_opt_alpha(
+                fold_df,
+                train_df,
+                var="place",
+                include_neurons=place_neurons,
+                normalise_X=normalise_X,
+                sqrt_spikes=sqrt_spikes,
+                output=output,
+                all_pairs_path_length=all_pairs_path_length,
+                verbose=verbose,
+            )
         else:
             d_alpha, p_alpha = alpha, alpha
         # train decoders
@@ -360,7 +361,7 @@ def get_session_double_decoding_df(
             all_pairs_path_length=all_pairs_path_length,
             restrict_to_traj=True,
             output=output,
-            distance_ref="place",
+            distance_ref="pos",
             return_as="all",
         )
         results_df.loc[test_df.index, ("decoded_distance", "from_place")] = p_pred
@@ -443,7 +444,7 @@ def get_opt_alpha(
                     decoder_classes,
                     all_pairs_path_length,
                     output=output,
-                    distance_ref="place",
+                    distance_ref="pos",
                     restrict_to_traj=True,
                     return_as="dist",
                 )
