@@ -20,14 +20,100 @@ from GridMaze.analysis.core import filter as filt
 from GridMaze.analysis.processing import get_cluster_unique_variance_explained as cve
 from matplotlib.patches import Rectangle
 
+from GridMaze.analysis.theta_mod import double_decoding as tdd
+
 # %% Global Variables
 from GridMaze.paths import EXPERIMENT_INFO_PATH
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
 
+# %%
+from GridMaze.analysis.neGLM import load_model_sets as lms
+from GridMaze.analysis.neGLM import variance_explained as ve
+
+
+def get_tuned_neurons():
+
+    feature_tuned_df = ve.get_feature_tuned_df(
+        lms.load_model_set_cv_scores("variance_explained_multiunit"),
+        reduced_models=["remove_distance_to_goal", "remove_place_direction"],
+    )
+    return feature_tuned_df
+
 
 # %% Functions
+
+
+def test(theta_mod_df, print_stats=True, ax=None):
+    """ """
+    # set up fig
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(3, 3))
+    ax.axhline(1, color="k", ls="--", alpha=0.5)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_xlabel("theta phase")
+    ax.set_ylabel("population \n theta modulation")
+    ax.set_xticks(np.arange(-np.pi, np.pi + 0.1, np.pi / 2))
+    ax.set_xticklabels(["-π", "-π/2", "0", "π/2", "π"])
+
+    # process data
+    df = theta_mod_df.copy()
+    phases = df.spike_count.columns.values.astype(float)
+    # norm neurons
+    df["spike_count"] = df["spike_count"].astype(float)
+    T = df.spike_count.values
+    T = T / T.mean(axis=1, keepdims=True)
+    df.loc[:, ("spike_count", slice(None))] = T
+
+    all_neurons_mask = np.ones(len(df), dtype=bool)
+    place_direction_mask = df.feature_tuning.place_direction & ~df.feature_tuning.distance_to_goal
+    distance_mask = ~df.feature_tuning.place_direction & df.feature_tuning.distance_to_goal
+    mod_dfs = []
+    for mask, label, color in zip(
+        [all_neurons_mask, place_direction_mask, distance_mask],
+        ["all", "place-direction tuned", "distance-to-goal tuned"],
+        ["silver", "darkred", "purple"],
+    ):
+        _df = df[mask]
+        subj_avg = _df.groupby("subject_ID").spike_count.mean().spike_count
+        _mean = subj_avg.mean()
+        _sem = subj_avg.sem()
+        ax.errorbar(
+            phases,
+            _mean,
+            yerr=_sem,
+            fmt="o",
+            color=color,
+            markersize=5,
+            linewidth=None,
+            capsize=None,
+            elinewidth=1.5,
+        )
+        _x, _y = tdd.fit_sinusoid(phases, _mean, fit_constant=True, return_as="curve")
+        ax.plot(_x, _y, color=color, linewidth=1.5, label=label)
+        mod_dfs.append(subj_avg)
+    ax.legend(fontsize=6)
+    ax.set_ylim(0.95, 1.05)
+    if print_stats:
+        # test if all curves are significanlty modulated
+        all_df, place_df, dist_df = mod_dfs
+        print("all neurons")
+        tdd._get_decoding_bias_stats(all_df)
+        print("place-direction tuned neurons")
+        tdd._get_decoding_bias_stats(place_df)
+        print("distance-to-goal tuned neurons")
+        tdd._get_decoding_bias_stats(dist_df)
+        # test offsets between populations
+        print("all vs. place-direction")
+        tdd.test_theta_offset(all_df, place_df)
+        print("all vs. distance")
+        tdd.test_theta_offset(all_df, dist_df)
+        print("distance vs. place-direction")
+        tdd.test_theta_offset(dist_df, place_df)
+
+
+# %% population theta modulation tuning curves
 
 
 def plot_population_theta_mod_tuning(
@@ -83,8 +169,9 @@ def plot_population_theta_mod_tuning(
     ax.set_xticklabels([r"$-\pi$", r"$-\pi/2$", "0", r"$\pi/2$", r"$\pi$"])
 
 
-def get_population_theta_mod_tuning(late_sessions=False, include_multi_units=True):
+def get_population_theta_mod_tuning(late_sessions=True, include_multi_units=True):
     """ """
+    feature_tuned_df = get_tuned_neurons()
     dfs = []
     for subject in SUBJECT_IDS:
         for maze_name in ["maze_1", "maze_2", "rooms_maze"]:
@@ -104,6 +191,7 @@ def get_population_theta_mod_tuning(late_sessions=False, include_multi_units=Tru
                     norm=False,
                     max_steps_to_goal=30,
                     min_spikes=300,
+                    feature_tuned_df=feature_tuned_df,
                 )
                 dfs.append(df)
     combined_df = pd.concat(dfs)
@@ -118,6 +206,8 @@ def get_session_theta_mod_tuning(
     norm=False,
     max_steps_to_goal=30,
     min_spikes=300,
+    include_feature_tuning=True,
+    feature_tuned_df=None,
 ):
     """ """
     # load data
@@ -131,6 +221,13 @@ def get_session_theta_mod_tuning(
     else:
         keep_units = cluster_metrics[cluster_metrics.single_unit | cluster_metrics.multi_unit].cluster_ID
     keep_units = convert.cluster_IDs2scluster_unique_IDs(session_info, keep_units)
+    if include_feature_tuning:
+        # further check that units have feature tuning ascribed (cells with few spikes don't get run in neGLM)
+        keep_units = [u for u in keep_units if u in feature_tuned_df.index.get_level_values(1)]
+
+    if len(keep_units) == 0:
+        return None
+
     theta_spike_counts_df = theta_spike_counts_df[
         theta_spike_counts_df.columns[[c in keep_units for c in theta_spike_counts_df.columns.get_level_values(1)]]
     ]
@@ -150,6 +247,15 @@ def get_session_theta_mod_tuning(
     else:
         df = cluster_phase_spike_counts.copy()
     df.columns = pd.MultiIndex.from_product([["spike_count"], df.columns])
+    # add feature tuning
+    if include_feature_tuning:
+        subject_ID = session.subject_ID
+        if feature_tuned_df is None:
+            feature_tuned_df = get_tuned_neurons()
+
+        feature_tuning = feature_tuned_df.loc[subject_ID].loc[df.index]
+        feature_tuning.columns = pd.MultiIndex.from_tuples([("feature_tuning", c) for c in feature_tuning.columns])
+        df = pd.concat([df, feature_tuning], axis=1)
     # add other info
     df[("subject_ID", "")] = session.subject_ID
     df[("maze_name", "")] = session.maze_name
