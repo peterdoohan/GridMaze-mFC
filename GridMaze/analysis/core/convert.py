@@ -75,11 +75,13 @@ def dist_bin2onehot(bins_by_frame, max_distance, n_distance_bins, distance_metri
     return onehot
 
 
-def _get_distance_bins(binning_method, n_distance_bins, distance_metrics, max_distance):
+def _get_distance_bins(binning_method, n_distance_bins, distance_metrics, max_distance, min_distance=0):
     if max_distance is None:
         max_distance = dd.get_distance_percentile(distance_metrics, 1)
     if binning_method == "uniform":
-        bins = pd.interval_range(start=0, end=max_distance, freq=max_distance / n_distance_bins, closed="left")
+        bins = pd.interval_range(
+            start=min_distance, end=max_distance, freq=(max_distance - min_distance) / n_distance_bins, closed="left"
+        )
     elif binning_method == "non-uniform":
         bins = dd.bin_distribution_evenly(distance_metrics, n_distance_bins, max_distance=max_distance)
         bins = pd.IntervalIndex.from_breaks(bins, closed="left")
