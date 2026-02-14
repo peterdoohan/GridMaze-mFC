@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from GridMaze.analysis.core import get_sessions as gs
-from GridMaze.analysis.theta_mod import utils as tmu
+from GridMaze.analysis.theta_HD import utils as tmu
 
 # %% Global Variables
 from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH

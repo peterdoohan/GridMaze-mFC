@@ -13,7 +13,7 @@ from matplotlib.colors import LinearSegmentedColormap
 import seaborn as sns
 
 from GridMaze.analysis.theta_mod import utils
-from GridMaze.analysis.theta_mod import alignment as ali
+from GridMaze.analysis.theta_HD import alignment as ali
 
 
 # %% Global Variables
