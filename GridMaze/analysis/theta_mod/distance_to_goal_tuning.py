@@ -12,15 +12,15 @@ from matplotlib import pyplot as plt
 from scipy.ndimage import gaussian_filter1d
 from scipy.interpolate import interp1d
 from scipy.stats import ttest_1samp
-from pingouin import multivariate_ttest
+from scipy.stats import circmean, circstd
 
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import filter as filt
 from GridMaze.analysis.core import convert
 from GridMaze.analysis.distance_to_goal import distributions as dd
 from GridMaze.analysis.processing import get_distance_tuning_metrics_df as dtm
-
-from GridMaze.analysis.cluster_tuning import distance_to_goal as dtg
+from GridMaze.analysis.theta_mod import theta_utils as tmu
+from GridMaze.analysis.distance_to_goal import theta_mod_decoder as tdd
 
 # %% Global Variables
 
@@ -593,46 +593,60 @@ def get_population_distance_tuning_theta_x_shifts_all_phases(
     return results_df
 
 
-def plot_theta_mode_x_shifts(results_df, color="teal", print_stats=True, ax=None):
-    """ """
-    # init plot
+def plot_theta_mod_x_shifts(results_df, color="teal", plot_decoding_ref=True, print_stats=True, ax=None):
+    # set up fig
     if ax is None:
         f, ax = plt.subplots(1, 1, figsize=(2, 2))
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.axhline(0, color="black", linestyle="--", alpha=0.5)
-    ax.set_ylabel("tuning bias (cm)")
-    ax.set_xlabel("theta phase (rad)")
-    ax.set_xticks(np.arange(-np.pi, np.pi + 0.1, np.pi / 2))
-    ax.set_xticklabels(["-π", "-π/2", "0", "π/2", "π"])
-    # process
-    phases = results_df.index.astype(float).values
-    mean = results_df.mean(1).values * 100  # convert to cm
-    sem = results_df.sem(1).values * 100
+    # convert to cm
+    df = results_df.copy()
+    df = df.T
+    df = df.mul(100)
     # plot
-    ax.errorbar(
-        phases,
-        mean,
-        yerr=sem,
-        fmt="o-",
-        color=color,
-        markersize=6,
-        linewidth=2,
-        capsize=None,
-        elinewidth=2,
+    tmu.plot_decoding_bias(
+        df, color=color, label=None, ax=ax, ylabel="tuning bias \n x-shift (cm)", print_stats=print_stats
     )
-    # stats
-    if print_stats:
-        _get_x_shift_stats(results_df)
+    if plot_decoding_ref:
+        # load decoding results and det analagous modulation bias df
+        decoding_mod_df = tdd.load_decoding_results(lfp_type="theta_mid")
+        decoding_bias = decoding_mod_df.groupby(["subject_ID"]).lfp_phase.mean().lfp_phase
+        decoding_bias_norm = decoding_bias.sub(decoding_bias.mean(axis=1), axis=0)
+        decoding_xmax = get_mod_max(decoding_bias_norm)
+        # plot decoding mod max ref lines
+        _decoding_mean = circmean(decoding_xmax, high=np.pi, low=-np.pi)
+        _decoding_sem = circstd(decoding_xmax, high=np.pi, low=-np.pi) / np.sqrt(len(decoding_xmax))
+        ax.fill_betweenx(
+            [0, 2],
+            _decoding_mean - _decoding_sem,
+            _decoding_mean + _decoding_sem,
+            color="purple",
+            alpha=0.2,
+        )
+        ax.vlines(_decoding_mean, color="purple", linestyle="-", ymin=0, ymax=2, alpha=0.2)
+        # same for tuning bias df
+        tuning_xmax = get_mod_max(df)
+        _tuning_mean = circmean(tuning_xmax, high=np.pi, low=-np.pi)
+        _tuning_sem = circstd(tuning_xmax, high=np.pi, low=-np.pi) / np.sqrt(len(tuning_xmax))
+        ax.fill_betweenx(
+            [0, 2],
+            _tuning_mean - _tuning_sem,
+            _tuning_mean + _tuning_sem,
+            color=color,
+            alpha=0.2,
+        )
+        ax.vlines(_tuning_mean, color=color, linestyle="-", ymin=0, ymax=2, alpha=0.2)
+        if print_stats:
+            # test if decoding and tuning are sig offset
+            print("tuning-bias vs decoding bias:")
+            tmu.test_theta_offset(df, decoding_bias_norm)
 
 
-def _get_x_shift_stats(results_df):
+def get_mod_max(bias_df):
     """ """
-    df = results_df.T
-    phis = df.columns.astype(float)
-    data = df.values
-    beta_cos = data.dot(np.cos(phis))
-    beta_sin = data.dot(np.sin(phis))
-    betas = np.column_stack([beta_cos, beta_sin])
-    zeros = np.zeros_like(betas)
-    mv_test = multivariate_ttest(betas, zeros, paired=False)
-    return print(mv_test)
+    subject_IDs = bias_df.index.values
+    phases = bias_df.columns.values.astype(float)
+    x_max = np.zeros(len(subject_IDs))
+    for i, subject_ID in enumerate(subject_IDs):
+        y = bias_df.loc[subject_ID].values
+        x_fit, y_fit = tmu.fit_sinusoid(phases, y, return_as="curve")
+        x_max[i] = x_fit[np.argmax(y_fit)]
+    return x_max
