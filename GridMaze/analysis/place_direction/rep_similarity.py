@@ -8,6 +8,7 @@ import json
 import numpy as np
 import pandas as pd
 import networkx as nx
+from joblib import Parallel, delayed
 
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.maze import representations as mr
@@ -107,16 +108,40 @@ def _get_path_n_choices(path, extended_maze):
 def get_population_place_tuning(
     subject_IDs="all",
     maze_name="maze_1",
-    late_sessions=True,
     sessions=None,
+    late_sessions=True,
     include_multi_unit=False,
-    fill_nans=False,
+    fill_nans="mean",
     normalisation="length",
     max_steps_to_goal=30,
     min_split_corr=0.5,
     verbose=False,
+    expand_index=False,
+    permute=False,
+    n_jobs=-1,
 ):
     """ """
+
+    def process_session(session, expand_index, verbose):
+        if verbose:
+            print(session.name)
+        df = get_session_place_tuning(
+            session,
+            include_multi_unit=include_multi_unit,
+            fill_nans=fill_nans,
+            normalisation=normalisation,
+            max_steps_from_goal=max_steps_to_goal,
+            min_split_corr=min_split_corr,
+            verbose=verbose,
+            permute=permute,
+        )
+        if df is None:
+            return
+        if expand_index:
+            df["subject_ID"] = session.subject_ID
+            df.set_index(["subject_ID"], append=True, inplace=True)
+        return df
+
     # if session objects are not input, generate them from input filters
     if sessions is None:
         days_on_maze = "late" if late_sessions else "all"
@@ -134,23 +159,14 @@ def get_population_place_tuning(
             ],
             must_have_data=True,
         )
-    dfs = []
-    for session in sessions:
-        if verbose:
-            print(session.name)
-        df = get_session_place_tuning(
-            session,
-            include_multi_unit=include_multi_unit,
-            fill_nans=fill_nans,
-            normalisation=normalisation,
-            max_steps_from_goal=max_steps_to_goal,
-            min_split_corr=min_split_corr,
-            verbose=verbose,
-        )
-        if df is None:
-            continue
-        dfs.append(df)
+    if n_jobs:
+        dfs = Parallel(n_jobs=n_jobs)(delayed(process_session)(session, expand_index, verbose) for session in sessions)
+    else:
+        dfs = [process_session(session, expand_index, verbose) for session in sessions]
+
     pop_tuning_df = pd.concat(dfs, axis=0)
+    if expand_index:
+        pop_tuning_df = pop_tuning_df.swaplevel(axis=0)
     return pop_tuning_df
 
 
@@ -167,6 +183,7 @@ def get_session_place_tuning(
     minimum_occupancy=1.0,
     max_steps_from_goal=30,
     verbose=False,
+    permute=False,
 ):
     """
     Returns place-direction tuning for all place-direction tuned clusters in a session.
@@ -178,8 +195,18 @@ def get_session_place_tuning(
     navigation_rates_df = session.get_navigation_activity_df(
         type="rates", cluster_kwargs={"single_units": True, "multi_units": include_multi_unit}
     )
-    pd_tuning_metrics = session.cluster_place_direction_tuning_metrics
+
+    # optionally permute: circular shift behaviour rel neural activity before getting heatamps
+    if permute:
+        navigation_df = navigation_rates_df.drop("firing_rate", axis=1, level=0).copy()
+        rates_df = navigation_rates_df.xs("firing_rate", axis=1, level=0, drop_level=False).copy()
+        _n = len(rates_df)
+        rates_df = rates_df.iloc[np.roll(np.arange(_n), np.random.randint(_n))]
+        rates_df.reset_index(drop=True, inplace=True)
+        navigation_rates_df = pd.concat([navigation_df, rates_df], axis=1)
+
     # filter for place-direction tuned clusters
+    pd_tuning_metrics = session.cluster_place_direction_tuning_metrics
     cluster_filters = []
     if min_split_corr is not None:
         cluster_filters.append(pd_tuning_metrics.split_half_corr.value.ge(min_split_corr))
@@ -202,13 +229,12 @@ def get_session_place_tuning(
         max_steps_from_goal,
     )
     # fill nan values of unvisited place-directions
-    if fill_nans:
-        if fill_nans == "mean":
-            place_df.T.fillna(place_df.mean(axis=1), inplace=True)  # replace nans with the mean
-        elif fill_nans == "zero":
-            place_df.fillna(0, inplace=True)
-        else:
-            raise ValueError(f"Unknown fill_nans method: {fill_nans}")
+    if fill_nans == "mean":
+        place_df.T.fillna(place_df.mean(axis=1), inplace=True)  # replace nans with the mean
+    elif fill_nans == "zero":
+        place_df.fillna(0, inplace=True)
+    else:
+        raise ValueError(f"Unknown fill_nans method: {fill_nans}")
     # normalise over clusters
     if normalisation:
         if normalisation == "mean":

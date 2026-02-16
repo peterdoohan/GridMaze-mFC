@@ -17,9 +17,9 @@ from scipy.spatial.distance import euclidean
 
 
 def get_maze_RDM_df(simple_maze, metric, kwargs={}):
-    if metric == "euclidean":
+    if metric == "euclidean_distance":
         return _euclidean_distance_RDM(simple_maze, **kwargs)
-    elif metric == "geodesic":
+    elif metric == "geodesic_distance":
         return _geodesic_distance_RDM(simple_maze, **kwargs)
     elif metric == "node_degree":
         return _get_node_degree_RDM(simple_maze, **kwargs)
@@ -124,7 +124,7 @@ def _betweenness_centrality_RDM(simple_maze, norm="max"):
     return RDM_df.astype(float)
 
 
-def _subgoal_distance_RDM(simple_maze, norm="max", subgoal_degrees=[4]):
+def _subgoal_distance_RDM(simple_maze, norm="max", subgoal_degrees=[3, 4]):
     """
     geodesic distance, subgoals defined by node degree, 3 or 4
     """
