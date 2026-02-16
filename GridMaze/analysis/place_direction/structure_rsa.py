@@ -6,6 +6,7 @@ using RSA apprach
 
 # %% Imports
 import json
+from os import error
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -79,6 +80,9 @@ def plot_structure_RSA_summary(maze_names=["maze_1", "maze_2"], ax=None):
         color="darkred",
         markers="o",
         linestyle="none",
+        errorbar="se",
+        err_kws={"linewidth": 2},
+        markeredgewidth=0,
     )
     ax.set_xticks(range(len(metrics)))
     ax.set_xticklabels(metrics, rotation=45, ha="right")
