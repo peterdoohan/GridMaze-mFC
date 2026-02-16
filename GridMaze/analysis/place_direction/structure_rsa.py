@@ -86,6 +86,7 @@ def plot_structure_RSA_summary(maze_names=["maze_1", "maze_2"], ax=None):
     )
     ax.set_xticks(range(len(metrics)))
     ax.set_xticklabels(metrics, rotation=45, ha="right")
+    ax.set_ylim(-0.05, 0.29)
     # stats
     stats_df = _get_null_stats(obs_df, perm_df, metrics)
     print(stats_df)
