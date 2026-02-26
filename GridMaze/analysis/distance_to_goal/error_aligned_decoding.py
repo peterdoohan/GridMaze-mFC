@@ -6,8 +6,8 @@ when it is wrong?
 """
 
 # %% Imports
-from cProfile import label
 import json
+import random
 import numpy as np
 import pandas as pd
 from joblib import delayed, Parallel
@@ -35,21 +35,61 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 # %% plot decoding aligned to errors
 
 
-def plot_error_aligned_decoding_delta(results_df, aligned_df=None, window=(-10, 10), color="royalblue", ax=None):
+def plot_error_aligned_decoding_delta(
+    results_df,
+    aligned_df=None,
+    window=(-10, 10),
+    match_distance_sampling=True,
+    random_state=None,
+    y="decoding_delta",
+    color="royalblue",
+    ax=None,
+):
     """ """
     # set up figure
     if ax is None:
         f, ax = plt.subplots(1, 1, figsize=(2, 1.5))
     ax.spines[["top", "right"]].set_visible(False)
-    ax.axhline(0, color="k", linestyle="--", alpha=0.5)
     ax.axvline(0, color="k", linestyle="--", alpha=0.5)
     ax.set_xlabel("decision (s)")
-    ax.set_ylabel("Δ distance (m)\n(decoded - true)")
+    if y == "decoding_delta":
+        ax.axhline(0, color="k", linestyle="--", alpha=0.5)
+        ax.set_ylabel("Δ distance (m)\n(decoded - true)")
+    else:
+        ax.set_ylabel(y)
 
     # process for plotting
     if aligned_df is None:
         aligned_df = align_decoding_to_errors(results_df, error_type="nav_error", window=window)
-    subj_avg = aligned_df.groupby(["subject_ID", "error"]).decoding_delta.mean().decoding_delta
+    # optionally downsample correct decision to match the distances to goal in error trials
+    if match_distance_sampling:
+        _cols = [("subject_ID", ""), ("distance_to_goal", ""), ("error", "")]
+        _df = aligned_df[_cols].droplevel(1, axis=1)
+        error_df = _df[_df.error]
+        counts_error = error_df.groupby(["subject_ID", "distance_to_goal"]).size().rename("n_error").reset_index()
+        correct_df = _df[~_df.error].copy()
+        correct_df["_orig_idx"] = correct_df.index  # preserve original indices
+        merged = correct_df.merge(counts_error, on=["subject_ID", "distance_to_goal"], how="left")
+        merged["n_error"] = merged["n_error"].fillna(0).astype(int)
+        to_sample = merged[merged["n_error"] > 0]
+
+        def sample_per_group(g):
+            n = int(g["n_error"].iloc[0])
+            # sample without replacement
+            return g.sample(n=n, replace=False, random_state=random_state)
+
+        sampled_correct = to_sample.groupby(["subject_ID", "distance_to_goal"]).apply(
+            sample_per_group, include_groups=False
+        )
+
+        correct_indices = sampled_correct["_orig_idx"].tolist()
+        error_indices = error_df.index.tolist()
+        full_sample = correct_indices + error_indices
+        _aligned_df = aligned_df.loc[full_sample].copy()
+    else:
+        _aligned_df = aligned_df.copy()
+
+    subj_avg = _aligned_df.groupby(["subject_ID", "error"])[y].mean()[y]
     times = subj_avg.columns.values.astype(float)
     _means = subj_avg.groupby(level=1).mean()
     _sems = subj_avg.groupby(level=1).sem()
@@ -82,22 +122,38 @@ def align_decoding_to_errors(results_df, error_type="nav_error", window=(-8, 8),
             # filter for either errors or correct decisions at decision points
             idxs = subj_df[(subj_df[error_type] == err) & subj_df.node_degree.gt(2)].index
             aligned_deltas = []
+            aligned_true = []
+            aligned_decoded = []
+            distances_at_decision = []
             for i in idxs:
                 try:
                     start_idx = i - rows_before
                     end_idx = i + rows_after
+                    distance_bin = subj_df.loc[i, ("distance_bin_mid", "")]
                     aligned_delta = subj_df.loc[start_idx:end_idx, ("decoding_delta", "")].values.astype(float)
                 except IndexError:
                     continue
                 if aligned_delta.shape[0] != expected_length:
                     continue
                 aligned_deltas.append(aligned_delta)
-            # organise into dataframe
-            aligned_df = pd.DataFrame(
+                aligned_true.append(subj_df.loc[start_idx:end_idx, ("distance_bin_mid", "")].values.astype(float))
+                aligned_decoded.append(subj_df.loc[start_idx:end_idx, ("decoded_distance", "")].values.astype(float))
+                distances_at_decision.append(distance_bin)
+            # organise into dataframes
+            aligned_delta = pd.DataFrame(
                 data=np.stack(aligned_deltas), columns=pd.MultiIndex.from_product([["decoding_delta"], aligned_times])
             )
+            aligned_true = pd.DataFrame(
+                data=np.stack(aligned_true), columns=pd.MultiIndex.from_product([["true_distance"], aligned_times])
+            )
+            aligned_decoded = pd.DataFrame(
+                data=np.stack(aligned_decoded),
+                columns=pd.MultiIndex.from_product([["decoded_distance"], aligned_times]),
+            )
+            aligned_df = pd.concat([aligned_delta, aligned_true, aligned_decoded], axis=1)
             aligned_df[("error", "")] = err
             aligned_df[("subject_ID", "")] = subject_ID
+            aligned_df[("distance_to_goal", "")] = distances_at_decision
             dfs.append(aligned_df)
         aligned_df = pd.concat(dfs, ignore_index=True)
     return aligned_df
