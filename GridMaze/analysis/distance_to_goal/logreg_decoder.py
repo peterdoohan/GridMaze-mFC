@@ -13,7 +13,9 @@ from matplotlib.ticker import MaxNLocator
 import seaborn as sns
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
+from scipy.stats import zscore
 
+from GridMaze.maze import representations as mr
 from GridMaze.analysis.core import convert
 from GridMaze.analysis.core import downsample as ds
 from GridMaze.analysis.core import folds
@@ -24,6 +26,8 @@ from GridMaze.analysis.distance_to_goal import distributions as dd
 # %% Global Variables
 
 from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
+
+FRAME_RATE = 60
 
 RESULTS_DIR = RESULTS_PATH / "distance_to_goal" / "logreg_decoding"
 
@@ -147,6 +151,7 @@ def populate_decoding_results(max_jobs=20, subfolder=None, max_distance=None, ve
             "navigation_spike_counts_df",
             "cluster_metrics",
             "trials_df",
+            "events_df",
         ],
         must_have_data=True,
     )
@@ -198,11 +203,18 @@ def decode_session_distance_to_goal(
         [
             input_data[
                 [
+                    ("subject_ID", ""),
+                    ("maze_name", ""),
+                    ("day_on_maze", ""),
                     ("trial", ""),
+                    ("trial_unique_ID", ""),
                     ("time", ""),
                     ("moving", ""),
                     ("steps_to_goal", "future"),
                     ("distance_bin_mid", ""),
+                    ("nav_error", ""),
+                    ("poke_error", ""),
+                    ("node_degree", ""),
                     metric,
                 ]
             ],
@@ -374,6 +386,9 @@ def get_input_data(
 ):
     """"""
     # load data
+    simple_maze = session.simple_maze()
+    extended_maze = mr.get_extended_simple_maze(simple_maze)
+    label2coord = mr.get_maze_label2coord(simple_maze)
     navigation_df = session.navigation_df
     spike_counts_df = session.navigation_spike_counts_df.reset_index(drop=True)
     cluster_metrics = session.cluster_metrics
@@ -419,6 +434,22 @@ def get_input_data(
     input_df.loc[:, "distance_bin"] = pd.cut(input_df[metric], bins=bins, include_lowest=True).to_numpy()
     input_df.loc[:, "distance_bin_mid"] = input_df.distance_bin.apply(lambda x: x.mid)
     input_df.loc[:, "distance_bin_id"] = input_df.distance_bin.map({b: i for i, b in enumerate(bins)})
+
+    # add error times
+    nav_error_times = get_nav_error_times(session)
+    poke_error_times = get_poke_error_times(session)
+    input_df.loc[:, "nav_error"] = nearest_time_mask(nav_error_times, input_df.time)
+    input_df.loc[:, "poke_error"] = nearest_time_mask(poke_error_times, input_df.time)
+
+    # add other info
+    input_df[("subject_ID", "")] = session.subject_ID
+    input_df[("maze_name", "")] = session.maze_name
+    input_df[("day_on_maze", "")] = session.day_on_maze
+
+    # add node degree
+    input_df[("node_degree", "")] = input_df.apply(
+        lambda row: extended_maze.degree(label2coord[row[("maze_position", "simple")]]), axis=1
+    )
     if not balance_distances:
         return input_df
     else:  # balance data across distance bins
@@ -429,3 +460,108 @@ def get_input_data(
             .reset_index(drop=True)
         )
         return balanced_data
+
+
+# %% error alignment
+
+
+def nearest_time_mask(times_1, times_2):
+    """
+    Return a boolean mask (pd.Series) over times_2 marking nearest matches to times_1.
+    """
+    idx = pd.Index(times_2.values)
+    nearest_pos = idx.get_indexer(times_1, method="nearest")
+    mask = pd.Series(False, index=times_2.index)
+    mask.iloc[nearest_pos[nearest_pos >= 0]] = True
+    return mask
+
+
+def get_nav_error_times(session, n=2):
+    """
+    define navigation errors as times where distance to goal is decreasing and then starts increasing
+    for at least n towers.
+    returned as a list of times errors occured in the session
+    """
+    df = session.trajectory_decisions_df  # node by node decisions
+    trials = df.trial.dropna().unique()
+    error_times = []
+    for t in trials:
+        trial_df = df[(df.trial == t) & (df.trial_phase == "navigation")]
+        dist_to_goal = trial_df.geodesic_distance_to_goal
+        diffs = dist_to_goal.diff() > 0
+        increase = diffs > 0
+        # previous n diffs were all negative
+        prev_n_decreasing = diffs.shift(1).rolling(n, min_periods=n).max().fillna(0).astype(bool)
+        # detect is True at the first increasing index i; shift it back to i-1
+        error_mask = (increase & prev_n_decreasing).fillna(False)
+        if len(error_mask) < 2:
+            continue
+        error_mask = error_mask.shift(-1)
+        error_mask.iloc[-1] = False  # avoid NaN at end
+        _error_times = trial_df.time[error_mask].to_list()
+        error_times.extend(_error_times)
+    return error_times
+
+
+def get_nav_error_times(session):
+    """
+    define navigation errors as times where distance to goal is decreasing and then starts increasing
+    for at least n towers.
+    returned as a list of times errors occured in the session
+    """
+    eps = 1e-9
+    df = session.trajectory_decisions_df  # node by node decisions
+    trials = df.trial.dropna().unique()
+    error_times = []
+    for t in trials:
+        trial_df = df[(df.trial == t) & (df.trial_phase == "navigation")]
+        dist = trial_df.geodesic_distance_to_goal.astype(float)
+        d = dist.diff()
+        sign = pd.Series(
+            np.where(d > eps, 1, np.where(d < -eps, -1, 0)),
+            index=trial_df.index,
+        )
+        sign_nz = sign.replace(0, np.nan).ffill().bfill()
+
+        is_error = (sign_nz.shift(1) < 0) & (sign_nz > 0)
+        is_error.iloc[:2] = False
+
+        if is_error.any():
+            error_times.extend(trial_df[is_error].time.to_list())
+
+    return error_times
+
+
+# %% santiy check distance aligned error
+
+
+def check_dist_aligned_error(input_data, window=(-5, 5), resolution=0.2):
+    df = input_data.copy().reset_index(drop=True)
+    frames_before = int(window[0] / resolution)
+    frames_after = int(window[1] / resolution)
+    expected_length = (frames_after - frames_before) + 1
+    aligned_times = np.arange(frames_before, frames_after + 1) * resolution
+    aligned_distances = []
+    for tuID in df.trial_unique_ID.unique():
+        trial_df = df[df.trial_unique_ID == tuID]
+        error_idx = trial_df[(trial_df.node_degree.gt(2) & ~trial_df.nav_error)].index
+        if len(error_idx) == 0:
+            continue
+        for idx in error_idx:
+            print(idx)
+            start_idx = idx + frames_before
+            end_idx = idx + frames_after
+            try:
+                _df = df.loc[start_idx:end_idx]
+            except KeyError:
+                continue
+            if len(_df) != expected_length:
+                continue
+            same_trial_mask = (_df.trial_unique_ID == tuID).values.astype(bool)
+            distance_to_goal = _df.distance_bin_mid.values.astype(float)
+            distance_to_goal[~same_trial_mask] = np.nan
+            aligned_distances.append(distance_to_goal)
+    # plot
+    stack = np.stack(aligned_distances)
+    return stack
+    plt.plot(aligned_times, stack.T, lw=0.1, alpha=0.1)  # zscore(stack, axis=1, nan_policy="omit").T)
