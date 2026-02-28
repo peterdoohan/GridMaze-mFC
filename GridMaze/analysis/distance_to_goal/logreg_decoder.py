@@ -4,6 +4,7 @@ Distance to goal decoding using logistic regression this time.
 
 # %% Imports
 import json
+from tracemalloc import start
 import numpy as np
 import pandas as pd
 from joblib import delayed, Parallel
@@ -14,6 +15,7 @@ import seaborn as sns
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from scipy.stats import zscore
+from torch import fill
 
 from GridMaze.maze import representations as mr
 from GridMaze.analysis.core import convert
@@ -437,9 +439,9 @@ def get_input_data(
 
     # add error times
     nav_error_times = get_nav_error_times(session)
-    poke_error_times = get_poke_error_times(session)
+    nav_correct_times = get_nav_correct_times(session)
     input_df.loc[:, "nav_error"] = nearest_time_mask(nav_error_times, input_df.time)
-    input_df.loc[:, "poke_error"] = nearest_time_mask(poke_error_times, input_df.time)
+    input_df.loc[:, "nav_correct"] = nearest_time_mask(nav_correct_times, input_df.time)
 
     # add other info
     input_df[("subject_ID", "")] = session.subject_ID
@@ -465,56 +467,55 @@ def get_input_data(
 # %% error alignment
 
 
-def nearest_time_mask(times_1, times_2):
+def nearest_time_mask(times_1, times_2, max_diff_seconds=2.0, return_large_diff_mask=False):
     """
     Return a boolean mask (pd.Series) over times_2 marking nearest matches to times_1.
+    Optionally also return a mask of matches whose nearest-time difference exceeds
+    max_diff_seconds.
     """
     idx = pd.Index(times_2.values)
     nearest_pos = idx.get_indexer(times_1, method="nearest")
+
     mask = pd.Series(False, index=times_2.index)
-    mask.iloc[nearest_pos[nearest_pos >= 0]] = True
+    large_diff_mask = pd.Series(False, index=times_2.index)
+
+    valid = nearest_pos >= 0
+    if valid.any():
+        valid_pos = nearest_pos[valid]
+        mask.iloc[valid_pos] = True
+
+        t1 = np.asarray(times_1)[valid]
+        t2 = np.asarray(times_2.values)[valid_pos]
+        dt = np.abs(t2 - t1)
+        if np.issubdtype(np.asarray(dt).dtype, np.timedelta64):
+            dt = dt / np.timedelta64(1, "s")
+        dt = np.asarray(dt, dtype=float)
+        large_diff_mask.iloc[valid_pos[dt > max_diff_seconds]] = True
+
+    if return_large_diff_mask:
+        return mask, large_diff_mask
     return mask
 
 
-def get_nav_error_times(session, n=2):
+def get_nav_error_times(session, decision_points_only=True, max_steps_to_goal=30, plot=False):
     """
     define navigation errors as times where distance to goal is decreasing and then starts increasing
     for at least n towers.
     returned as a list of times errors occured in the session
-    """
-    df = session.trajectory_decisions_df  # node by node decisions
-    trials = df.trial.dropna().unique()
-    error_times = []
-    for t in trials:
-        trial_df = df[(df.trial == t) & (df.trial_phase == "navigation")]
-        dist_to_goal = trial_df.geodesic_distance_to_goal
-        diffs = dist_to_goal.diff() > 0
-        increase = diffs > 0
-        # previous n diffs were all negative
-        prev_n_decreasing = diffs.shift(1).rolling(n, min_periods=n).max().fillna(0).astype(bool)
-        # detect is True at the first increasing index i; shift it back to i-1
-        error_mask = (increase & prev_n_decreasing).fillna(False)
-        if len(error_mask) < 2:
-            continue
-        error_mask = error_mask.shift(-1)
-        error_mask.iloc[-1] = False  # avoid NaN at end
-        _error_times = trial_df.time[error_mask].to_list()
-        error_times.extend(_error_times)
-    return error_times
-
-
-def get_nav_error_times(session):
-    """
-    define navigation errors as times where distance to goal is decreasing and then starts increasing
-    for at least n towers.
-    returned as a list of times errors occured in the session
+    restrict to decision points (node degree > 2) optionally
     """
     eps = 1e-9
     df = session.trajectory_decisions_df  # node by node decisions
+    # filter data same as input df
+    df = df[df.steps_to_goal.le(max_steps_to_goal)]
+    max_distance = dd.get_distance_percentile(("distance_to_goal", "geodesic"), 0.85)
+    df = df[df.geodesic_distance_to_goal.le(max_distance)]
+    # note trial and trial_unique_ID can be slighly misaligned so use both
+    trials_unique_IDs = df.trial_unique_ID.dropna().unique()
     trials = df.trial.dropna().unique()
     error_times = []
-    for t in trials:
-        trial_df = df[(df.trial == t) & (df.trial_phase == "navigation")]
+    for tuID, t in zip(trials_unique_IDs, trials):
+        trial_df = df[(df.trial_unique_ID == tuID) & (df.trial == t) & (df.trial_phase == "navigation")]
         dist = trial_df.geodesic_distance_to_goal.astype(float)
         d = dist.diff()
         sign = pd.Series(
@@ -524,18 +525,69 @@ def get_nav_error_times(session):
         sign_nz = sign.replace(0, np.nan).ffill().bfill()
 
         is_error = (sign_nz.shift(1) < 0) & (sign_nz > 0)
-        is_error.iloc[:2] = False
+        is_error = is_error.shift(-1, fill_value=False)
+        if decision_points_only:
+            is_decision = trial_df.choice_degree.gt(2)
+            is_error = is_error & is_decision
 
         if is_error.any():
             error_times.extend(trial_df[is_error].time.to_list())
 
+        if plot:
+            time = trial_df.time
+            plt.plot(time, dist)
+            plt.scatter(time[is_error], dist[is_error], color="red", marker="x", label="errors")
+            plt.scatter(time[is_decision], dist[is_decision], color="k", marker=".", alpha=0.5, label="decision points")
+            plt.xlabel("Time (s)")
+            plt.ylabel("Distance to goal")
+            plt.title(f"Trial {t}")
+            plt.show()
+
     return error_times
+
+
+def get_nav_correct_times(session, decision_points_only=True, max_steps_to_goal=30):
+    """
+    define navigation correct decisions as times where distance to goal starts decreasing
+    after a decision.
+    returned as a list of times correct decisions occured in the session
+    restrict to decision points (node degree > 2) optionally
+    """
+    eps = 1e-9
+    df = session.trajectory_decisions_df  # node by node decisions
+    df = df[df.steps_to_goal.le(max_steps_to_goal)]
+    max_distance = dd.get_distance_percentile(("distance_to_goal", "geodesic"), 0.85)
+    df = df[df.geodesic_distance_to_goal.le(max_distance)]
+
+    trials_unique_IDs = df.trial_unique_ID.dropna().unique()
+    trials = df.trial.dropna().unique()
+    correct_times = []
+    for tuID, t in zip(trials_unique_IDs, trials):
+        trial_df = df[(df.trial_unique_ID == tuID) & (df.trial == t) & (df.trial_phase == "navigation")]
+        dist = trial_df.geodesic_distance_to_goal.astype(float)
+        d = dist.diff()
+        sign = pd.Series(
+            np.where(d > eps, 1, np.where(d < -eps, -1, 0)),
+            index=trial_df.index,
+        )
+        sign_nz = sign.replace(0, np.nan).ffill().bfill()
+
+        is_correct = sign_nz < 0
+        is_correct = is_correct.shift(-1, fill_value=False)
+        if decision_points_only:
+            is_decision = trial_df.choice_degree.gt(2)
+            is_correct = is_correct & is_decision
+
+        if is_correct.any():
+            correct_times.extend(trial_df[is_correct].time.to_list())
+
+    return correct_times
 
 
 # %% santiy check distance aligned error
 
 
-def check_dist_aligned_error(input_data, window=(-5, 5), resolution=0.2):
+def check_dist_aligned_decision(input_data, type="nav_error", window=(-5, 5), resolution=0.2):
     df = input_data.copy().reset_index(drop=True)
     frames_before = int(window[0] / resolution)
     frames_after = int(window[1] / resolution)
@@ -544,11 +596,10 @@ def check_dist_aligned_error(input_data, window=(-5, 5), resolution=0.2):
     aligned_distances = []
     for tuID in df.trial_unique_ID.unique():
         trial_df = df[df.trial_unique_ID == tuID]
-        error_idx = trial_df[(trial_df.node_degree.gt(2) & ~trial_df.nav_error)].index
+        error_idx = trial_df[trial_df[type]].index
         if len(error_idx) == 0:
             continue
         for idx in error_idx:
-            print(idx)
             start_idx = idx + frames_before
             end_idx = idx + frames_after
             try:
@@ -562,6 +613,40 @@ def check_dist_aligned_error(input_data, window=(-5, 5), resolution=0.2):
             distance_to_goal[~same_trial_mask] = np.nan
             aligned_distances.append(distance_to_goal)
     # plot
-    stack = np.stack(aligned_distances)
-    return stack
-    plt.plot(aligned_times, stack.T, lw=0.1, alpha=0.1)  # zscore(stack, axis=1, nan_policy="omit").T)
+    for i in range(max(50, len(aligned_distances) - 1)):
+        plt.plot(aligned_times, aligned_distances[i])
+        plt.show()
+
+
+def plot_trial_distance_to_goal(session):
+    input_data = get_input_data(session, resolution=0.2)
+    trials = input_data.trial_unique_ID.dropna().unique()
+    for trial in trials:
+        trial_df = input_data[input_data.trial_unique_ID == trial]
+        times = trial_df.time
+        dist = trial_df.distance_to_goal.geodesic
+        plt.plot(times, dist)
+        error_mask = trial_df.nav_error
+        plt.scatter(times[error_mask], dist[error_mask], color="red", marker="x")
+        correct_mask = trial_df.nav_correct
+        plt.scatter(times[correct_mask], dist[correct_mask], color="green", marker="o", alpha=0.5)
+        decision_points_mask = trial_df.node_degree.gt(2)
+        plt.scatter(times[decision_points_mask], dist[decision_points_mask], color="k", marker=".", alpha=0.5)
+
+        plt.xlabel("Time (s)")
+        plt.ylabel("Distance to goal (steps)")
+        plt.title(trial)
+        plt.show()
+
+
+def check_trial_times(session):
+    input_data = get_input_data(session, resolution=0.2)
+    trials_df = session.trials_df.copy()
+    trials_df = trials_df.set_index(("trial", ""))
+    for trial in trials_df.index:
+        cue_time = trials_df.loc[trial, ("time", "cue")]
+        reward_time = trials_df.loc[trial, ("time", "reward")]
+        trial_df = input_data[input_data.trial == trial]
+        start_time = trial_df.time.min()
+        end_time = trial_df.time.max()
+        print(f"Trial {trial}: {cue_time:.1f}-{reward_time:.1f} VS {start_time:.1f}-{end_time:.1f}")
