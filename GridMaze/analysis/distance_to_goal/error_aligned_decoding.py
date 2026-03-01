@@ -235,121 +235,6 @@ def align_decoding_to_errors(results_df, error_type="nav_error", window=(-5, 5),
     return aligned_df
 
 
-# %% Baseline true distances to goal aligned to errors
-
-## TODO: plot true distance profiles with matched distance at error sampling between error and correct decisions
-
-
-def test():
-    """ """
-    return
-
-
-# %% Exp level decoding
-
-
-def plot_error_aligned_bias(bias_df, ax=None):
-    """ """
-    if ax is None:
-        f, axes = plt.subplots(1, 2, figsize=(7, 2))
-    for ax in axes:
-        ax.spines[["top", "right"]].set_visible(False)
-        # ax.axvline(0, color="k", linestyle="--", alpha=0.5)
-        ax.set_xlabel("decision (s)")
-        ax.set_ylabel("distance to goal")
-
-    # get cross subject average
-    df = bias_df.copy()
-    df["distance"] = df.distance.round(2)
-    avg_bias = df.groupby(["error", "aligned_time", "distance"]).bias.mean()
-    for err, ax in zip([False, True], axes):
-        hm = avg_bias.loc[err].unstack(0)
-        # zscore rows
-        # z_hm = zscore(hm.values, axis=1, nan_policy="omit")
-        # hm = pd.DataFrame(z_hm, index=hm.index, columns=hm.columns)
-
-        sns.heatmap(
-            hm,
-            ax=ax,
-            cmap="coolwarm",
-            center=0,
-            # vmin=-0.5,
-            # vmax=0.5,
-            cbar_kws={"label": "bias (m)"},
-            square=True,
-            xticklabels=5,
-            yticklabels=5,
-        )
-        ax.invert_yaxis()
-
-
-def get_error_aligned_bias(aligned_probs):
-    grouped = aligned_probs.groupby(["subject_ID", "error", "aligned_time", "true_distance"])
-    aligned_avg = grouped.decoded_distance_prob.mean()
-    results = []
-    for subject in aligned_probs.subject_ID.unique():
-        for err in [True, False]:
-            for t in aligned_probs.aligned_time.unique():
-                M_norm = aligned_avg.loc[subject, err, t].decoded_distance_prob
-                # decoded_bins = M_norm.columns.astype(float)
-                # mu = (M_norm.values * decoded_bins.values[None, :]).sum(axis=1)  # weighted avg distance
-                mu = M_norm.idxmax(axis=1).astype(float)  # max decoded distance
-                true_dist = M_norm.index.astype(float)
-                bias_per_d = mu - true_dist  # bias over distances
-                results.append(
-                    pd.DataFrame(
-                        {
-                            "subject_ID": subject,
-                            "error": err,
-                            "aligned_time": t,
-                            "distance": true_dist,
-                            "bias": bias_per_d,
-                        }
-                    )
-                )
-    return pd.concat(results, ignore_index=True)
-
-
-def get_error_aligned_probs(
-    decoding_probs, error_type="nav_error", window=(-5, 5), decision_points_only=True, resolution=0.2
-):
-    """ """
-    # define error windows
-    rows_before = int(-window[0] / resolution)
-    rows_after = int(window[1] / resolution)
-    expected_length = rows_before + rows_after + 1
-    aligned_times = np.arange(window[0], window[1] + resolution, resolution).round(2)
-    # loop over subjects and errors
-    _dfs = []
-    for subject_ID in decoding_probs.subject_ID.unique():
-        print(subject_ID)
-        _df = decoding_probs[decoding_probs.subject_ID == subject_ID].copy()
-        for tuID in _df.trial_unique_ID.unique():
-            for err in [True, False]:
-                _msk = _df[error_type] == err
-                if decision_points_only:
-                    _msk &= _df.node_degree.gt(2)
-                idxs = _df[_msk].index
-                for i in idxs:
-                    try:
-                        start_idx = i - rows_before
-                        end_idx = i + rows_after
-                        aligned_df = _df.loc[start_idx:end_idx]
-                    except IndexError:
-                        continue
-                    if aligned_df.shape[0] != expected_length:
-                        continue
-                    true_distances = aligned_df.loc[:, ("distance_bin_mid", "")]
-                    aligned_df = aligned_df.xs("decoded_distance_prob", axis=1, level=0, drop_level=False)
-                    aligned_df[("aligned_time", "")] = aligned_times
-                    aligned_df[("true_distance", "")] = true_distances
-                    aligned_df[("error", "")] = err
-                    aligned_df[("subject_ID", "")] = subject_ID
-                    _dfs.append(aligned_df)
-
-    return pd.concat(_dfs, ignore_index=True)
-
-
 def get_distance_to_goal_decoding_df(sessions=None, resolution=0.2, verbose=True, save=False, n_jobs=-1):
     """
     slighly different params than logreg decoder
@@ -384,7 +269,6 @@ def get_distance_to_goal_decoding_df(sessions=None, resolution=0.2, verbose=True
                 session,
                 resolution=resolution,
                 verbose=verbose,
-                moving_only=True,
             )
             for session in sessions
         )
@@ -394,7 +278,6 @@ def get_distance_to_goal_decoding_df(sessions=None, resolution=0.2, verbose=True
                 session,
                 resolution=resolution,
                 verbose=verbose,
-                moving_only=True,
             )
             for session in sessions
         ]
