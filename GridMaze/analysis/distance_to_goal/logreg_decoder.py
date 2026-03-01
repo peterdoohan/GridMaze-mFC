@@ -67,7 +67,7 @@ def plot_distance_decoding_probs(
         norm = None
         cbar_kwargs = {"shrink": 0.5}
     sns.heatmap(
-        data,
+        data.astype(float),
         square=True,
         cmap="Greys",
         norm=norm,
@@ -203,23 +203,7 @@ def decode_session_distance_to_goal(
     # set up output df
     results_df = pd.concat(
         [
-            input_data[
-                [
-                    ("subject_ID", ""),
-                    ("maze_name", ""),
-                    ("day_on_maze", ""),
-                    ("trial", ""),
-                    ("trial_unique_ID", ""),
-                    ("time", ""),
-                    ("moving", ""),
-                    ("steps_to_goal", "future"),
-                    ("distance_bin_mid", ""),
-                    ("nav_error", ""),
-                    ("poke_error", ""),
-                    ("node_degree", ""),
-                    metric,
-                ]
-            ],
+            input_data.drop("spike_count", level=0, axis=1),
             pd.DataFrame(
                 columns=pd.MultiIndex.from_product([["decoded_distance_prob"], distance_bin_mids]),
                 index=input_data.index,

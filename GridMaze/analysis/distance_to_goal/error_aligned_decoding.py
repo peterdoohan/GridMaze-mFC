@@ -41,24 +41,28 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 
 def plot_error_aligned_distance(
     aligned_df,
+    min_prop_moving=None,
     match_distance_sampling=True,
     random_state=None,
+    plot_delta=False,
     color="royalblue",
     ax=None,
 ):
     """ """
     # set up figure
     if ax is None:
-        f, ax = plt.subplots(1, 1, figsize=(6, 3))
+        f, ax = plt.subplots(1, 1, figsize=(4, 3))
     ax.spines[["top", "right"]].set_visible(False)
     ax.axvline(0, color="k", linestyle="--", alpha=0.5)
     ax.set_xlabel("decision (s)")
-    ax.set_ylabel("distance to goal (m) \n true or decoded")
 
     # optionally downsample correct decision to match the distances to goal in error trials
+    df = aligned_df.copy()
+    if min_prop_moving is not None:
+        df = df[df.prop_moving.gt(min_prop_moving)]
     if match_distance_sampling:
         _cols = [("subject_ID", ""), ("distance_to_goal", ""), ("error", "")]
-        _df = aligned_df[_cols].droplevel(1, axis=1)
+        _df = df[_cols].droplevel(1, axis=1)
         error_df = _df[_df.error]
         counts_error = error_df.groupby(["subject_ID", "distance_to_goal"]).size().rename("n_error").reset_index()
         correct_df = _df[~_df.error].copy()
@@ -79,83 +83,115 @@ def plot_error_aligned_distance(
         correct_indices = sampled_correct["_orig_idx"].tolist()
         error_indices = error_df.index.tolist()
         full_sample = correct_indices + error_indices
-        _aligned_df = aligned_df.loc[full_sample].copy()
+        _aligned_df = aligned_df.loc[full_sample].reset_index(drop=True).copy()
     else:
-        _aligned_df = aligned_df.copy()
+        _aligned_df = df.reset_index(drop=True).copy()
 
-    subj_grouped = _aligned_df.groupby(["subject_ID", "error"])
-    for dist, ls in zip(["true_distance", "decoded_distance"], ["-", "--"]):
-        sub_avg = subj_grouped[dist].mean()[dist]
-        times = sub_avg.columns.values.astype(float)
-        _means = sub_avg.groupby(level=1).mean()
-        _sems = sub_avg.groupby(level=1).sem()
+    if plot_delta:
+        delta = _aligned_df.decoded_distance - _aligned_df.true_distance
+        delta.columns = pd.MultiIndex.from_product([["delta_distance"], delta.columns])
+        delta[("subject_ID", "")] = _aligned_df[("subject_ID", "")]
+        delta[("error", "")] = _aligned_df[("error", "")]
+        subj_avg = delta.groupby(["subject_ID", "error"]).delta_distance.mean().delta_distance
+        _means = subj_avg.groupby(level=1).mean()
+        _sems = subj_avg.groupby(level=1).sem()
+        times = subj_avg.columns.values.astype(float)
         for error, color in zip(
             [False, True],
-            ["gray", color],
+            ["k", color],
         ):
             _mean = _means.loc[error].values
             _sem = _sems.loc[error].values
             # plot
-            ax.plot(times, _mean, color=color, ls=ls, label=f"error:{error}, {dist}")
+            ax.plot(times, _mean, color=color, ls="-", label=f"error:{error}, delta distance")
             ax.fill_between(times, _mean - _sem, _mean + _sem, color=color, alpha=0.2)
-    ax.legend(frameon=False, fontsize=6)
+        ax.axhline(0, color="k", linestyle="--", alpha=0.5, zorder=0)
+        ax.set_ylabel("distance to goal \n decoded - true (m)")
+        ax.legend(frameon=False, fontsize=6)
+
+    else:
+        subj_grouped = _aligned_df.groupby(["subject_ID", "error"])
+        for dist, ls in zip(["true_distance", "decoded_distance"], ["-", "--"]):
+            sub_avg = subj_grouped[dist].mean()[dist]
+            times = sub_avg.columns.values.astype(float)
+            _means = sub_avg.groupby(level=1).mean()
+            _sems = sub_avg.groupby(level=1).sem()
+            for error, color in zip(
+                [False, True],
+                ["k", color],
+            ):
+                _mean = _means.loc[error].values
+                _sem = _sems.loc[error].values
+                # plot
+                ax.plot(times, _mean, color=color, ls=ls, label=f"error:{error}, {dist.split('_')[0]}")
+                ax.fill_between(times, _mean - _sem, _mean + _sem, color=color, alpha=0.2)
+            ax.set_ylabel("distance to goal (m)")
+            ax.legend(frameon=False, fontsize=6)
 
 
-def align_decoding_to_errors2(results_df, error_type="nav_error", window=(-5, 5), resolution=0.2):
-    """Align true/decoded distance traces to decision points (error/correct)."""
+# %% Align on errors
 
-    df = results_df.copy()
 
-    # robust extraction of decoded prob matrix
-    prob_df = df.decoded_distance_prob
-    distance_bins = pd.to_numeric(prob_df.columns, errors="coerce").values
-    P = prob_df.values.astype(float)
+def get_aligned_decoding(decoding_probs, window=(-5, 5), resolution=0.2):
+    df = decoding_probs.copy().reset_index(drop=True)
+
+    P = df.decoded_distance_prob.values
+    distance_bins = df.decoded_distance_prob.columns.astype(float)
     df[("decoded_distance", "")] = np.dot(P, distance_bins)
 
-    rows_before = int(round(-window[0] / resolution))
-    rows_after = int(round(window[1] / resolution))
+    rows_before = int(-window[0] / resolution)
+    rows_after = int(window[1] / resolution)
     expected_length = rows_before + rows_after + 1
-    aligned_times = np.linspace(window[0], window[1], expected_length).round(2)
+    aligned_times = np.round(np.linspace(window[0], window[1], expected_length), 2)
 
     dfs = []
     for subject_ID in df.subject_ID.unique():
         subj_df = df[df.subject_ID == subject_ID].copy().reset_index(drop=True)
 
         for tuID in subj_df.trial_unique_ID.unique():
-            trial_df = subj_df[subj_df.trial_unique_ID == tuID]
+            trial_mask = subj_df.trial_unique_ID == tuID
+            trial_df = subj_df[trial_mask]
 
-            for err in [True, False]:
-                idxs = trial_df[(trial_df[error_type] == err) & trial_df.node_degree.gt(2)].index
+            for err in ["nav_error", "nav_correct"]:
+                aligned_true, aligned_decoded, distances_at_decision, prop_moving = [], [], [], []
+
+                idxs = trial_df.index[trial_df[err]]
                 if len(idxs) == 0:
                     continue
 
-                aligned_true, aligned_decoded, distances_at_decision = [], [], []
                 for i in idxs:
                     start_idx = i - rows_before
                     end_idx = i + rows_after
                     if start_idx < 0 or end_idx >= len(subj_df):
                         continue
 
-                    w = subj_df.iloc[start_idx : end_idx + 1].copy()
-                    if w.shape[0] != expected_length:
+                    _df = subj_df.iloc[start_idx : end_idx + 1].copy()
+                    if _df.shape[0] != expected_length:
                         continue
 
-                    diff_trial_mask = (w.trial_unique_ID != tuID).values
-                    true_dist = w.distance_bin_mid.values.astype(float)
-                    decoded_dist = w.decoded_distance.values.astype(float)
+                    diff_trial_mask = (_df.trial_unique_ID != tuID).values
+                    true_dist = _df.distance_bin_mid.values.astype(float)
+                    decoded_dist = _df.decoded_distance.values.astype(float)
+                    moving = _df.moving.values.astype(float)
+
                     true_dist[diff_trial_mask] = np.nan
                     decoded_dist[diff_trial_mask] = np.nan
+                    moving[diff_trial_mask] = np.nan
 
                     aligned_true.append(true_dist)
                     aligned_decoded.append(decoded_dist)
                     distances_at_decision.append(trial_df.loc[i, ("distance_bin_mid", "")])
+                    prop_moving.append(np.nanmean(moving))
 
                 if len(aligned_true) == 0:
                     continue
 
                 aligned_df = pd.concat(
                     [
-                        pd.DataFrame(np.stack(arrs), columns=pd.MultiIndex.from_product([[label], aligned_times]))
+                        pd.DataFrame(
+                            np.stack(arrs),
+                            columns=pd.MultiIndex.from_product([[label], aligned_times]),
+                        )
                         for arrs, label in zip(
                             [aligned_true, aligned_decoded],
                             ["true_distance", "decoded_distance"],
@@ -163,76 +199,15 @@ def align_decoding_to_errors2(results_df, error_type="nav_error", window=(-5, 5)
                     ],
                     axis=1,
                 )
-                aligned_df[("error", "")] = err
+                aligned_df[("error", "")] = err == "nav_error"
                 aligned_df[("subject_ID", "")] = subject_ID
                 aligned_df[("distance_to_goal", "")] = distances_at_decision
+                aligned_df[("prop_moving", "")] = prop_moving
+
+                # append INSIDE err loop so both nav_error and nav_correct are kept
                 dfs.append(aligned_df)
 
-    return pd.concat(dfs, ignore_index=True)
-
-
-def align_decoding_to_errors(results_df, error_type="nav_error", window=(-5, 5), resolution=0.2):
-    """ """
-    df = results_df.copy()
-    df.reset_index(inplace=True, drop=True)
-    # add decoded distance column
-    P = df.decoded_distance_prob.values
-    distance_bins = df.decoded_distance_prob.columns.astype(float)
-    weighted_dists = np.dot(P, distance_bins)  # weighted average of decoded distances
-    df[("decoded_distance", "")] = weighted_dists
-    # define error windows
-    rows_before = int(-window[0] / resolution)
-    rows_after = int(window[1] / resolution)
-    expected_length = rows_before + rows_after + 1
-    aligned_times = np.arange(window[0], window[1] + resolution, resolution).round(2)
-    dfs = []
-    for subject_ID in results_df.subject_ID.unique():
-        print(subject_ID)
-        # get decoding delta aliged each error
-        subj_df = df[df.subject_ID == subject_ID].copy()
-        for tuID in subj_df.trial_unique_ID.unique():
-            trial_df = subj_df[subj_df.trial_unique_ID == tuID].copy()
-            for err in [True, False]:
-                aligned_true = []
-                aligned_decoded = []
-                distances_at_decision = []
-                # filter for either errors or correct decisions at decision points
-                idxs = trial_df[(trial_df[error_type] == err) & trial_df.node_degree.gt(2)].index
-                if len(idxs) == 0:
-                    continue
-                for i in idxs:
-                    start_idx = i - rows_before
-                    end_idx = i + rows_after
-                    try:
-                        _df = subj_df.loc[start_idx:end_idx].copy()
-                    except IndexError:
-                        continue
-                    if _df.shape[0] != expected_length:
-                        continue
-                    diff_trial_mask = (_df.trial_unique_ID != tuID).values.astype(bool)
-                    true_dist = _df.distance_bin_mid.values.astype(float)
-                    decoded_dist = _df.decoded_distance.values.astype(float)
-                    true_dist[diff_trial_mask] = np.nan
-                    decoded_dist[diff_trial_mask] = np.nan
-                    aligned_true.append(true_dist)
-                    aligned_decoded.append(decoded_dist)
-                    distances_at_decision.append(trial_df.loc[i, ("distance_bin_mid", "")])
-                if len(aligned_true) == 0:
-                    continue
-                # organise into dataframes
-                aligned_df = pd.concat(
-                    [
-                        pd.DataFrame(data=np.stack(arrs), columns=pd.MultiIndex.from_product([[label], aligned_times]))
-                        for arrs, label in zip([aligned_true, aligned_decoded], ["true_distance", "decoded_distance"])
-                    ],
-                    axis=1,
-                )
-                aligned_df[("error", "")] = err
-                aligned_df[("subject_ID", "")] = subject_ID
-                aligned_df[("distance_to_goal", "")] = distances_at_decision
-            dfs.append(aligned_df)
-    aligned_df = pd.concat(dfs, ignore_index=True)
-    return aligned_df
+    return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
 
 
 def get_distance_to_goal_decoding_df(sessions=None, resolution=0.2, verbose=True, save=False, n_jobs=-1):
