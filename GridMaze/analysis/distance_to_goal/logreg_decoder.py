@@ -587,7 +587,8 @@ def get_nav_correct_times(session, decision_points_only=True, max_steps_to_goal=
 # %% santiy check distance aligned error
 
 
-def check_dist_aligned_decision(input_data, type="nav_error", window=(-5, 5), resolution=0.2):
+def check_dist_aligned_decision(session, type="nav_error", window=(-5, 5), resolution=0.2):
+    input_data = get_input_data(session, resolution=0.2)
     df = input_data.copy().reset_index(drop=True)
     frames_before = int(window[0] / resolution)
     frames_after = int(window[1] / resolution)
@@ -637,16 +638,3 @@ def plot_trial_distance_to_goal(session):
         plt.ylabel("Distance to goal (steps)")
         plt.title(trial)
         plt.show()
-
-
-def check_trial_times(session):
-    input_data = get_input_data(session, resolution=0.2)
-    trials_df = session.trials_df.copy()
-    trials_df = trials_df.set_index(("trial", ""))
-    for trial in trials_df.index:
-        cue_time = trials_df.loc[trial, ("time", "cue")]
-        reward_time = trials_df.loc[trial, ("time", "reward")]
-        trial_df = input_data[input_data.trial == trial]
-        start_time = trial_df.time.min()
-        end_time = trial_df.time.max()
-        print(f"Trial {trial}: {cue_time:.1f}-{reward_time:.1f} VS {start_time:.1f}-{end_time:.1f}")
