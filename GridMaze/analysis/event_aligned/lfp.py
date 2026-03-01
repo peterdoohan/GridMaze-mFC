@@ -357,6 +357,15 @@ def load_signal_df(signal_type):
 # %% Save functions
 
 
+def _save_all():
+    save_all_spectrogram_dfs(overwrite=False, signal_type="CSD", verbose=True, save_session_dfs=False)
+    save_all_spectrogram_dfs(overwrite=False, signal_type="LFP", verbose=True, save_session_dfs=False)
+    save_all_signal_dfs(overwrite=False, signal_type="CSD", verbose=True)
+    save_all_signal_dfs(overwrite=False, signal_type="LFP", verbose=True)
+    save_all_PSD_dfs(signal_type="CSD", overwrite=False, verbose=True)
+    save_all_PSD_dfs(signal_type="LFP", overwrite=False, verbose=True)
+
+
 def save_all_spectrogram_dfs(overwrite=False, signal_type="CSD", verbose=False, save_session_dfs=True):
     save_path = LFP_RESULTS / f"aligned_spectrograms_{signal_type}.parquet"
     if save_path.exists() and not overwrite:
