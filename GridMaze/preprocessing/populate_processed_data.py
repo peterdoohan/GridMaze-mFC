@@ -272,7 +272,7 @@ def _populate_lfp_data(session_dir, processed_data_folder, overwrite):
     """
     if not pass_data_QC(session_dir, "lfp"):  # issues with raw data
         return
-    # save lfp signal
+    # # save lfp signal
     if not overwrite and (processed_data_folder / "lfp.signal.npy").exists():
         pass
     else:

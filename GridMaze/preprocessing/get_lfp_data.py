@@ -115,7 +115,7 @@ def get_LFP_metrics(session_dir, downsample_frequency=1500):
     channel_label2contact_id = {v: k for k, v in contact_id2channel_label.items()}
     channel_assignments = _load_channel_assignments(session_dir)
     # map from channel labels to contact ids
-    channel_assignments = {channel_label2contact_id[k]: v for k, v in channel_assignments.items()}
+    channel_assignments = {int(channel_label2contact_id[k]): v for k, v in channel_assignments.items()}
     probe_anatomy_df = ed.load_subject_probe(session_dir.subject_ID)
     tissue_sample = ed._get_tissue_sample(session_dir.subject_ID, session_dir.date)
     probe_anatomy_df = probe_anatomy_df[probe_anatomy_df.tissue_sample == tissue_sample]
