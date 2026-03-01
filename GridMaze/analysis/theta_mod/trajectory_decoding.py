@@ -24,7 +24,7 @@ from GridMaze.analysis.core import filter as filt
 from GridMaze.analysis.core import folds
 from GridMaze.analysis.core import downsample as ds
 from GridMaze.analysis.core import convert
-from GridMaze.analysis.theta_mod import distance_to_goal_tuning as gt
+from GridMaze.analysis.theta_mod import theta_utils as tmu
 
 from GridMaze.maze import representations as mr
 from GridMaze.maze import plotting as mp
@@ -92,7 +92,7 @@ def plot_theta_mod_trajectory_error(
     )
     # stats
     if print_stats:
-        gt._get_x_shift_stats(subject_means)
+        tmu.test_theta_modulation(subject_means.T)
 
 
 def filter_decision_points(summary_df, decision_points="future"):
@@ -116,18 +116,25 @@ def filter_decision_points(summary_df, decision_points="future"):
 # %%
 
 
-def get_summary_df(verbose=True, save=False):
+def get_summary_df(verbose=True, save=False, control=False):
 
     def _process_session(session):
         if verbose:
             print(session.name)
-        results_df = get_session_theta_mod_trajectory_error(session, verbose=False)
+        results_df = get_session_theta_mod_trajectory_error(
+            session,
+            verbose=False,
+            use_control_theta_spike_counts=control,
+        )
         results_df["subject_ID"] = session.subject_ID
         results_df["maze_name"] = session.maze_name
         results_df["day_on_maze"] = session.day_on_maze
         return results_df
 
-    save_path = RESULTS_DIR / "decoding_summary_df2.parquet"
+    if control:
+        save_path = RESULTS_DIR / "decoding_summary_control_df.parquet"
+    else:
+        save_path = RESULTS_DIR / "decoding_summary_df2.parquet"
     if save_path.exists() and not save:
         summary_df = pd.read_parquet(save_path)
         return summary_df
@@ -165,6 +172,7 @@ def get_session_theta_mod_trajectory_error(
     normalise_X=True,
     n_folds=8,
     verbose=False,
+    use_control_theta_spike_counts=False,
 ):
     """ """
     # input data
@@ -180,6 +188,8 @@ def get_session_theta_mod_trajectory_error(
         offset=envelope,
         state_type="place",
     )
+    if use_control_theta_spike_counts:
+        input_data = get_theta_spike_control_input_data(input_data)
     # include only samples where full future + past envelope is defined to avoid bias
     input_data = input_data[input_data[["past", "future"]].notnull().all(axis=1)]
     valid_trials = input_data.trial.unique()
@@ -400,3 +410,33 @@ def get_input_data(
         max_steps_to_goal=max_steps_to_goal,
     )
     return navigation_spikes_df
+
+
+# %%
+
+
+def get_theta_spike_control_input_data(input_data):
+    """ """
+    # split df back into navigation and spike counts
+    navigation_df = input_data.drop(columns="spike_count", level=0, axis=1).copy()
+    theta_spike_counts = input_data.spike_count.copy()
+    phases = theta_spike_counts.columns.get_level_values(1).unique()
+    # get each clusters theta modulation profile (norm.)
+    theta_mod = theta_spike_counts.mean().unstack()
+    norm_theta_mod = theta_mod.sub(theta_mod.mean(axis=1), axis=0) + 1
+    # get mean spike counts across theta phases
+    theta_avg = theta_spike_counts.T.groupby(level=0).mean().T
+    # check cluster unique ids
+    assert all(norm_theta_mod.index == theta_avg.columns), "cluster_ID mismatch"
+    # build control "spike_counts" that just reflect average theta modualtion
+    dfs = []
+    for phase in phases:
+        control_phase_counts = theta_avg.mul(norm_theta_mod[phase], axis=1)
+        control_phase_counts.columns = pd.MultiIndex.from_product(
+            [["spike_count"], [phase], control_phase_counts.columns]
+        )
+        dfs.append(control_phase_counts)
+    control_theta_spike_counts = pd.concat(dfs, axis=1)
+    control_theta_spike_counts = control_theta_spike_counts.swaplevel(1, 2, axis=1).sort_index(axis=1)
+    # combine with navigation df and return
+    return pd.concat([navigation_df, control_theta_spike_counts], axis=1)
