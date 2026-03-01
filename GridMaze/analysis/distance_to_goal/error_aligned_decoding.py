@@ -7,23 +7,12 @@ when it is wrong?
 
 # %% Imports
 import json
-from tracemalloc import start
-from idna import decode
 import numpy as np
 import pandas as pd
 from joblib import delayed, Parallel
 from matplotlib import pyplot as plt
-import seaborn as sns
-from scipy.stats import zscore
-from sklearn.linear_model import LogisticRegression
-from sklearn.preprocessing import StandardScaler
 
-from GridMaze.maze import representations as mr
-from GridMaze.analysis.core import convert
-from GridMaze.analysis.core import downsample as ds
-from GridMaze.analysis.core import folds
 from GridMaze.analysis.core import get_sessions as gs
-from GridMaze.analysis.distance_to_goal import distributions as dd
 from GridMaze.analysis.distance_to_goal import logreg_decoder as lr
 
 # %% Global Variables
@@ -37,6 +26,29 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 
 
 # %% plot decoding aligned to errors
+
+
+def plot2(
+    aligned_df,
+    min_prop_moving=None,
+    match_distance_sampling=True,
+    color="royalblue",
+    ax=None,
+):
+    """ """
+    # set up figure
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(4, 3))
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.axvline(0, color="k", linestyle="--", alpha=0.5)
+    ax.set_xlabel("decision (s)")
+
+    # optionally downsample correct decision to match the distances to goal in error trials
+    _aligned_df = filter_aligned_decoding(
+        aligned_df,
+        min_prop_moving=min_prop_moving,
+        match_distance_sampling=match_distance_sampling,
+    )
 
 
 def plot_error_aligned_distance(
@@ -56,6 +68,63 @@ def plot_error_aligned_distance(
     ax.axvline(0, color="k", linestyle="--", alpha=0.5)
     ax.set_xlabel("decision (s)")
 
+    # optionally downsample correct decision to match the distances to goal in error trials
+    _aligned_df = filter_aligned_decoding(
+        aligned_df,
+        min_prop_moving=min_prop_moving,
+        match_distance_sampling=match_distance_sampling,
+        random_state=random_state,
+    )
+
+    if plot_delta:
+        delta = _aligned_df.decoded_distance - _aligned_df.true_distance
+        delta.columns = pd.MultiIndex.from_product([["delta_distance"], delta.columns])
+        delta[("subject_ID", "")] = _aligned_df[("subject_ID", "")]
+        delta[("error", "")] = _aligned_df[("error", "")]
+        subj_avg = delta.groupby(["subject_ID", "error"]).delta_distance.mean().delta_distance
+        _means = subj_avg.groupby(level=1).mean()
+        _sems = subj_avg.groupby(level=1).sem()
+        times = subj_avg.columns.values.astype(float)
+        for error, color in zip(
+            [False, True],
+            ["k", color],
+        ):
+            _mean = _means.loc[error].values
+            _sem = _sems.loc[error].values
+            # plot
+            ax.plot(times, _mean, color=color, ls="-", label=f"error:{error}, delta distance")
+            ax.fill_between(times, _mean - _sem, _mean + _sem, color=color, alpha=0.2)
+        ax.axhline(0, color="k", linestyle="--", alpha=0.5, zorder=0)
+        ax.set_ylabel("distance to goal \n decoded - true (m)")
+        ax.legend(frameon=False, fontsize=6)
+
+    else:
+        subj_grouped = _aligned_df.groupby(["subject_ID", "error"])
+        for dist, ls in zip(["true_distance", "decoded_distance"], ["-", "--"]):
+            subj_avg = subj_grouped[dist].mean()[dist]
+            times = subj_avg.columns.values.astype(float)
+            _means = subj_avg.groupby(level=1).mean()
+            _sems = subj_avg.groupby(level=1).sem()
+            for error, color in zip(
+                [False, True],
+                ["k", color],
+            ):
+                _mean = _means.loc[error].values
+                _sem = _sems.loc[error].values
+                # plot
+                ax.plot(times, _mean, color=color, ls=ls, label=f"error:{error}, {dist.split('_')[0]}")
+                ax.fill_between(times, _mean - _sem, _mean + _sem, color=color, alpha=0.2)
+            ax.set_ylabel("distance to goal (m)")
+            ax.legend(frameon=False, fontsize=6)
+    return _aligned_df
+
+
+def filter_aligned_decoding(
+    aligned_df,
+    min_prop_moving=None,
+    match_distance_sampling=True,
+    random_state=None,
+):
     # optionally downsample correct decision to match the distances to goal in error trials
     df = aligned_df.copy()
     if min_prop_moving is not None:
@@ -86,47 +155,7 @@ def plot_error_aligned_distance(
         _aligned_df = aligned_df.loc[full_sample].reset_index(drop=True).copy()
     else:
         _aligned_df = df.reset_index(drop=True).copy()
-
-    if plot_delta:
-        delta = _aligned_df.decoded_distance - _aligned_df.true_distance
-        delta.columns = pd.MultiIndex.from_product([["delta_distance"], delta.columns])
-        delta[("subject_ID", "")] = _aligned_df[("subject_ID", "")]
-        delta[("error", "")] = _aligned_df[("error", "")]
-        subj_avg = delta.groupby(["subject_ID", "error"]).delta_distance.mean().delta_distance
-        _means = subj_avg.groupby(level=1).mean()
-        _sems = subj_avg.groupby(level=1).sem()
-        times = subj_avg.columns.values.astype(float)
-        for error, color in zip(
-            [False, True],
-            ["k", color],
-        ):
-            _mean = _means.loc[error].values
-            _sem = _sems.loc[error].values
-            # plot
-            ax.plot(times, _mean, color=color, ls="-", label=f"error:{error}, delta distance")
-            ax.fill_between(times, _mean - _sem, _mean + _sem, color=color, alpha=0.2)
-        ax.axhline(0, color="k", linestyle="--", alpha=0.5, zorder=0)
-        ax.set_ylabel("distance to goal \n decoded - true (m)")
-        ax.legend(frameon=False, fontsize=6)
-
-    else:
-        subj_grouped = _aligned_df.groupby(["subject_ID", "error"])
-        for dist, ls in zip(["true_distance", "decoded_distance"], ["-", "--"]):
-            sub_avg = subj_grouped[dist].mean()[dist]
-            times = sub_avg.columns.values.astype(float)
-            _means = sub_avg.groupby(level=1).mean()
-            _sems = sub_avg.groupby(level=1).sem()
-            for error, color in zip(
-                [False, True],
-                ["k", color],
-            ):
-                _mean = _means.loc[error].values
-                _sem = _sems.loc[error].values
-                # plot
-                ax.plot(times, _mean, color=color, ls=ls, label=f"error:{error}, {dist.split('_')[0]}")
-                ax.fill_between(times, _mean - _sem, _mean + _sem, color=color, alpha=0.2)
-            ax.set_ylabel("distance to goal (m)")
-            ax.legend(frameon=False, fontsize=6)
+    return _aligned_df
 
 
 # %% Align on errors
