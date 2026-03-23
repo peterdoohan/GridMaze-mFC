@@ -119,6 +119,49 @@ def fit_sinusoid(x, y, fit_constant=True, return_as="params"):
         raise ValueError(f"return_as must be 'params' or 'curve'.")
 
 
+def plot_phase_colormap_key(n=12, cmap="coolwarm", ax=None):
+    """
+    Plot a sinusoid from -pi to pi (peak at 0, troughs at ±pi) coloured by
+    phase using a colormap. Useful as a legend for phase-encoded plots.
+
+    Parameters
+    ----------
+    n : int
+        Number of colour segments to divide the sinusoid into.
+    cmap : str
+        Matplotlib colormap name.
+    ax : matplotlib Axes, optional
+        Axes to plot into. If None, a new figure is created.
+
+    Returns
+    -------
+    ax : matplotlib Axes
+    """
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(2.5, 1.5))
+
+    phase = np.linspace(-np.pi, np.pi, 500)
+    y = np.cos(phase)
+    cm = plt.get_cmap(cmap)
+
+    # break into n segments, colour each by its midpoint phase mapped to [0,1]
+    indices = np.array_split(np.arange(len(phase)), n)
+    for idx in indices:
+        seg_phase = phase[idx]
+        seg_y = y[idx]
+        mid_phase = seg_phase[len(seg_phase) // 2]
+        color = cm((mid_phase + np.pi) / (2 * np.pi))
+        ax.plot(seg_phase, seg_y, color=color, linewidth=2.5)
+
+    ax.set_xlim(-np.pi, np.pi)
+    ax.set_xticks([-np.pi, -np.pi / 2, 0, np.pi / 2, np.pi])
+    ax.set_xticklabels(["-π", "-π/2", "0", "π/2", "π"])
+    ax.set_yticks([])
+    ax.set_xlabel("theta phase")
+    ax.spines[["top", "right", "left"]].set_visible(False)
+    return ax
+
+
 def test_theta_modulation(theta_bias_df):
     """
     input = df [rows=subjects, columns=theta phases, values=decoding bias]
