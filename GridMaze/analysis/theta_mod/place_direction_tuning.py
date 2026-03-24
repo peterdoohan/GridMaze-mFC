@@ -32,50 +32,15 @@ RESULTS_DIR = RESULTS_PATH / "theta_mod" / "place_direction_tuning"
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
 
+TOWER_EDGE_DIST = 9  # cm
+
 # %% Functionss
-
-
-def test(
-    results_df,
-    slope_thres=0.0075,
-    fr_thres=0.005,
-    r2_thres=0.6,
-):
-    """ """
-    id_cols = ["cluster_unique_ID", "triplet_name"]
-    df = results_df.set_index(id_cols)
-    avg_mask = df.theta_phase.isna()
-    avg_df, theta_df = df[avg_mask], df[~avg_mask]
-    dfs = []
-    for _sign in ["pos", "neg"]:
-        fit_mask = avg_df.r2.gt(r2_thres)
-        if _sign == "pos":
-            fr_mask = avg_df.loc_3.gt(fr_thres)
-            slope_mask = avg_df.slope.gt(slope_thres)
-        else:
-            fr_mask = avg_df.loc_1.gt(fr_thres)
-            slope_mask = avg_df.slope.lt(-slope_thres)
-        keep_triplets = avg_df[fit_mask & fr_mask & slope_mask].index
-        _avg = avg_df.loc[keep_triplets]
-        _theta = theta_df.loc[keep_triplets]
-        theta_metric = _theta.pivot_table(
-            index=["cluster_unique_ID", "triplet_name"], columns="theta_phase", values="loc_2"
-        ).sort_index(axis=0)
-        avg_metric = _avg["loc_2"].sort_index(axis=0)
-        theta_mod = theta_metric.sub(avg_metric, axis=0).div(avg_metric, axis=0)
-        dfs.append(theta_mod)
-    df = pd.concat([dfs[0].mul(-1), dfs[1]], axis=0)
-    df.mean().plot()
-    plt.show()
-    dfs[0].mean().plot()
-    plt.show()
-    dfs[1].mean().plot()
 
 
 def test2(
     results_df,
-    slope_thres=0.0075,
-    fr_thres=0.0075,
+    slope_thres=0.0065,
+    fr_thres=0.0065,
     r2_thres=0.8,
 ):
     id_cols = ["cluster_unique_ID", "triplet_name"]
@@ -96,17 +61,15 @@ def test2(
         _theta = theta_df.loc[keep_triplets][["subject_ID", "theta_phase"] + fr_cols]
         theta_norm = _theta.copy()
         _avg_broadcast = _avg.reindex(_theta.index)
-        theta_norm[fr_cols] = _theta[fr_cols] - _avg_broadcast[fr_cols]  # / _avg_broadcast
+        if _sign == "pos":
+            theta_norm[fr_cols] = _theta[fr_cols] - _avg_broadcast[fr_cols]  # / _avg_broadcast
+        else:
+            theta_norm[fr_cols] = _avg_broadcast[fr_cols] - _theta[fr_cols]  # / _avg_broadcast
+        dfs.append(theta_norm)
         avg_mod = theta_norm.groupby(["subject_ID", "theta_phase"]).mean()["loc_2"].unstack(level=1)
-        dfs.append(avg_mod)
         # tu.plot_decoding_bias(avg_mod, norm=False, print_stats=True, ylabel="tuning offset (au)")
-
-        # _theta.groupby(["subject_ID", "theta_phase"]).mean().groupby(level=1).mean().T.plot(cmap="bwr", legend=False)
-        # _avg.groupby("subject_ID").mean().mean(axis=0).plot(color="k")
-        # plt.show()
         plot_triplet_phase_offsets(_theta, _avg)
-
-    combined_mod = (dfs[1].mul(-1) + dfs[0]) / 2
+    combined_mod = pd.concat(dfs, axis=0).groupby(["subject_ID", "theta_phase"]).mean()["loc_2"].unstack(level=1)
     tu.plot_decoding_bias(
         combined_mod,
         color="darkred",
@@ -114,7 +77,98 @@ def test2(
         print_stats=True,
         ylabel="tuning offset (au)",
     )
-    return
+    return dfs
+
+
+# %% offset calculations
+
+
+def test_offset(
+    summary_df,
+    slope_thres=0.0065,
+    fr_thres=0.0065,
+    r2_thres=0.8,
+    upsample=0.2,  # cm
+    max_shift=2.4,  # cm
+):
+    # filter summary_df
+    df = summary_df.copy()
+    df.set_index(["cluster_unique_ID", "triplet_name"], inplace=True)
+    avg_mask = df.theta_phase.isna()
+    avg_df, theta_df = df[avg_mask], df[~avg_mask]
+    # filter based on params in avg cond.
+    keep_cluster_triplets = avg_df[
+        avg_df.r2.gt(r2_thres) & avg_df.loc_2.gt(fr_thres) & avg_df.slope.abs().gt(slope_thres)
+    ].index
+    avg_df = avg_df.loc[keep_cluster_triplets]
+    theta_df = theta_df.loc[keep_cluster_triplets]
+    # compute offsets between avg and each theta phase
+    phases = theta_df.theta_phase.unique()
+    locs = ["loc_1", "loc_2", "loc_3"]
+    # precompute shift indices (constant across all subjects/phases)
+    xs = np.array([0, 1, 2]) * TOWER_EDGE_DIST
+    xs_up = np.arange(xs[0], xs[-1] + upsample, upsample)
+    max_shift_steps = int(round(max_shift / upsample))
+    valid_start = max_shift_steps
+    valid_end = len(xs_up) - max_shift_steps
+    shift_steps = np.arange(-max_shift_steps, max_shift_steps + 1)
+    shifts_cm = -shift_steps * upsample
+    mse_records = []
+    for subject_ID in SUBJECT_IDS:
+        _theta_df = theta_df[theta_df.subject_ID == subject_ID]
+        _avg_df = avg_df[avg_df.subject_ID == subject_ID]
+        for phase in phases:
+            phase_df = _theta_df[_theta_df.theta_phase == phase]
+            phase_df = phase_df.reindex(_avg_df.index)
+            # drop rows where phase data is missing (NaNs from reindex)
+            valid_mask = ~phase_df[locs].isna().any(axis=1)
+            R = _avg_df.loc[valid_mask, locs].values
+            # R = np.outer(_avg_df.loc[valid_mask, "slope"].values, xs) + _avg_df.loc[valid_mask, "intercept"].values[:, None]
+            P = phase_df.loc[valid_mask, locs].values
+            # upsample x-axis to upsample cm spacing, interpolate R and P
+            R_up = np.array([np.interp(xs_up, xs, row) for row in R])
+            P_up = np.array([np.interp(xs_up, xs, row) for row in P])
+            # compute MSE at each x-shift using a consistent valid mask
+            # valid_start:valid_end trims max_shift_steps from each edge so
+            # every shift operates on the same number of columns
+            R_valid = R_up[:, valid_start:valid_end]
+            for k, shift_cm in zip(shift_steps, shifts_cm):
+                P_shifted = P_up[:, (valid_start + k) : (valid_end + k)]
+                mse = np.mean((R_valid - P_shifted) ** 2)
+                mse_records.append({"subject_ID": subject_ID, "theta_phase": phase, "shift_cm": shift_cm, "mse": mse})
+
+    mse_df = pd.DataFrame(mse_records)
+    # plot mse curves per subject (one figure each)
+    cmap = plt.get_cmap("coolwarm")
+    for subject_ID in SUBJECT_IDS:
+        fig, ax = plt.subplots(1, 1, figsize=(3, 3))
+        subj_df = mse_df[mse_df.subject_ID == subject_ID]
+        phase_list = sorted(subj_df.theta_phase.unique())
+        colors = cmap(np.linspace(0, 1, len(phase_list)))
+        for phase, color in zip(phase_list, colors):
+            curve = subj_df[subj_df.theta_phase == phase].set_index("shift_cm")["mse"]
+            ax.plot(curve.index, curve.values, color=color, lw=1, alpha=0.8)
+        ax.axvline(0, color="k", ls="--", lw=0.8, alpha=0.5)
+        ax.set_title(subject_ID, fontsize=8)
+        ax.set_xlabel("shift (cm)")
+        ax.set_ylabel("MSE")
+        ax.spines[["top", "right"]].set_visible(False)
+        fig.tight_layout()
+    # find the shift that minimises MSE per subject/phase
+    # reject cases where the MSE curve is concave (minimum at either boundary)
+    offset_records = []
+    for (subject_ID, phase), grp in mse_df.groupby(["subject_ID", "theta_phase"]):
+        mse_curve = grp.set_index("shift_cm")["mse"]
+        best_shift = mse_curve.idxmin()
+        if best_shift == mse_curve.index[0] or best_shift == mse_curve.index[-1]:
+            best_shift = np.nan
+        offset_records.append({"subject_ID": subject_ID, "theta_phase": phase, "best_shift_cm": best_shift})
+    offset_df = pd.DataFrame(offset_records).pivot(index="subject_ID", columns="theta_phase", values="best_shift_cm")
+    offset_df.T.plot()
+    return mse_df, offset_df
+
+
+# %%
 
 
 def plot_triplet_phase_offsets(_theta, _avg, cmap="coolwarm", with_error=False, ax=None):
@@ -226,27 +280,9 @@ def get_session_triplet_df(
 ):
     # load data
     simple_maze = session.simple_maze()
-    place_dir_metrics = session.cluster_place_direction_tuning_metrics.copy()
-    navigation_df = session.navigation_df.copy()
-    spikes_df = session.navigation_theta_spike_counts_df.reset_index(drop=True)
-    theta_phases = spikes_df.columns.get_level_values(2).unique()
-    # filter for clusters with strong pd tuning
-    consider_clusters = place_dir_metrics[
-        place_dir_metrics.split_half_corr.value.gt(split_half_corr_thres)
-    ].index.values
-    if len(consider_clusters) == 0:
-        if verbose:
-            print(f"No place-dir. tuned cluster for session: {session.name}")
-        return
-    spikes_df = spikes_df[spikes_df.columns[spikes_df.columns.get_level_values(1).isin(consider_clusters)]]
-    # combine spikes and nav data
-    navigation_df.columns = pd.MultiIndex.from_tuples([(*col, "") for col in navigation_df.columns])
-    nav_spikes_df = pd.concat([navigation_df, spikes_df], axis=1).copy()
-    # filter data same as normal place-direction heatmaps
-    nav_spikes_df = filt.filter_navigation_rates_df(
-        nav_spikes_df, navigation_only=True, moving_only=True, exclude_time_at_goal=True, max_steps_to_goal=30
-    )
-    nav_spikes_df = nav_spikes_df.reset_index(drop=True).sort_index(axis=0)
+    # get navigation spikes (theta strat.) df filtered for navigation moving etc.
+    nav_spikes_df = _get_theta_nav_spikes_df(session, split_half_corr_thres, verbose=verbose)
+    theta_phases = nav_spikes_df.spike_count.columns.get_level_values(1).unique()
     theta_nav_spikes_df = nav_spikes_df.copy()  # df with spikes counts per theta phase
     # get df with avg spike counts across theta phases
     avg_theta_spikes = nav_spikes_df.spike_count.T.groupby(level=0).mean().T
@@ -349,6 +385,35 @@ def get_session_triplet_df(
     return results_df
 
 
+def _get_theta_nav_spikes_df(
+    session,
+    split_half_corr_thres,
+    verbose=True,
+):
+    # load data
+    place_dir_metrics = session.cluster_place_direction_tuning_metrics.copy()
+    navigation_df = session.navigation_df.copy()
+    spikes_df = session.navigation_theta_spike_counts_df.reset_index(drop=True)
+    # filter for clusters with strong pd tuning
+    consider_clusters = place_dir_metrics[
+        place_dir_metrics.split_half_corr.value.gt(split_half_corr_thres)
+    ].index.values
+    if len(consider_clusters) == 0:
+        if verbose:
+            print(f"No place-dir. tuned cluster for session: {session.name}")
+        return None
+    spikes_df = spikes_df[spikes_df.columns[spikes_df.columns.get_level_values(1).isin(consider_clusters)]]
+    # combine spikes and nav data
+    navigation_df.columns = pd.MultiIndex.from_tuples([(*col, "") for col in navigation_df.columns])
+    nav_spikes_df = pd.concat([navigation_df, spikes_df], axis=1).copy()
+    # filter data same as normal place-direction heatmaps
+    nav_spikes_df = filt.filter_navigation_rates_df(
+        nav_spikes_df, navigation_only=True, moving_only=True, exclude_time_at_goal=True, max_steps_to_goal=30
+    )
+    nav_spikes_df = nav_spikes_df.reset_index(drop=True).sort_index(axis=0)
+    return nav_spikes_df
+
+
 def fit_triplet(x, y):
     slope, intr = np.polyfit(x, y, 1)
     y_pred = np.polyval([slope, intr], x)
@@ -422,3 +487,58 @@ def get_place_direction_triplets(session):
         pd_triplets.append(trip)
 
     return pd_triplets
+
+
+# %% plot heatmaps constructed from spikes at different theta phases
+
+
+def plot_theta_place_direction_heatmaps(
+    session,
+    split_half_corr_thres=0.3,
+    min_occ=1,
+    phases_1=[0, 1],
+    phases_2=[7, 8],
+):
+    """ """
+    # load data
+    simple_maze = session.simple_maze()
+    # get navigation spikes (theta strat.) df filtered for navigation moving etc.
+    nav_spikes_df = _get_theta_nav_spikes_df(session, split_half_corr_thres, verbose=False)
+    nav_spikes_df = nav_spikes_df.sort_index(axis=1)
+    # get average rate pre place_direction across theta phases
+    group_cols = [("maze_position", "simple"), ("cardinal_movement_direction", "")]
+    pd_occ = nav_spikes_df.groupby(group_cols).size() * (1 / FRAME_RATE)
+    occ_mask = pd_occ.gt(min_occ)
+    theta_pd_tuning = nav_spikes_df.groupby(group_cols).spike_count.sum().spike_count
+    pd_occ = pd_occ[occ_mask]
+    theta_pd_tuning = theta_pd_tuning[occ_mask]
+    theta_pd_tuning = theta_pd_tuning.div(pd_occ, axis=0)
+    # define phases to consider
+    phases = theta_pd_tuning.columns.get_level_values(1).unique()
+    p1 = phases[phases_1]
+    p2 = phases[phases_2]
+    # loop over clusters plotting heatmaps from spieks at phases_1 and _2
+    for cluster in theta_pd_tuning.columns.get_level_values(0).unique():
+        cluster_tuning = theta_pd_tuning[cluster]
+        hm_all = cluster_tuning.mean(axis=1)
+        _max = hm_all.groupby(level=0).mean().max()
+        hm_1 = cluster_tuning[p1].mean(axis=1)
+        hm_2 = cluster_tuning[p2].mean(axis=1)
+        f, axes = plt.subplots(1, 4, figsize=(20, 5))
+        for hm, ax in zip([hm_all, hm_1, hm_2], axes):
+            mp.plot_directed_heatmap(
+                simple_maze, hm, fixed_vmin=0, fixed_vmax=_max, colorbar=False, colormap="heat", ax=ax
+            )
+        diff_hm = (hm_2 - hm_1) * ((hm_2 + hm_1) / 2)
+        diff_max = np.abs(diff_hm).groupby(level=0).mean().max() * 0.8
+        mp.plot_directed_heatmap(
+            simple_maze,
+            diff_hm,
+            allow_negative=True,
+            fixed_vmax=diff_max,
+            fixed_vmin=-diff_max,
+            colorbar=True,
+            colormap="bwr",
+            ax=axes[-1],
+        )
+        f.suptitle(cluster)
