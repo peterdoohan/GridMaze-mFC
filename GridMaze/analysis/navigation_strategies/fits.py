@@ -9,19 +9,146 @@ from scipy.stats import chi2
 import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy.stats import ttest_1samp
+from joblib import delayed, Parallel
 
 from GridMaze.analysis.navigation_strategies import get_input_data as gid
 from GridMaze.analysis.navigation_strategies import models
 
 # %% Global Variables
-from GridMaze.paths import EXPERIMENT_INFO_PATH
+from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
 
 MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
+RESULTS_DIR = RESULTS_PATH / "navigation_strategies"
 
-# %% Functions
+# %% strategy weights over days (learning curve)
+
+
+def get_strategy_weights_over_days(
+    navigation_strategies_df,
+    strategies=["backtracking_penalty", "vector", "habit", "structure"],
+    n_iter=1_000,
+    random_seed=0,
+    zscore=True,
+    n_jobs=-1,
+    save=False,
+    verbose=False,
+):
+    """
+    Estimates navigation strategy weights as a function of day on maze using
+    bootstrap resampling over subjects.
+
+    For each iteration, subjects are resampled with replacement. For each
+    maze x day combination, decisions from all resampled subjects are pooled
+    (with a subject sampled k times contributing k copies of their decisions)
+    and strategy weights are fit on the pooled data. The std of weights across
+    iterations approximates the SEM across subjects.
+
+    Set n_jobs to an integer or -1 to parallelise across iterations with joblib.
+    Returns a long-form DataFrame with one row per (bootstrap_iter, maze, day).
+    """
+    save_path = RESULTS_DIR / f"strategy_weights_over_days_niter{n_iter}.parquet"
+    if save_path.exists() and not save:
+        if verbose:
+            print(f"Loading from {save_path}")
+        return pd.read_parquet(save_path)
+
+    df = navigation_strategies_df.copy()
+
+    # index of all (maze, day) pairs present in the data
+    maze_day_pairs = (
+        df[["maze_name", "day_on_maze"]].drop_duplicates().sort_values(["maze_name", "day_on_maze"]).values.tolist()
+    )
+
+    # pre-draw all subject samples so results are reproducible regardless of n_jobs
+    rng = np.random.default_rng(random_seed)
+    all_sampled_subjects = [rng.choice(SUBJECT_IDS, size=len(SUBJECT_IDS), replace=True) for _ in range(n_iter)]
+
+    def _run_iter(i, sampled_subjects):
+        if verbose:
+            print(f"Bootstrap iteration {i + 1}/{n_iter}")
+        iter_results = []
+        for maze, day in maze_day_pairs:
+            maze_day_df = df[(df.maze_name == maze) & (df.day_on_maze == day)]
+
+            # concatenate per-subject slices so duplicated subjects contribute
+            # duplicated decisions (preserve bootstrap weighting)
+            subject_slices = [maze_day_df[maze_day_df.subject_ID == s] for s in sampled_subjects]
+            pooled_df = pd.concat(subject_slices, ignore_index=True)
+
+            if pooled_df.empty:
+                continue
+
+            weights = models.get_navigation_strategy_weights(pooled_df, strategies=strategies, zscore=zscore)
+            iter_results.append({"bootstrap_iter": i, "maze_name": maze, "day_on_maze": day, **weights})
+        return iter_results
+
+    if n_jobs:
+        nested = Parallel(n_jobs=n_jobs)(
+            delayed(_run_iter)(i, sampled_subjects) for i, sampled_subjects in enumerate(all_sampled_subjects)
+        )
+        results = [row for iter_rows in nested for row in iter_rows]
+    else:
+        results = []
+        for i, sampled_subjects in enumerate(all_sampled_subjects):
+            results.extend(_run_iter(i, sampled_subjects))
+
+    results_df = pd.DataFrame(results)
+
+    if save:
+        if verbose:
+            print(f"Saving to {save_path}")
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        results_df.to_parquet(save_path)
+
+    return results_df
+
+
+def plot_strategy_weights_over_days(
+    results_df,
+    strategies=["vector", "structure", "habit"],
+    cmap="plasma",
+    moving_avg=2,
+    axes=None,
+):
+    """
+    Plots strategy weights as a function of day on maze, one subplot per maze.
+    Mean across bootstrap iterations shown as a solid line; std shown as shaded band.
+    If moving_avg > 1, a rolling average of that window size is applied to both
+    mean and std before plotting.
+    """
+    if axes is None:
+        fig, axes = plt.subplots(1, len(MAZE_NAMES), figsize=(4, 2), sharey=True)
+
+    colors = sns.color_palette(cmap, n_colors=len(strategies))
+    palette = dict(zip(strategies, colors))
+    for ax, maze in zip(axes, MAZE_NAMES):
+        maze_df = results_df[results_df.maze_name == maze]
+        stats = maze_df.groupby("day_on_maze")[strategies].agg(["mean", "std"])
+
+        for strategy in strategies:
+            days = stats.index.values
+            mean = stats[(strategy, "mean")].rolling(moving_avg, center=True, min_periods=1).mean().values
+            std = stats[(strategy, "std")].rolling(moving_avg, center=True, min_periods=1).mean().values
+            color = palette[strategy]
+            ax.plot(days, mean, color=color, linewidth=1.5, label=strategy)
+            ax.fill_between(days, mean - std, mean + std, color=color, alpha=0.2)
+
+        ax.axhline(0, color="black", linewidth=0.8, linestyle="--")
+        ax.set_xlabel("Day on maze")
+        ax.set_title(maze.replace("_", " "))
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        if ax != axes[0]:
+            ax.spines["left"].set_visible(False)
+            ax.yaxis.set_visible(False)
+
+    axes[0].set_ylabel("Strategy weight")
+
+    handles = [plt.Line2D([0], [0], color=palette[s], linewidth=2, label=s) for s in strategies]
+    axes[-1].legend(handles=handles, title="Strategy", bbox_to_anchor=(1.01, 1), loc="upper left", borderaxespad=0)
 
 
 # %% standard late session model fits
@@ -31,6 +158,7 @@ def get_strategy_weights(
     navigation_strategies_df,
     strategies=["vector", "structure", "habit", "backtracking_penalty"],
     late_sessions=True,
+    zscore=True,
 ):
     """ """
     # filter data
@@ -44,7 +172,11 @@ def get_strategy_weights(
         for subject in SUBJECT_IDS:
             subj_df = maze_df[maze_df.subject_ID == subject]
             # fit strategy weights on select data
-            strategy_weights = models.get_navigation_strategy_weights(subj_df, strategies=strategies)
+            strategy_weights = models.get_navigation_strategy_weights(
+                subj_df,
+                strategies=strategies,
+                zscore=zscore,
+            )
             results.append(
                 {
                     "subject_ID": subject,

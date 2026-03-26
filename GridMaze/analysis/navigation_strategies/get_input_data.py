@@ -50,7 +50,6 @@ def get_navigation_strategies_df(
     n_jobs=-1,
     save=False,
     close_far_cutoff=4,
-    normalise_habit=True,
 ):
     """"""
     # get strating navigation strategies df if save=False, load from disk
@@ -104,7 +103,6 @@ def _get_navigation_strategies_df(
     ],
     n_history=1,
     sessions=None,
-    normalise_habit=True,
     verbose=False,
     n_jobs=-1,
     save=False,
@@ -129,14 +127,14 @@ def _get_navigation_strategies_df(
 
     if n_jobs:
         dfs = Parallel(n_jobs=n_jobs)(
-            delayed(get_session_navigation_strategies_df)(s, strategies, n_history, normalise_habit) for s in sessions
+            delayed(get_session_navigation_strategies_df)(s, strategies, n_history) for s in sessions
         )
     else:
         dfs = []
         for s in sessions:
             if verbose:
                 print(f"Processing session: {s.name}")
-            df = get_session_navigation_strategies_df(s, strategies, n_history, normalise_habit)
+            df = get_session_navigation_strategies_df(s, strategies, n_history)
             dfs.append(df)
     navigation_strategies_df = pd.concat(dfs, ignore_index=True)
     if save:
@@ -160,7 +158,6 @@ def get_session_navigation_strategies_df(
         "forward_bias",
     ],
     n_history=1,
-    normalise_habit=True,
     remove_edge_backtracks=True,
     ignore_final_step=True,
 ):
@@ -250,12 +247,6 @@ def get_session_navigation_strategies_df(
         value_dfs.append(df)
     # combine all into single df
     nav_strats_df = pd.concat([init_df] + value_dfs, axis=1)
-
-    # optionally normalise habits to be -1, 1 same as other preds
-    if "habit" in strategies and normalise_habit:
-        H = nav_strats_df["habit"].values
-        H_norm = 2 * H - 1
-        nav_strats_df["habit"] = H_norm
     return nav_strats_df
 
 
