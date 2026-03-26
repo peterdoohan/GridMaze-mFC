@@ -172,6 +172,9 @@ class MazeSession:
         self.date = date.fromisoformat(session_info["session_date"])
         for attr_name in [k for k in session_info.keys() if k != "date"]:
             setattr(self, attr_name, session_info[attr_name])
+        # add late session flag (last week on given maze)
+        total_days = max([int(d) for d in MAZE_DAY2DATE[self.maze_name].keys()])
+        self.late_session = (total_days - self.day_on_maze) <= 7
         # Load processed data
         for attr_name in with_data:
             file_name = ALL_MAZE_DATA_STRUCTURES2FILENAME[attr_name]
