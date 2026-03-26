@@ -77,26 +77,3 @@ def softmax(V, choice_mask):
     V[V > LOG_MAX_FLOAT] = LOG_MAX_FLOAT  # Protection against overflow in exponential.
     expV = np.exp(V)
     return expV[choice_mask] / np.sum(expV, axis=1)
-
-
-# %% old code (keep until new code is working)
-
-
-# def get_neg_loglikelihood(weights, df, strategies):
-#     """
-#     Calculates the negative log likelihood of the data given weighted strategies.
-#     """
-#     weight_vector, weight_structure, weight_penalty = weights
-#     # get neg log likelihood
-#     V_vector = df.vector_navigation_value.to_numpy()
-#     V_structure = df.structure_navigation_value.to_numpy()
-#     V_penalty = df.penalty_value.to_numpy()
-#     A_bool = df.available.to_numpy()
-#     A = np.where(A_bool, 0, INVALID_TRANSITION)
-#     choice_mask = df.choice_value.to_numpy().astype(bool)
-#     V = weight_vector * V_vector + weight_structure * V_structure + weight_penalty * V_penalty + A
-#     P = softmax(V, choice_mask)
-#     loglikelihood = np.log(P)
-#     if np.any(np.isnan(loglikelihood)):
-#         assert ValueError("Log likelihood contains NaN(s).")
-#     return -np.sum(np.log(P))

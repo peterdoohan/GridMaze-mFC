@@ -50,7 +50,6 @@ def get_navigation_strategies_df(
     n_jobs=-1,
     save=False,
     close_far_cutoff=4,
-    orth_interactions=True,
 ):
     """"""
     # get strating navigation strategies df if save=False, load from disk
@@ -243,8 +242,6 @@ def get_session_navigation_strategies_df(
     value_dfs = []
     # get values subject_choice, optimal_choice and availability + requested strats for all choices
     for v in ["subject_choice", "optimal_action", "available"] + strategies:
-        if "_X_" in v or "_ORTH_" in v:
-            continue  # deal with interactions and orthogonalisation later
         df = pd.DataFrame(init_df.apply(_get_values, axis=1, strategy=v).to_list())
         df.columns = pd.MultiIndex.from_product([[v], df.columns])
         value_dfs.append(df)
@@ -339,6 +336,7 @@ def get_init_df(
             ("subject_ID", ""): session.subject_ID,
             ("maze_name", ""): session.maze_name,
             ("day_on_maze", ""): session.day_on_maze,
+            ("late_session", ""): session.late_session,
         },
         index=init_df.index,
     )
