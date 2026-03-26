@@ -59,7 +59,6 @@ def get_habit_values_no_history(
 def get_habit_values_df(
     session,
     subject_df=None,
-    stim_day_range=None,
     n_history=2,
 ):
     """ """
@@ -73,14 +72,11 @@ def get_habit_values_df(
     assert f"history_{n_history}" in subject_df.columns
     # filter subject df
     data_df = subject_df.copy()
-    if stim_day_range is not None:
-        data_df = subject_df[subject_df.total_stim_days.between(*stim_day_range)]
     data_df = data_df[data_df.maze_name == session.maze_name]
     # exclude current session
     data_df = data_df[data_df.session_name != session.name]
     # exclude decisions where history is not defined
     data_df = data_df.dropna()
-
     # tally state-action counds including missing ones
     simple_maze = session.simple_maze()
     habit_values_df = _get_habit_values(data_df, simple_maze, n_history)
@@ -114,31 +110,27 @@ def _get_habit_values(data_df, simple_maze, n_history):
 def get_subject_decisions_df(
     subject_ID,
     navigation_only=True,
-    remove_stim_trials=True,
     n_history=5,
     n_jobs=-1,
     save=False,
 ):
     """ """
-    save_path = RESULTS_PATH / "strategies" / "subject_decisions_dfs" / f"{subject_ID}.parquet"
+    save_path = RESULTS_PATH / "navigation_strategies" / "subject_decisions_dfs" / f"{subject_ID}.parquet"
     if not save and save_path.exists():
         return pd.read_parquet(save_path)
 
     sessions = gs.get_maze_sessions(
         subject_IDs=[subject_ID],
-        total_stim_days="all",
         with_data=["trajectories_df", "trial_info_df", "trials_df"],
         must_have_data=True,
         verbose=False,
     )
     if n_jobs:
-        dfs = Parallel(n_jobs=n_jobs)(
-            delayed(get_decisions_df)(s, navigation_only, remove_stim_trials, n_history) for s in sessions
-        )
+        dfs = Parallel(n_jobs=n_jobs)(delayed(get_decisions_df)(s, navigation_only, n_history) for s in sessions)
         df = pd.concat(dfs, ignore_index=True)
     else:
         df = pd.concat(
-            [get_decisions_df(s, navigation_only, remove_stim_trials, n_history) for s in sessions],
+            [get_decisions_df(s, navigation_only, n_history) for s in sessions],
             ignore_index=True,
         )
 
@@ -151,7 +143,6 @@ def get_subject_decisions_df(
 
 def _save_all_subject_decision_dfs(
     navigation_only=True,
-    remove_stim_trials=True,
     n_history=5,
     n_jobs=-1,
     verbose=True,
@@ -162,7 +153,6 @@ def _save_all_subject_decision_dfs(
         get_subject_decisions_df(
             subject_ID,
             navigation_only,
-            remove_stim_trials,
             n_history,
             n_jobs,
             save=True,
@@ -177,7 +167,6 @@ def _save_all_subject_decision_dfs(
 def get_decisions_df(
     session,
     navigation_only=True,
-    remove_stim_trials=True,
     n_history=10,
 ):
     """
@@ -199,7 +188,6 @@ def get_decisions_df(
     decisions_df.columns = [c[0] if isinstance(c, tuple) else c for c in decisions_df.columns]
     decisions_df["session_name"] = session.name
     decisions_df["maze_name"] = session.maze_name
-    decisions_df["total_stim_days"] = session.total_stim_days
     trial_unique_ID = session.name + "_trial" + decisions_df["trial"].astype(str)
     trial_unique_ID[trial_unique_ID.apply(lambda x: "nan" in x)] = np.nan
     decisions_df["trial_unique_ID"] = trial_unique_ID
@@ -221,9 +209,6 @@ def get_decisions_df(
     # filter further based on input
     if navigation_only:
         decisions_df = decisions_df[decisions_df.trial_phase == "navigation"]
-    if remove_stim_trials:
-        stim_trials = trials_df[trials_df.stim_trial].trial.unique()
-        decisions_df = decisions_df[~decisions_df.trial.isin(stim_trials)]
 
     # add position histories
     if n_history is not None:

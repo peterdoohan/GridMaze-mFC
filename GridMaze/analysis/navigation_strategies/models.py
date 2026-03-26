@@ -7,7 +7,7 @@ import sys
 import numpy as np
 from scipy.optimize import minimize
 from GridMaze.analysis.core import get_sessions as gs
-from GridMaze.analysis.strategies import get_input_data as gid
+from GridMaze.analysis.navigation_strategies import get_input_data as gid
 
 # %% Global variables
 

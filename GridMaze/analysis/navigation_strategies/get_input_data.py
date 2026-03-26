@@ -15,10 +15,12 @@ from joblib import Parallel, delayed
 from GridMaze.maze import representations as mr
 from GridMaze.analysis.behaviour import trajectory_plotting as tp
 from GridMaze.analysis.core import get_sessions as gs
-from GridMaze.analysis.strategies import habits as sh
+from GridMaze.analysis.navigation_strategies import habits as sh
 
 # %% Global variables
 from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
+
+RESULTS_DIR = RESULTS_PATH / "navigation_strategies"
 
 with (EXPERIMENT_INFO_PATH / "subject_IDs.json").open("r") as infile:
     SUBJECT_IDS = json.load(infile)
@@ -29,13 +31,9 @@ NAV_STRATEGIES = [
     "vector",
     "vector_close",
     "vector_far",
-    "vector_ORTH_structure",
-    "vector_X_habit",
     "structure",
     "structure_close",
     "structure_far",
-    "structure_ORTH_vector",
-    "structure_X_habit",
     "habit",
     "backtracking_penalty",
     "forward_bias",
@@ -86,43 +84,6 @@ def get_navigation_strategies_df(
             strat_df.loc[~keep_mask, :] = 0
             strat_df.columns = pd.MultiIndex.from_product([[s], strat_df.columns])
 
-        # add orthogonalised regressors
-        elif "_ORTH_" in s:
-            strat1, strat2 = s.split("_ORTH_")
-            if strat2 != "all":
-                df1, df2 = df[strat1].copy(), df[strat2].copy()
-                # get df1 (strat 1) orthogonalised with respect to df2
-                X, Y = df1.values, df2.values
-            else:
-                df1 = df[strat1].copy()
-                remaining_strats = [
-                    st for st in strategies if st != strat1 and all(excl not in st for excl in exclusion_strings)
-                ]
-                df2 = pd.concat([df[st] for st in remaining_strats], axis=1)
-                # get df1 (strat 1) orthogonalised with respect to all other strats
-                X, Y = df1.values, df2.values
-            # linear algebra to get residuals of X with respect to Y
-            B, *_ = np.linalg.lstsq(Y, X, rcond=None)
-            X_resid = X - Y @ B
-            strat_df = pd.DataFrame(X_resid, columns=NSEW)
-            strat_df.columns = pd.MultiIndex.from_product([[s], strat_df.columns])
-
-        # add interaction regressors
-        elif "_X_" in s:
-            strat1, strat2 = s.split("_X_")
-            df1, df2 = df[strat1].copy(), df[strat2].copy()
-            X, Y = df1.values, df2.values
-            X_int = X * Y
-            # orthogonalise with reprspect to main effects
-            if orth_interactions:
-                M = np.hstack([X, Y])
-                beta = np.linalg.pinv(M) @ X_int
-                X_int = X_int - M @ beta
-                assert np.allclose(X_int.T @ X, 0, atol=1e-5)
-                assert np.allclose(X_int.T @ Y, 0, atol=1e-5)
-            strat_df = pd.DataFrame(X_int, columns=NSEW)
-            strat_df.columns = pd.MultiIndex.from_product([[s], strat_df.columns])
-
         else:
             raise ValueError(f"Unknown strategy: {s}")
 
@@ -150,7 +111,7 @@ def _get_navigation_strategies_df(
     """
     generate navigation strategies df from all expert stim days across subejcts
     """
-    save_path = RESULTS_PATH / "strategies" / f"navigation_strategies_nhistory{n_history}.parquet"
+    save_path = RESULTS_DIR / f"navigation_strategies_nhistory{n_history}.parquet"
     if not save and save_path.exists():
         if verbose:
             print(f"Loading existing navigation strategies df from: {save_path}")
@@ -161,8 +122,7 @@ def _get_navigation_strategies_df(
             print("Loading all expert stim sessions...")
         sessions = gs.get_maze_sessions(
             subject_IDs="all",
-            stim_only=True,
-            with_data=["navigation_df", "trials_df", "session_info"],
+            with_data=["navigation_df", "trials_df"],
             must_have_data=True,
         )
 
@@ -298,7 +258,6 @@ def get_init_df(
     remove_edge_backtracks=True,
     ignore_final_step=True,
     n_history=2,
-    goal_sight_kwargs={"alpha_deg": 160, "smooth_SD": 4, "min_consecutive": 0.4},
 ):
     """
     initalise navigation_strategies_df with node transitions defined trial by trial
@@ -330,7 +289,6 @@ def get_init_df(
         trial_df = navigation_df[navigation_df.trial == t]
         if trial_df.empty:
             continue
-        sg_idx, sg_time = tp.get_first_goal_sight(trial_df, **goal_sight_kwargs)
         start_time = trial_df.iloc[0].time.values[0]
         # filter transitions between nodes
         transitions_df = trial_df[trial_df.maze_position.simple_change]
@@ -365,9 +323,6 @@ def get_init_df(
         _df[("trial_unique_ID", "")] = gs.get_session_name(session_info) + f"_trial{t}"
         _df[("time_in_trial", "")] = times.sub(start_time)
         _df[("goal", "")] = trials_df.loc[t, ("goal", "")]
-        _df[("goal_sight", "")] = [True if t >= sg_time else False for t in times]
-        _df[("stim_trial", "")] = trials_df.loc[t, ("stim_trial", "")]
-        _df[("stim_on", "")] = choice_time2stim_on(trials_df.reset_index(), times)
         _df[("location", "")] = locs.values
         _df[("action", "")] = actions.values
         _df[("previous_action", "")] = prev_action.values
@@ -382,13 +337,8 @@ def get_init_df(
     info_df = pd.DataFrame(
         {
             ("subject_ID", ""): session.subject_ID,
-            ("condition", ""): session.condition,
             ("maze_name", ""): session.maze_name,
-            ("maze_order", ""): session.maze_order,
             ("day_on_maze", ""): session.day_on_maze,
-            ("stim_day", ""): session.stim_day,
-            ("total_stim_days", ""): session.total_stim_days,
-            ("noted_session_issues", ""): True is session.session_notes is not None,
         },
         index=init_df.index,
     )
@@ -553,17 +503,6 @@ def get_neighbor_cdir(location_coord, neigbour_coord):
 
 
 # %% other utility functions
-
-
-def choice_time2stim_on(trials_df, node_choice_times):
-    """"""
-    for _, t in trials_df.iterrows():
-        stim_on = node_choice_times.gt(t.time.stim_start) & node_choice_times.lt(t.time.stim_end)
-        if stim_on.any():
-            return stim_on
-    # if no stim on times found, return all False
-    stim_on = np.full(len(node_choice_times), False)
-    return stim_on
 
 
 def get_trajectory_actions(node_traj, simple_maze=None, label2coord=None):
