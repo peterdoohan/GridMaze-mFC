@@ -212,14 +212,15 @@ def plot_spatial_heatmap(
 
 
 def get_2D_ratemap(
-    spikes: np.ndarray,
-    pos: np.ndarray,
-    x_size: float = 0.02,  # Bin size in meters
-    y_size: float = 0.02,  # Bin size in meters
-    smooth_SD: float = 0.04,  # Smoothing window (standard deviation) in meters
-    x_range=None,  #
-    y_range=None,  #
+    spikes,
+    pos,
+    x_size=0.02,
+    y_size=0.02,
+    smooth_SD=0.04,
+    x_range=None,
+    y_range=None,
     nan_unvisited=True,
+    min_occupancy=0.5,
 ):
     """
     Parameters
@@ -289,11 +290,16 @@ def get_2D_ratemap(
         sigma_y = smooth_SD / y_size
         h = gaussian_filter(h, sigma=[sigma_x, sigma_y])
         weights = gaussian_filter(weights, sigma=[sigma_x, sigma_y])
-        h = h / weights
+        valid = weights > 0
+        h[valid] = h[valid] / weights[valid]
+        h[~valid] = np.nan
 
     if nan_unvisited:
         # Set bins to np.nan if they were not visited
-        h[occupancy == 0] = np.nan
+        if min_occupancy is not None:
+            h[occupancy <= min_occupancy] = np.nan
+        else:
+            h[occupancy == 0] = np.nan
 
     # Transpose to change row-column coordinates to positions
     return h.T, binx, biny
