@@ -21,7 +21,7 @@ from scipy.ndimage import gaussian_filter
 
 from GridMaze.paths import RESULTS_PATH, EXPERIMENT_INFO_PATH
 
-RESULTS_DIR = RESULTS_PATH / "place_direction_tuning"
+RESULTS_DIR = RESULTS_PATH / "theta_mod" / "place_direction_tuning"
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as f:
     SUBJECT_IDS = json.load(f)
@@ -76,97 +76,72 @@ def test(
 # %%
 
 
-def get_shifted_heatmap_MSE(t, r, phases, shifts_cm, plot=True):
+def load_phase_rel_heatmaps(subject_ID="m2", maze_name="all", plot=True):
     """
-    Compute MSE between theta-phase-stratified shifted heatmaps and the reference.
+    Load and combine saved phase-relative heatmaps across sessions.
+
+    Mirrors the session selection used in get_phase_rel_heatmaps so that only
+    sessions for which results were computed are considered.
 
     Args:
-        t: (n_phases, n_shifts, n_features) — output of get_theta_shifted_heatmaps
-        r: (n_features,) — reference feature vector
+        subject_ID: subject identifier, or "all" for all subjects
+        maze_name:  maze name to filter sessions, or "all" for all mazes
 
     Returns:
-        MSE: (n_phases, n_shifts)
-        best_shifts: (n_phases,) shift in metres that minimises MSE at each phase
+        t:        (n_cluster_heatmaps, n_shifts) — shifted heatmaps concatenated across sessions
+        v:        (n_cluster_heatmaps,)          — reference heatmaps concatenated across sessions
+        shifts_cm:(n_shifts,)                    — shift values in metres (common across sessions)
     """
-    n_phases, n_shifts, _ = t.shape
-    MSE = np.nanmean((t - r[np.newaxis, np.newaxis, :]) ** 2, axis=-1)
-    best_shifts = shifts_cm[np.argmin(MSE, axis=1)]  # (n_phases,)
-    if plot:
-        plt.plot(MSE.T)
-        plt.show()
-        fig, ax = plt.subplots(figsize=(6, 4))
-        ax.plot(phases, best_shifts, marker="o")
-        ax.axhline(0, color="k", linewidth=0.8, linestyle="--")
-        ax.set_xlabel("Theta phase")
-        ax.set_ylabel("Best shift (cm)")
-        ax.set_title("MSE-minimising shift per theta phase")
-        plt.tight_layout()
-    return MSE, best_shifts
+    save_dir = RESULTS_DIR / "shifted_heatmaps"
+    t_list = []
+    r_list = []
+    shifts_cm = None
+    # Accumulators for MSE: avoids allocating a full-size difference array at the end.
+    # MSE = total_sse / n_valid is mathematically identical to nanmean over all features.
+    sse = None  # (n_shifts,) running sum of squared errors
+    n_valid = 0  # total number of valid (non-NaN) features across sessions
 
-
-def get_theta_shifted_heatmaps(
-    subject_ID="all",
-    sessions=None,
-    split_half_corr_thres=0.5,
-    bin_size=0.015,
-    upscale_bin_size=0.003,
-    smooth_SD=0.03,
-    range=(0, 1.4),
-    shift_range=0.015,
-    n_jobs=False,
-    verbose=True,
-):
-    subject_ID = [subject_ID] if subject_ID != "all" else subject_ID
-    if sessions is None:
-        if verbose:
-            print("Loading sessions...")
-        sessions = gs.get_maze_sessions(
-            subject_IDs=subject_ID,
-            maze_names="all",
-            days_on_maze="late",
-            with_data=[
-                "cluster_place_direction_tuning_metrics",
-                "navigation_df",
-                "navigation_theta_spike_counts_df",
-            ],
-            must_have_data=True,
-        )
-
-    def _process_session(session):
-        if verbose:
-            print(session.name)
-        return get_session_theta_shifted_heatmaps(
-            session,
-            split_half_corr_thres,
-            bin_size,
-            upscale_bin_size,
-            smooth_SD,
-            range,
-            shift_range,
-            return_as="session_features",
-            all_shifts_valid=True,
-            verbose=verbose,
-        )
-
-    if n_jobs is False:
-        results = [_process_session(s) for s in sessions]
-    else:
-        results = Parallel(n_jobs=n_jobs)(delayed(_process_session)(s) for s in sessions)
-
-    ts, rs = [], []
-    phases, shifts_cm = None, None
-    for session_output in results:
-        if session_output is None:
+    for pkl_path in sorted(save_dir.glob("*.pkl")):
+        # Filter by subject_ID from filename prefix before loading
+        if subject_ID != "all" and pkl_path.name.split(".")[0] != subject_ID:
             continue
-        t, r, phases, shifts_cm = session_output
-        ts.append(t)
-        rs.append(r)
-    # concatenate feature vectors across sessions along the feature axis
-    # t: (n_phases, n_shifts, big_feature_vec), r: (big_feature_vec,)
-    t = np.concatenate(ts, axis=-1)
-    r = np.concatenate(rs, axis=0)
+        with open(pkl_path, "rb") as f:
+            res = pickle.load(f)
+        # Filter by maze_name from loaded metadata
+        if maze_name != "all" and res["maze_name"] != maze_name:
+            continue
+        t_s = res["t"]  # (n_shifts, n_features_session)
+        r_s = res["r"]  # (n_features_session,)
+        t_list.append(t_s)
+        r_list.append(r_s)
+        if shifts_cm is None:
+            shifts_cm = res["shifts_cm"]
+            sse = np.zeros(len(shifts_cm))
+        # Accumulate squared errors session by session — O(n_shifts) overhead
+        sse += np.nansum((t_s - r_s[np.newaxis, :]) ** 2, axis=-1)
+        n_valid += int(np.sum(~np.isnan(r_s)))
 
-    return t, r, phases, shifts_cm
+    if not t_list:
+        raise ValueError(f"No saved results found for subject_ID={subject_ID}, maze_name={maze_name}")
+
+    # Concatenate across sessions along the feature dimension
+    t = np.concatenate(t_list, axis=1)  # (n_shifts, n_cluster_heatmaps)
+    r = np.concatenate(r_list, axis=0)  # (n_cluster_heatmaps,)
+
+    if plot:
+        MSE = sse / n_valid  # (n_shifts,) — no large temporary array needed
+        best_shift_cm = shifts_cm[np.argmin(MSE)]
+
+        f, ax = plt.subplots(1, 1, figsize=(4, 3))
+        ax.plot(shifts_cm * 100, MSE, marker="o", markersize=4)
+        ax.axvline(best_shift_cm * 100, color="r", linestyle="--", label=f"best: {best_shift_cm*100:.1f} cm")
+        ax.set_xlabel("Spatial shift (cm)")
+        ax.set_ylabel("MSE")
+        ax.legend(frameon=False)
+        ax.spines[["top", "right"]].set_visible(False)
+        plt.tight_layout()
+
+    return t, r, shifts_cm
 
 
 def get_phase_rel_heatmaps(
@@ -197,7 +172,7 @@ def get_phase_rel_heatmaps(
         if verbose:
             print(f"Processing subject {subject}...")
         sessions = gs.get_maze_sessions(
-            subject_IDs=subject_ID,
+            subject_IDs=[subject],
             maze_names="all",
             days_on_maze="late",
             with_data=[
@@ -214,6 +189,7 @@ def get_phase_rel_heatmaps(
             if save_path.exists():
                 if verbose:
                     print(f"Results already exist for {session.name}, skipping...")
+                continue
             try:
                 res = get_session_phase_rel_heatmaps(
                     session,
@@ -565,40 +541,6 @@ def _shift_ratemap(rate_map, direction, shift_bins):
     dst_c = slice(max(0, dx), min(cols, cols + dx))
     shifted[dst_r, dst_c] = rate_map[src_r, src_c]
     return shifted
-
-
-def _shift_all_ratemaps(rate_map, direction, shifts):
-    """
-    Compute all shifted versions of rate_map in one vectorized operation.
-
-    Instead of calling _shift_ratemap in a loop, this pads the map once and
-    uses a sliding window view to extract all shifts simultaneously.
-
-    Args:
-        rate_map: (H, W) 2D ratemap
-        direction: one of NSEW
-        shifts: 1D array of integer shift amounts (e.g. np.arange(-n, n+1))
-
-    Returns:
-        (len(shifts), H, W) array — same result as stacking _shift_ratemap calls
-    """
-    dy, dx = _DIR_SHIFT[direction]
-    rows, cols = rate_map.shape
-    n_pad = len(shifts) // 2  # == n_shifts
-    if dy != 0:  # N or S: shift along rows
-        padded = np.full((rows + 2 * n_pad, cols), np.nan)
-        padded[n_pad : n_pad + rows, :] = rate_map
-        offsets = n_pad - dy * shifts  # start row for each shift
-        windows = np.lib.stride_tricks.sliding_window_view(padded, (rows, cols))
-        # windows shape: (2*n_pad+1, 1, rows, cols)
-        return windows[offsets, 0, :, :]
-    else:  # E or W: shift along cols
-        padded = np.full((rows, cols + 2 * n_pad), np.nan)
-        padded[:, n_pad : n_pad + cols] = rate_map
-        offsets = n_pad - dx * shifts  # start col for each shift
-        windows = np.lib.stride_tricks.sliding_window_view(padded, (rows, cols))
-        # windows shape: (1, 2*n_pad+1, rows, cols)
-        return windows[0, offsets, :, :]
 
 
 def _smooth_upscaled_ratemap(rate_map, smooth_SD, bin_size):
