@@ -108,8 +108,8 @@ def get_strategy_weights_over_days(
 
 def plot_strategy_weights_over_days(
     results_df,
-    strategies=["vector", "structure", "habit"],
-    cmap="plasma",
+    strategies=["habit", "vector", "structure"],
+    cmap="plasma_r",
     moving_avg=2,
     axes=None,
 ):
@@ -189,7 +189,7 @@ def get_strategy_weights(
 
 
 def plot_strategy_weights(
-    results_df, strategies=["habit", "vector", "structure"], cmap="plasma", print_stats=True, axes=None
+    results_df, strategies=["habit", "vector", "structure"], cmap="plasma_r", print_stats=True, axes=None
 ):
     """
     Plots fitted strategy weights with one panel per maze. X-axis = strategy,
@@ -218,7 +218,7 @@ def plot_strategy_weights(
             order=strategies,
             color="grey",
             alpha=0.4,
-            size=3,
+            size=4,
             jitter=True,
             ax=ax,
         )
@@ -233,6 +233,7 @@ def plot_strategy_weights(
             errorbar="se",
             capsize=0,
             linestyle="none",
+            markersize=7,
             zorder=3,
             ax=ax,
         )
