@@ -34,6 +34,62 @@ _DIR_SHIFT = {"N": (1, 0), "S": (-1, 0), "E": (0, 1), "W": (0, -1)}
 # %%
 
 
+def get_preferred_shift(df):
+    """
+    From a session or combined SSE DataFrame compute the MSE-minimising shift per phase.
+
+    MSE per (phase, shift_cm) = sum(SSE) / sum(n_features) across all clusters.
+
+    Returns:
+        best_shifts: Series indexed by phase, values are preferred shift_cm in metres
+        mse: DataFrame (n_phases, n_shifts) of MSE values
+    """
+    grouped = df.groupby(["phase", "shift_m"])[["SSE", "n_features"]].sum()
+    grouped["MSE"] = grouped["SSE"] / grouped["n_features"]
+    mse = grouped["MSE"].unstack("shift_m")  # (n_phases, n_shifts)
+    best_shifts = mse.idxmin(axis=1)  # Series: phase → best shift_cm
+    return best_shifts, mse
+
+
+def test_plot(session, **kwargs):
+    """
+    Compute the SSE DataFrame for a single session and plot the theta modulation curve:
+    preferred spatial shift (y) as a function of theta phase (x).
+
+    Also plots the full MSE curves (one per phase) to allow visual inspection.
+    """
+    df = get_session_SSE_df(session, **kwargs)
+    if df is None:
+        print("No valid clusters for this session.")
+        return
+    best_shifts, mse = get_preferred_shift(df)
+    phases = mse.index.values
+    shifts_m = mse.columns.values
+
+    _, axes = plt.subplots(1, 2, figsize=(9, 3.5))
+
+    # Left: MSE curves for each phase
+    ax = axes[0]
+    ax.plot(shifts_m * 100, mse.values.T)
+    ax.set_xlabel("Spatial shift (cm)")
+    ax.set_ylabel("MSE")
+    ax.set_title("MSE per phase")
+    ax.spines[["top", "right"]].set_visible(False)
+
+    # Right: preferred shift per phase
+    ax = axes[1]
+    ax.plot(phases, best_shifts.values * 100, marker="o", color="k")
+    ax.axhline(0, color="k", linewidth=0.8, linestyle="--")
+    ax.set_xlabel("Theta phase")
+    ax.set_ylabel("Preferred shift (cm)")
+    ax.set_title(session.name)
+    ax.spines[["top", "right"]].set_visible(False)
+
+    plt.tight_layout()
+    return best_shifts, mse
+
+
+# %%
 def get_SSE_df(
     split_half_corr_thres=0.5,
     bin_size=0.04,
@@ -41,6 +97,7 @@ def get_SSE_df(
     smooth_SD=0.05,
     xy_range=(0, 1.4),
     shift_range=0.015,
+    zscore=True,
     verbose=True,
     save=False,
     n_jobs=-1,
@@ -69,6 +126,7 @@ def get_SSE_df(
                 smooth_SD=smooth_SD,
                 xy_range=xy_range,
                 shift_range=shift_range,
+                zscore=zscore,
                 verbose=verbose,
             )
         except Exception as e:
@@ -110,6 +168,7 @@ def get_session_SSE_df(
     smooth_SD=0.05,
     xy_range=(0, 1.4),
     shift_range=0.015,
+    zscore=True,
     verbose=True,
 ):
     """
@@ -136,7 +195,7 @@ def get_session_SSE_df(
     scale_factor = int(bin_size / upscale_bin_size)
     n_shifts = int(shift_range / upscale_bin_size)
     shifts = np.arange(-n_shifts, n_shifts + 1)
-    shifts_cm = shifts * upscale_bin_size
+    shifts_m = shifts * upscale_bin_size
     ratemap_kwargs = {
         "x_size": bin_size,
         "y_size": bin_size,
@@ -169,18 +228,30 @@ def get_session_SSE_df(
             print(cluster)
         # n_features for this cluster: total valid bins across all directions (constant across phase/shift)
         n_features_cluster = sum(n_valid)
-        # Pre-compute ref_masked per direction — identical for all phases
+        # Pre-compute ref_masked per direction — identical for all phases.
+        # If zscore=True, divide by the ref std so each cluster/direction contributes
+        # equally regardless of firing rate. The same std is applied to the shifted maps,
+        # so the normalisation is consistent: (shifted_z - ref_z) = (shifted - ref) / ref_std.
         dir_ref_masked = {}
+        dir_ref_mean = {}
+        dir_ref_std = {}
         for j, _dir in enumerate(NSEW):
             if n_valid[j] == 0:
                 continue
             dir_df = dir2df[_dir]
             pos = dir_df.centroid_position.values
             ref_spikes = dir_df.spike_count[cluster].mean(axis=1).values
-            dir_ref_masked[j] = _get_upscaled_ratemap(
+            ref_masked = _get_upscaled_ratemap(
                 ref_spikes, pos, ratemap_kwargs, scale_factor, smooth_SD, upscale_bin_size
             ).flatten()[dir_valid_masks[j]]
-        for k, phase in enumerate(phases):
+            if zscore:
+                dir_ref_mean[j] = np.nanmean(ref_masked)
+                ref_std = np.nanstd(ref_masked)
+                dir_ref_std[j] = ref_std if ref_std > 0 else 1.0
+                dir_ref_masked[j] = (ref_masked - dir_ref_mean[j]) / dir_ref_std[j]
+            else:
+                dir_ref_masked[j] = ref_masked
+        for phase in phases:
             # Accumulate SSE across directions for each shift
             sse_per_shift = np.zeros(len(shifts))
             for j, _dir in enumerate(NSEW):
@@ -194,13 +265,15 @@ def get_session_SSE_df(
                 )
                 for l, shift in enumerate(shifts):
                     shifted_masked = _shift_ratemap(shift_up, _dir, shift).flatten()[dir_valid_masks[j]]
-                    sse_per_shift[l] += np.nansum((shifted_masked - dir_ref_masked[j]) ** 2)
-            for l, shift_cm in enumerate(shifts_cm):
+                    if zscore:
+                        shifted_masked = (shifted_masked - dir_ref_mean[j]) / dir_ref_std[j]
+                    sse_per_shift[l] += np.sum((shifted_masked - dir_ref_masked[j]) ** 2)
+            for l, shift_m in enumerate(shifts_m):
                 records.append(
                     {
                         "cluster_unique_ID": cluster,
                         "phase": phase,
-                        "shift_cm": shift_cm,
+                        "shift_m": shift_m,
                         "SSE": sse_per_shift[l],
                         "n_features": n_features_cluster,
                         "split_half_corr": metrics_df.loc[cluster].split_half_corr.value,
@@ -283,13 +356,12 @@ def _smooth_upscaled_ratemap(rate_map, smooth_SD, bin_size):
     valid = weights > 0
     h[valid] = h[valid] / weights[valid]
     h[~valid] = np.nan
-    h[nan_mask] = np.nan  # restore original unvisited NaNs
     return h
 
 
 def get_theta_stratified_nav_spikes_df(
     session,
-    split_half_corr_thres=0.6,
+    split_half_corr_thres=0.5,
     moving_thres=0.05,
     verbose=True,
 ):
