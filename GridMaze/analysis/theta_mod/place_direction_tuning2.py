@@ -32,47 +32,6 @@ NSEW = ["N", "S", "E", "W"]
 _DIR_SHIFT = {"N": (1, 0), "S": (-1, 0), "E": (0, 1), "W": (0, -1)}
 
 
-# %% Functions
-
-
-def test(
-    session,
-    phases_1=[0, 1],
-    phases_2=[7, 8],
-):
-    nav_spikes_df = get_theta_stratified_nav_spikes_df(session)
-    cluster_unique_IDs = nav_spikes_df.spike_count.columns.get_level_values(0).unique()
-    phases = nav_spikes_df.spike_count.columns.get_level_values(1).unique()
-    # separate data by movement direction (with appropraite filtering)
-    dir2df = {dir: nav_spikes_df[nav_spikes_df.cardinal_movement_direction == dir] for dir in NSEW}
-    for cluster in cluster_unique_IDs:
-        f, axes = plt.subplots(2, 4, figsize=(10, 5))
-        for i, phase in enumerate([phases_1, phases_2]):
-            hms = {}
-            for _dir in NSEW:
-                dir_df = dir2df[_dir]
-                spikes = dir_df.spike_count[cluster][phases[phase]].mean(axis=1).values
-                pos = dir_df.centroid_position.values
-                rate_map, binx, biny = spatial.get_2D_ratemap(
-                    spikes,
-                    pos,
-                    x_size=0.01,
-                    y_size=0.01,
-                    smooth_SD=0.05,
-                    x_range=(0, 1.4),
-                    y_range=(0, 1.4),
-                    nan_unvisited=True,
-                    min_occupancy=None,
-                )
-                hms[_dir] = rate_map
-            # plot
-            _max = np.nanmax(list(hms.values()))
-            for j, _dir in enumerate(NSEW):
-                ax = axes[i, j]
-                ax.imshow(hms[_dir], vmin=0, vmax=_max, origin="lower", extent=(0, 1.4, 0, 1.4))
-                ax.set_title(f"Phase {phase}, dir {_dir}")
-
-
 # %%
 
 
@@ -146,8 +105,6 @@ def load_phase_rel_heatmaps(subject_ID="m2", maze_name="all", plot=True):
 
 def get_phase_rel_heatmaps(
     subject_ID="all",
-    ref_phases=[0, 1],
-    shift_phases=[7, 8],
     split_half_corr_thres=0.5,
     bin_size=0.04,
     upscale_bin_size=0.001,
@@ -157,14 +114,12 @@ def get_phase_rel_heatmaps(
     verbose=True,
 ):
     """
-    Compute phase-relative shifted heatmaps across all late sessions of a given subject,
-    concatenating feature vectors across sessions so the combined t & r can be used to
-    find the optimal spatial shift aligning shift_phases to ref_phases.
+    Compute phase-relative shifted heatmaps across all late sessions of a given subject.
 
-    Returns:
-        t: (n_shifts, total_features) — shifted heatmaps concatenated across sessions
-        r: (total_features,) — reference heatmaps concatenated across sessions
-        shifts_cm: (n_shifts,) — shift values in metres
+    The reference heatmap R is the mean firing rate across all theta phases.
+    T stores, for each phase and spatial shift, the shifted ratemap — allowing
+    downstream MSE to find which shift best aligns each phase to the mean.
+    Results are saved per session as .pkl files.
     """
     save_dir = RESULTS_DIR / "shifted_heatmaps"
     subject_IDs = [subject_ID] if subject_ID != "all" else SUBJECT_IDS
@@ -193,8 +148,6 @@ def get_phase_rel_heatmaps(
             try:
                 res = get_session_phase_rel_heatmaps(
                     session,
-                    ref_phases=ref_phases,
-                    shift_phases=shift_phases,
                     split_half_corr_thres=split_half_corr_thres,
                     bin_size=bin_size,
                     upscale_bin_size=upscale_bin_size,
@@ -226,8 +179,6 @@ def get_phase_rel_heatmaps(
                 pickle.dump(results, f)
     # save params
     params = {
-        "ref_phases": ref_phases,
-        "shift_phases": shift_phases,
         "split_half_corr_thres": split_half_corr_thres,
         "bin_size": bin_size,
         "upscale_bin_size": upscale_bin_size,
@@ -239,47 +190,72 @@ def get_phase_rel_heatmaps(
         json.dump(params, f)
 
 
-def test_phase_rel_shift(
-    session,
-    ref_phases=[0, 1],
-    shift_phases=[7, 8],
-    **kwargs,
-):
+def test_phase_rel_shift(session, **kwargs):
     """
-    Quick test: compute MSE between shifted heatmaps (shift_phases) and reference (ref_phases)
-    across all spatial shifts, and plot to find the best-aligning shift.
+    Quick test: for each theta phase compute the MSE between the spatially shifted
+    phase ratemap and the mean-phase reference, then plot best shift per phase.
 
     Returns:
-        MSE: (n_shifts,) — mean squared error at each shift
-        best_shift_cm: scalar — shift in metres that minimises MSE
+        MSE: (n_phases, n_shifts) — mean squared error at each phase × shift
+        best_shifts_cm: (n_phases,) — shift in metres that minimises MSE per phase
         shifts_cm: (n_shifts,) — shift values in metres
+        phases: phase labels
     """
-    result = get_session_phase_rel_heatmaps(session, ref_phases=ref_phases, shift_phases=shift_phases, **kwargs)
+    result = get_session_phase_rel_heatmaps(session, **kwargs)
     if result is None:
         print("No valid clusters for this session.")
         return None
-    t, r, shifts_cm, cluster_unique_IDs = result
-    # t: (n_shifts, n_features), r: (n_features,)
-    MSE = np.nanmean((t - r[np.newaxis, :]) ** 2, axis=-1)  # (n_shifts,)
-    best_shift_cm = shifts_cm[np.argmin(MSE)]
+    t, r, shifts_cm = result["t"], result["r"], result["shifts_cm"]
+    # t: (n_phases, n_shifts, n_features), r: (n_features,)
+    MSE = np.nanmean((t - r[np.newaxis, np.newaxis, :]) ** 2, axis=-1)  # (n_phases, n_shifts)
+    best_shifts_cm = shifts_cm[np.argmin(MSE, axis=1)]  # (n_phases,)
 
-    f, ax = plt.subplots(1, 1, figsize=(4, 3))
-    ax.plot(shifts_cm * 100, MSE, marker="o", markersize=4)
-    ax.axvline(best_shift_cm * 100, color="r", linestyle="--", label=f"best: {best_shift_cm*100:.1f} cm")
-    ax.set_xlabel("Spatial shift (cm)")
+    f, ax = plt.subplots(1, 1, figsize=(5, 3))
+    ax.plot(MSE.T)  # (n_shifts, n_phases)
+    ax.set_xlabel("Shift index")
     ax.set_ylabel("MSE")
-    ax.set_title(f"ref phases {ref_phases} vs shift phases {shift_phases}")
-    ax.legend(frameon=False)
     ax.spines[["top", "right"]].set_visible(False)
     plt.tight_layout()
-    print(f"Best shift: {best_shift_cm*100:.2f} cm (index {np.argmin(MSE)})")
-    return MSE, best_shift_cm, shifts_cm
+
+    f2, ax2 = plt.subplots(1, 1, figsize=(5, 3))
+    ax2.plot(best_shifts_cm * 100, marker="o")
+    ax2.axhline(0, color="k", linewidth=0.8, linestyle="--")
+    ax2.set_xlabel("Theta phase")
+    ax2.set_ylabel("Best shift (cm)")
+    ax2.spines[["top", "right"]].set_visible(False)
+    plt.tight_layout()
+
+    print(f"Best shifts (cm): {best_shifts_cm * 100}")
+    return MSE, best_shifts_cm, shifts_cm
+
+
+def save_all_phase_rel_heatmaps(verbose=True):
+    for subject_ID in SUBJECT_IDS:
+        sessions = gs.get_maze_sessions(
+            subject_IDs=[subject_ID],
+            maze_names="all",
+            days_on_maze="late",
+            with_data=[
+                "cluster_place_direction_tuning_metrics",
+                "navigation_df",
+                "navigation_theta_spike_counts_df",
+            ],
+            must_have_data=True,
+        )
+        for session in sessions:
+            if verbose:
+                print(session.name)
+            try:
+                res = get_session_phase_rel_heatmaps(
+                    session,
+                    verbose=verbose,
+                )
+            except Exception as e:
+                print(f"Error occurred while processing {session.name}: {e}")
 
 
 def get_session_phase_rel_heatmaps(
     session,
-    ref_phases=[0, 1],
-    shift_phases=[7, 8],
     split_half_corr_thres=0.5,
     bin_size=0.04,
     upscale_bin_size=0.001,
@@ -287,30 +263,33 @@ def get_session_phase_rel_heatmaps(
     xy_range=(0, 1.4),
     shift_range=0.015,
     verbose=True,
+    save=True,
 ):
     """
-    Simplified version of get_session_theta_shifted_heatmaps.
+    Build phase-stratified shifted heatmaps for a single session.
 
-    Instead of using all phases for the reference and each individual phase for shifted
-    heatmaps, this function uses a specified subset of phases for each role:
-        - ref_phases: phase indices used to build the reference heatmap R
-        - shift_phases: phase indices whose summed activity is spatially shifted to build T
-
-    This lets you later test which spatial shift best aligns T to R.
+    The reference heatmap R is the mean firing rate across all theta phases.
+    T contains a shifted version of the per-phase ratemap at every spatial shift,
+    allowing downstream MSE to find which shift best aligns each phase to the mean.
 
     The valid mask (bins non-NaN across every shift) is computed per direction from
     occupancy before the cluster loop, so T and R are pre-allocated at the masked size
     rather than the full flat_hm_size, dramatically reducing memory usage.
 
-    Args:
-        ref_phases: list of integer indices into the phase axis used for the reference heatmap.
-        shift_phases: list of integer indices into the phase axis used for the shifted heatmaps.
-
     Returns:
-        t: (n_shifts, sum_j n_clusters*n_valid[j]) — shifted heatmaps, masked and flattened
-        r: (sum_j n_clusters*n_valid[j],) — reference heatmaps, masked and flattened
+        t: (n_phases, n_shifts, sum_j n_clusters*n_valid[j]) — shifted heatmaps per phase
+        r: (sum_j n_clusters*n_valid[j],) — mean-phase reference heatmaps
         shifts_cm: (n_shifts,) — shift values in metres
+        cluster_unique_IDs: cluster identifiers included in the feature vector
     """
+    save_path = RESULTS_DIR / "shifted_heatmaps2" / f"{session.name}.pkl"
+    if save_path.exists():
+        if verbose:
+            print(f"loading results from {save_path}...")
+        with open(save_path, "rb") as f:
+            res = pickle.load(f)
+        return res
+
     nav_spikes_df = get_theta_stratified_nav_spikes_df(session, split_half_corr_thres)
     if nav_spikes_df is None:
         return None
@@ -344,6 +323,7 @@ def get_session_phase_rel_heatmaps(
         n_valid.append(int(mask.sum()))
 
     n_clusters = len(cluster_unique_IDs)
+    n_phases = len(phases)
     n_dirs = len(NSEW)
     len_shifts = len(shifts)
 
@@ -354,9 +334,9 @@ def get_session_phase_rel_heatmaps(
 
     # Pre-allocate per-direction arrays at the masked (valid-bin) size.
     # R_list[j]: (n_clusters, n_valid[j])
-    # T_list[j]: (n_clusters, len_shifts, n_valid[j])
+    # T_list[j]: (n_clusters, n_phases, len_shifts, n_valid[j])
     R_list = [np.full((n_clusters, n_valid[j]), np.nan) for j in range(n_dirs)]
-    T_list = [np.full((n_clusters, len_shifts, n_valid[j]), np.nan) for j in range(n_dirs)]
+    T_list = [np.full((n_clusters, n_phases, len_shifts, n_valid[j]), np.nan) for j in range(n_dirs)]
 
     for i, cluster in enumerate(cluster_unique_IDs):
         if verbose:
@@ -367,124 +347,54 @@ def get_session_phase_rel_heatmaps(
             mask = dir_valid_masks[j]
             dir_df = dir2df[_dir]
             pos = dir_df.centroid_position.values
-            # Reference: build upscaled ratemap, apply mask immediately on flatten
-            ref_spikes = dir_df.spike_count[cluster][phases[ref_phases]].sum(axis=1).values
+            # Reference: mean firing rate across all phases, masked
+            ref_spikes = dir_df.spike_count[cluster].mean(axis=1).values
             ref_up = _get_upscaled_ratemap(ref_spikes, pos, ratemap_kwargs, scale_factor, smooth_SD, upscale_bin_size)
             R_list[j][i] = ref_up.flatten()[mask]
-            # Shifted: build upscaled ratemap once, shift and mask on the fly
-            shift_spikes = dir_df.spike_count[cluster][phases[shift_phases]].sum(axis=1).values
-            shift_up = _get_upscaled_ratemap(
-                shift_spikes, pos, ratemap_kwargs, scale_factor, smooth_SD, upscale_bin_size
-            )
-            for l, shift in enumerate(shifts):
-                T_list[j][i, l] = _shift_ratemap(shift_up, _dir, shift).flatten()[mask]
+            for k, phase in enumerate(phases):
+                # Shifted: build upscaled ratemap once per phase, shift and mask on the fly
+                shift_spikes = dir_df.spike_count[cluster][phase].values
+                shift_up = _get_upscaled_ratemap(
+                    shift_spikes, pos, ratemap_kwargs, scale_factor, smooth_SD, upscale_bin_size
+                )
+                for l, shift in enumerate(shifts):
+                    T_list[j][i, k, l] = _shift_ratemap(shift_up, _dir, shift).flatten()[mask]
 
     # Build output feature vectors by concatenating across directions.
     # r: (sum_j n_clusters*n_valid[j],)
     r = np.concatenate([R_list[j].reshape(-1) for j in range(n_dirs) if n_valid[j] > 0], axis=0)
-    # t: (n_shifts, sum_j n_clusters*n_valid[j])
-    # T_list[j] is (n_clusters, n_shifts, n_valid[j]); transpose to (n_shifts, n_clusters, n_valid[j])
+    # T_list[j] is (n_clusters, n_phases, len_shifts, n_valid[j])
+    # transpose to (n_phases, len_shifts, n_clusters, n_valid[j]) then reshape
+    # t: (n_phases, n_shifts, sum_j n_clusters*n_valid[j])
     t = np.concatenate(
         [
-            T_list[j].transpose(1, 0, 2).reshape(len_shifts, n_clusters * n_valid[j])
+            T_list[j].transpose(1, 2, 0, 3).reshape(n_phases, len_shifts, n_clusters * n_valid[j])
             for j in range(n_dirs)
             if n_valid[j] > 0
         ],
         axis=-1,
     )
-    return t, r, shifts_cm, cluster_unique_IDs
-
-
-def get_session_theta_shifted_heatmaps(
-    session,
-    split_half_corr_thres=0.7,
-    bin_size=0.04,
-    upscale_bin_size=0.004,
-    smooth_SD=0.05,
-    range=(0, 1.4),
-    shift_range=0.04,
-    return_as="session_features",  # session_features or session_tensors
-    all_shifts_valid=True,
-    verbose=True,
-):
-    """
-    Build theta-phase-stratified, direction-stratified shifted ratemaps for a single session.
-
-    Args:
-        return_as: "session_features" (default) returns (t, r) as flat composite vectors
-            ready for MSE computation — t: (n_phases, n_shifts, n_valid_features),
-            r: (n_valid_features,), where features concatenate all clusters × dirs × bins.
-            "session_tensors" returns raw (T, R) with shapes
-            (n_clusters, n_dirs, n_phases, n_shifts, flat_hm_size) and
-            (n_clusters, n_dirs, flat_hm_size).
-        all_shifts_valid: if True (default), restricts features to bins that are non-NaN
-            across every shift and phase. Substantially reduces memory when aggregating
-            across sessions. Only applies in "session_features" mode.
-        split_half_corr_thres: minimum split-half spatial correlation for a cluster to
-            be included; sessions where no clusters pass are skipped (returns None).
-    """
-    nav_spikes_df = get_theta_stratified_nav_spikes_df(session, split_half_corr_thres)
-    if nav_spikes_df is None:
-        return None
-    cluster_unique_IDs = nav_spikes_df.spike_count.columns.get_level_values(0).unique()
-    phases = nav_spikes_df.spike_count.columns.get_level_values(1).unique()
-    scale_factor = int(bin_size / upscale_bin_size)
-    n_shifts = int(shift_range / upscale_bin_size)
-    shifts = np.arange(-n_shifts, n_shifts + 1)
-    shifts_cm = shifts * upscale_bin_size
-    ratemap_kwargs = {
-        "x_size": bin_size,
-        "y_size": bin_size,
-        "smooth_SD": 0,  # smooth after upscaling
-        "x_range": range,
-        "y_range": range,
-        "nan_unvisited": True,
-        "min_occupancy": None,
+    phases = phases.values.astype(float)
+    # save
+    results = {
+        "t": t,
+        "r": r,
+        "phases": phases,
+        "shifts_cm": shifts_cm,
+        "cluster_unique_IDs": cluster_unique_IDs,
+        "subject_ID": session.subject_ID,
+        "maze_name": session.maze_name,
+        "day_on_maze": session.day_on_maze,
+        "late_session": session.late_session,
     }
-    dir2df = {_dir: nav_spikes_df[nav_spikes_df.cardinal_movement_direction == _dir] for _dir in NSEW}
-    n_coarse_bins = int((range[1] - range[0]) / bin_size)
-    flat_hm_size = (n_coarse_bins * scale_factor) ** 2
-    # T: theta-phase-stratified shifted heatmaps (n_clusters, n_dirs, n_phases, n_shifts, flat_hm_size)
-    T = np.zeros((len(cluster_unique_IDs), len(NSEW), len(phases), len(shifts), flat_hm_size))
-    # R: reference heatmaps averaged across theta phases (n_clusters, n_dirs, flat_hm_size)
-    R = np.zeros((len(cluster_unique_IDs), len(NSEW), flat_hm_size))
-    for i, cluster in enumerate(cluster_unique_IDs):
+    if save:
         if verbose:
-            print(cluster)
-        for j, _dir in enumerate(NSEW):
-            dir_df = dir2df[_dir]
-            pos = dir_df.centroid_position.values
-            for k, phase in enumerate(phases):
-                spikes = dir_df.spike_count[cluster][phase].values
-                upscaled = _get_upscaled_ratemap(spikes, pos, ratemap_kwargs, scale_factor, smooth_SD, upscale_bin_size)
-                for l, shift in enumerate(shifts):
-                    T[i, j, k, l] = _shift_ratemap(upscaled, _dir, shift).flatten()
-            avg_spikes = dir_df.spike_count[cluster].sum(axis=1).values / len(phases)
-            R[i, j] = _get_upscaled_ratemap(
-                avg_spikes, pos, ratemap_kwargs, scale_factor, smooth_SD, upscale_bin_size
-            ).flatten()
-    if return_as == "session_tensors":
-        return T, R, phases, shifts_cm
-    elif return_as == "session_features":
-        n_clusters, n_dirs, n_phases, n_shifts, flat_hm_size = T.shape
-        # Flatten all clusters, dirs, and heatmap bins into a single session feature vector
-        #  -> t: (n_phases, n_shifts, n_clusters * n_dirs * flat_hm_size)
-        t = T.transpose(2, 3, 0, 1, 4).reshape(n_phases, n_shifts, n_clusters * n_dirs * flat_hm_size)
-        #  -> r: (n_clusters * n_dirs * flat_hm_size,)
-        r = R.reshape(n_clusters * n_dirs * flat_hm_size)
-        if all_shifts_valid:  # saves alot of memory
-            n_feature = (~np.isnan(r)).sum() // n_clusters
-            # bins valid (non-NaN) across all phases and shifts (should be same across phases)
-            valid_mask = ~np.any(np.isnan(t), axis=(0, 1))  # (n_clusters * n_dirs * flat_hm_size,)
-            n_valid_feature = valid_mask.sum() // n_clusters
-            pct_removed = 100 * (1 - n_valid_feature / n_feature)
-            if verbose:
-                print(f"Features removed by all-shifts validity mask: {pct_removed:.1f}% ")
-            r = r[valid_mask]
-            t = t[:, :, valid_mask]
-        return t, r, phases, shifts_cm
-    else:
-        raise ValueError(f"Invalid return_as value: {return_as}")
+            print(f"Saving results to {save_path}...")
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(save_path, "wb") as f:
+            pickle.dump(results, f)
+
+    return results
 
 
 def _get_direction_valid_mask(dir_df, direction, ratemap_kwargs, scale_factor, shifts):
