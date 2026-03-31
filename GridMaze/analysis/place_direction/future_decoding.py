@@ -38,36 +38,35 @@ RESULTS_DIR = RESULTS_PATH / "place_direction" / "future_decoding"
 # %% Functions
 
 
-def _get_stats_df(future_df, past_df):
+def plot_future_decoding_summary(
+    summary_df, plot_as="diff", decision_mode=None, colors=["blueviolet", "hotpink"], ax=None
+):
     """ """
-    return
+    df = summary_df.copy()
+    df["offset", ""] = df[("offset", "")] / 2  # update steps to be towers
+    # set up figure
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=(5, 2.5))
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.axvline(0, color="k", linestyle="--", alpha=0.5)
+    ax.axhline(0, color="k", linestyle="--", alpha=0.5)
+    ax.set_xlabel("steps in future/past")
+    ax.set_ylabel("decoding acc. \n (chance normalised)")
+    # filter for decisions relevant to reach reference
+    for mode, color in zip(["past", "future"], colors):
+        _df = df[df[("mode", "")] == mode]
+        _dm = mode if decision_mode is None else decision_mode
+        _df = _filter_for_decision_points(_df, decision_points=_dm)
+        subject_means = _df.groupby(["subject_ID", "offset"]).accuracy.mean().accuracy
+        if plot_as == "diff":
+            _plot_decoding_diff(subject_means, ax=ax, mode=mode, color=color)
+        elif plot_as == "raw":
+            _plot_decoding_raw(subject_means, ax=ax, mode=mode, color=color)
+        else:
+            raise ValueError(f"Unknown plot_as: {plot_as}. Must be 'diff' or 'raw'.")
 
 
-# %%
-
-
-def plot_future_decoding_summary(summary_df, decision_points="future", steps_to_goal=None, plot_as="diff", ax=None):
-    """ """
-    # filter for decision points
-    if decision_points:
-        df = _filter_for_decision_points(summary_df, decision_points=decision_points)
-    # filter for steps to goal
-    if steps_to_goal is not None:
-        # update steps to goal
-        df[("steps_to_goal", "future")] = df.steps_to_goal.future.astype(int)
-        df = df[df.steps_to_goal.future.between(*steps_to_goal)]
-    # process for plotting
-    subject_means = df.groupby(["subject_ID", "mode", "offset"]).accuracy.mean().accuracy
-    # plot
-    if plot_as == "diff":
-        _plot_decoding_diff(subject_means, ax=ax)
-    elif plot_as == "raw":
-        _plot_decoding_raw(subject_means, ax=ax)
-    else:
-        raise ValueError(f"Unknown plot_as: {plot_as}. Must be 'diff' or 'raw'.")
-
-
-def _filter_for_decision_points(summary_df, decision_points="future"):
+def _filter_for_decision_points(summary_df, decision_points="future", min_offset=1):
     dfs = []
     for maze_name in ["maze_1", "maze_2"]:
         maze_df = summary_df[summary_df.maze_name == maze_name]
@@ -78,80 +77,54 @@ def _filter_for_decision_points(summary_df, decision_points="future"):
             )
         elif decision_points == "past":
             _decision_points = get_decision_points(
-                simple_maze, mode="past", edges_only=False, node_only=True, return_as="strings", plot=False
+                simple_maze, mode="past", edges_only=True, node_only=False, return_as="strings", plot=False
             )
         dfs.append(maze_df[maze_df.place_direction.isin(_decision_points)])
     df = pd.concat(dfs, axis=0)
-    if decision_points == "future":
-        # remove past -1 which is fully predicted at decision points
-        remove_mask = (df[("mode", "")] == "past") & (df[("offset", "")] == 1)
-        df = df[~remove_mask]
+    if min_offset is not None:
+        df = df[df[("offset", "")] >= min_offset]
     return df
 
 
-def _plot_decoding_diff(subject_means, colors=["hotpink", "blueviolet"], style="shaded", ax=None):
-    # set up fig
-    if ax is None:
-        fig, ax = plt.subplots(1, 1, figsize=(5, 2.5))
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.axvline(0, color="k", linestyle="--", alpha=0.5)
-    ax.axhline(0, color="k", linestyle="--", alpha=0.5)
-    ax.set_xlabel("steps in future/past")
-    ax.set_ylabel("decoding acc. \n (chance normalised)")
+def _plot_decoding_diff(
+    subject_means,
+    ax,
+    mode="past",
+    color="hotpink",
+):
     # process
     diff = (subject_means.spatial_spikes - subject_means.spatial).unstack(level=0).T
     grand_mean = diff.mean()
     grand_sem = diff.sem()
     # plot
-    for mode, color in zip(["past", "future"], colors):
-        mean = grand_mean[mode].values
-        sem = grand_sem[mode].values
-        x_vals = grand_mean[mode].index.values
-        if mode == "past":
-            x_vals = -1 * x_vals
-        if style == "errorbars":
-            ax.errorbar(
-                x_vals,
-                mean,
-                yerr=sem,
-                marker="o",
-                linestyle=None,
-                color=color,
-                linewidth=2,
-                elinewidth=2,
-                capsize=0,
-                markersize=6,
-            )
-        elif style == "shaded":
-            ax.plot(x_vals, mean, color=color, label=f"{mode}", lw=2)
-            ax.fill_between(x_vals, mean - sem, mean + sem, color=color, alpha=0.2)
-        else:
-            raise ValueError(f"Unknown style: {style}. Must be 'errorbars' or 'shaded'.")
+    mean = grand_mean.values
+    sem = grand_sem.values
+    x_vals = grand_mean.index.values
+    if mode == "past":
+        x_vals = -1 * x_vals
+    ax.plot(x_vals, mean, color=color, label=f"{mode}", lw=2)
+    ax.fill_between(x_vals, mean - sem, mean + sem, color=color, alpha=0.2)
 
 
-def _plot_decoding_raw(subject_means, colors=[("hotpink", "mediumvioletred"), ("blueviolet", "indigo")], ax=None):
-    # set up fig
-    if ax is None:
-        fig, ax = plt.subplots(1, 1, figsize=(5, 2.5))
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.axvline(0, color="k", linestyle="--", alpha=0.5)
-    ax.axhline(0, color="k", linestyle="--", alpha=0.5)
-    ax.set_xlabel("steps in future/past")
-    ax.set_ylabel("decoding acc.")
+def _plot_decoding_raw(
+    subject_means,
+    ax,
+    mode="past",
+    color="hotpink",
+):
     # process
-    grouped = subject_means.groupby(level=[1, 2])
+    grouped = subject_means.groupby(level=1)
     grand_mean = grouped.mean()
     grand_sem = grouped.sem()
     # plot
-    for mode, mode_colors in zip(["past", "future"], colors):
-        for fs, color in zip(["spatial_spikes", "spatial"], mode_colors):
-            mean = grand_mean.loc[mode, fs].values
-            sem = grand_sem.loc[mode, fs].values
-            x_vals = grand_mean.loc[mode, fs].index.values
-            if mode == "past":
-                x_vals = -1 * x_vals
-            ax.plot(x_vals, mean, color=color, label=f"{fs} ({mode})", lw=1.5)
-            ax.fill_between(x_vals, mean - sem, mean + sem, color=color, alpha=0.2)
+    for fs, ls in zip(["spatial_spikes", "spatial"], ["-", "--"]):
+        mean = grand_mean[fs].values
+        sem = grand_sem[fs].values
+        x_vals = grand_mean[fs].index.values
+        if mode == "past":
+            x_vals = -1 * x_vals
+        ax.plot(x_vals, mean, color=color, label=f"{fs} ({mode})", lw=1.5, ls=ls)
+        ax.fill_between(x_vals, mean - sem, mean + sem, color=color, alpha=0.2)
     ax.legend(fontsize=8)
 
 
