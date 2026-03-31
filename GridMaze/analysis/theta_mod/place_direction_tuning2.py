@@ -34,59 +34,16 @@ _DIR_SHIFT = {"N": (1, 0), "S": (-1, 0), "E": (0, 1), "W": (0, -1)}
 # %%
 
 
-def get_preferred_shift(df):
-    """
-    From a session or combined SSE DataFrame compute the MSE-minimising shift per phase.
-
-    MSE per (phase, shift_cm) = sum(SSE) / sum(n_features) across all clusters.
-
-    Returns:
-        best_shifts: Series indexed by phase, values are preferred shift_cm in metres
-        mse: DataFrame (n_phases, n_shifts) of MSE values
-    """
-    grouped = df.groupby(["phase", "shift_m"])[["SSE", "n_features"]].sum()
+def get_preferred_shift(df, min_split_half_corr=0.7):
+    """ """
+    _df = df.copy()
+    if min_split_half_corr is not None:
+        _df = _df[_df.split_half_corr.gt(min_split_half_corr)]
+    grouped = _df.groupby(["subject_ID", "phase", "shift_m"])[["SSE", "n_features"]].sum()
     grouped["MSE"] = grouped["SSE"] / grouped["n_features"]
     mse = grouped["MSE"].unstack("shift_m")  # (n_phases, n_shifts)
     best_shifts = mse.idxmin(axis=1)  # Series: phase → best shift_cm
-    return best_shifts, mse
-
-
-def test_plot(session, **kwargs):
-    """
-    Compute the SSE DataFrame for a single session and plot the theta modulation curve:
-    preferred spatial shift (y) as a function of theta phase (x).
-
-    Also plots the full MSE curves (one per phase) to allow visual inspection.
-    """
-    df = get_session_SSE_df(session, **kwargs)
-    if df is None:
-        print("No valid clusters for this session.")
-        return
-    best_shifts, mse = get_preferred_shift(df)
-    phases = mse.index.values
-    shifts_m = mse.columns.values
-
-    _, axes = plt.subplots(1, 2, figsize=(9, 3.5))
-
-    # Left: MSE curves for each phase
-    ax = axes[0]
-    ax.plot(shifts_m * 100, mse.values.T)
-    ax.set_xlabel("Spatial shift (cm)")
-    ax.set_ylabel("MSE")
-    ax.set_title("MSE per phase")
-    ax.spines[["top", "right"]].set_visible(False)
-
-    # Right: preferred shift per phase
-    ax = axes[1]
-    ax.plot(phases, best_shifts.values * 100, marker="o", color="k")
-    ax.axhline(0, color="k", linewidth=0.8, linestyle="--")
-    ax.set_xlabel("Theta phase")
-    ax.set_ylabel("Preferred shift (cm)")
-    ax.set_title(session.name)
-    ax.spines[["top", "right"]].set_visible(False)
-
-    plt.tight_layout()
-    return best_shifts, mse
+    return best_shifts.unstack(0)
 
 
 # %%
