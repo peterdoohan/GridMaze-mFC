@@ -5,7 +5,6 @@ Another idea for measuring theta mod place-direction tuning
 
 # %% Imports
 import json
-import pickle
 import pandas as pd
 import numpy as np
 from joblib import Parallel, delayed
@@ -35,76 +34,7 @@ _DIR_SHIFT = {"N": (1, 0), "S": (-1, 0), "E": (0, 1), "W": (0, -1)}
 # %%
 
 
-def load_phase_rel_heatmaps(subject_ID="m2", maze_name="all", plot=True):
-    """
-    Load and combine saved phase-relative heatmaps across sessions.
-
-    Mirrors the session selection used in get_phase_rel_heatmaps so that only
-    sessions for which results were computed are considered.
-
-    Args:
-        subject_ID: subject identifier, or "all" for all subjects
-        maze_name:  maze name to filter sessions, or "all" for all mazes
-
-    Returns:
-        t:        (n_cluster_heatmaps, n_shifts) — shifted heatmaps concatenated across sessions
-        v:        (n_cluster_heatmaps,)          — reference heatmaps concatenated across sessions
-        shifts_cm:(n_shifts,)                    — shift values in metres (common across sessions)
-    """
-    save_dir = RESULTS_DIR / "shifted_heatmaps"
-    t_list = []
-    r_list = []
-    shifts_cm = None
-    # Accumulators for MSE: avoids allocating a full-size difference array at the end.
-    # MSE = total_sse / n_valid is mathematically identical to nanmean over all features.
-    sse = None  # (n_shifts,) running sum of squared errors
-    n_valid = 0  # total number of valid (non-NaN) features across sessions
-
-    for pkl_path in sorted(save_dir.glob("*.pkl")):
-        # Filter by subject_ID from filename prefix before loading
-        if subject_ID != "all" and pkl_path.name.split(".")[0] != subject_ID:
-            continue
-        with open(pkl_path, "rb") as f:
-            res = pickle.load(f)
-        # Filter by maze_name from loaded metadata
-        if maze_name != "all" and res["maze_name"] != maze_name:
-            continue
-        t_s = res["t"]  # (n_shifts, n_features_session)
-        r_s = res["r"]  # (n_features_session,)
-        t_list.append(t_s)
-        r_list.append(r_s)
-        if shifts_cm is None:
-            shifts_cm = res["shifts_cm"]
-            sse = np.zeros(len(shifts_cm))
-        # Accumulate squared errors session by session — O(n_shifts) overhead
-        sse += np.nansum((t_s - r_s[np.newaxis, :]) ** 2, axis=-1)
-        n_valid += int(np.sum(~np.isnan(r_s)))
-
-    if not t_list:
-        raise ValueError(f"No saved results found for subject_ID={subject_ID}, maze_name={maze_name}")
-
-    # Concatenate across sessions along the feature dimension
-    t = np.concatenate(t_list, axis=1)  # (n_shifts, n_cluster_heatmaps)
-    r = np.concatenate(r_list, axis=0)  # (n_cluster_heatmaps,)
-
-    if plot:
-        MSE = sse / n_valid  # (n_shifts,) — no large temporary array needed
-        best_shift_cm = shifts_cm[np.argmin(MSE)]
-
-        f, ax = plt.subplots(1, 1, figsize=(4, 3))
-        ax.plot(shifts_cm * 100, MSE, marker="o", markersize=4)
-        ax.axvline(best_shift_cm * 100, color="r", linestyle="--", label=f"best: {best_shift_cm*100:.1f} cm")
-        ax.set_xlabel("Spatial shift (cm)")
-        ax.set_ylabel("MSE")
-        ax.legend(frameon=False)
-        ax.spines[["top", "right"]].set_visible(False)
-        plt.tight_layout()
-
-    return t, r, shifts_cm
-
-
-def get_phase_rel_heatmaps(
-    subject_ID="all",
+def get_SSE_df(
     split_half_corr_thres=0.5,
     bin_size=0.04,
     upscale_bin_size=0.001,
@@ -112,18 +42,41 @@ def get_phase_rel_heatmaps(
     xy_range=(0, 1.4),
     shift_range=0.015,
     verbose=True,
+    save=False,
+    n_jobs=-1,
 ):
     """
-    Compute phase-relative shifted heatmaps across all late sessions of a given subject.
+    Compute per-cluster, per-phase, per-shift SSE across all late sessions.
 
-    The reference heatmap R is the mean firing rate across all theta phases.
-    T stores, for each phase and spatial shift, the shifted ratemap — allowing
-    downstream MSE to find which shift best aligns each phase to the mean.
-    Results are saved per session as .pkl files.
+    If save=False and the parquet already exists it is loaded directly.
+    If save=True the result is (re-)computed and written to disk.
+
+    Sessions are processed in parallel (n_jobs=-1 uses all available cores).
     """
-    save_dir = RESULTS_DIR / "shifted_heatmaps"
-    subject_IDs = [subject_ID] if subject_ID != "all" else SUBJECT_IDS
-    for subject in subject_IDs:
+    save_path = RESULTS_DIR / "SSE_df.parquet"
+    if not save and save_path.exists():
+        return pd.read_parquet(save_path)
+
+    def _run(session):
+        if verbose:
+            print(session.name)
+        try:
+            return get_session_SSE_df(
+                session,
+                split_half_corr_thres=split_half_corr_thres,
+                bin_size=bin_size,
+                upscale_bin_size=upscale_bin_size,
+                smooth_SD=smooth_SD,
+                xy_range=xy_range,
+                shift_range=shift_range,
+                verbose=verbose,
+            )
+        except Exception as e:
+            print(f"Error processing session {session.name}: {e}")
+            return None
+
+    dfs = []
+    for subject in SUBJECT_IDS:
         if verbose:
             print(f"Processing subject {subject}...")
         sessions = gs.get_maze_sessions(
@@ -137,128 +90,19 @@ def get_phase_rel_heatmaps(
             ],
             must_have_data=True,
         )
-        for session in sessions:
-            if verbose:
-                print(session.name)
-            save_path = save_dir / f"{session.name}.pkl"
-            if save_path.exists():
-                if verbose:
-                    print(f"Results already exist for {session.name}, skipping...")
-                continue
-            try:
-                res = get_session_phase_rel_heatmaps(
-                    session,
-                    split_half_corr_thres=split_half_corr_thres,
-                    bin_size=bin_size,
-                    upscale_bin_size=upscale_bin_size,
-                    smooth_SD=smooth_SD,
-                    xy_range=xy_range,
-                    shift_range=shift_range,
-                    verbose=verbose,
-                )
-            except Exception as e:
-                if verbose:
-                    print(f"Error processing session {session.name}: {e}")
-                continue
-            if res is None:
-                continue
-            t, r, shifts_cm, cluster_unique_IDs = res
-            results = {
-                "t": t,
-                "r": r,
-                "shifts_cm": shifts_cm,
-                "cluster_unique_IDs": cluster_unique_IDs,
-                "subject_ID": subject_ID,
-                "maze_name": session.maze_name,
-                "day_on_maze": session.day_on_maze,
-                "late_session": session.late_session,
-            }
-            if verbose:
-                print(f"Saving results to {save_path}...")
-            with open(save_path, "wb") as f:
-                pickle.dump(results, f)
-    # save params
-    params = {
-        "split_half_corr_thres": split_half_corr_thres,
-        "bin_size": bin_size,
-        "upscale_bin_size": upscale_bin_size,
-        "smooth_SD": smooth_SD,
-        "xy_range": xy_range,
-        "shift_range": shift_range,
-    }
-    with open(save_dir / "params.json", "w") as f:
-        json.dump(params, f)
+        results = Parallel(n_jobs=n_jobs)(delayed(_run)(s) for s in sessions)
+        dfs.extend(r for r in results if r is not None)
+    if not dfs:
+        raise RuntimeError("No sessions returned valid results.")
+    SSE_df = pd.concat(dfs, ignore_index=True)
+    if save:
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        SSE_df.to_parquet(save_path)
+    return SSE_df
 
 
-def test_phase_rel_shift(session, **kwargs):
-    """
-    Quick test: for each theta phase compute the MSE between the spatially shifted
-    phase ratemap and the mean-phase reference, then plot best shift per phase.
-
-    Returns:
-        MSE: (n_phases, n_shifts) — mean squared error at each phase × shift
-        best_shifts_cm: (n_phases,) — shift in metres that minimises MSE per phase
-        shifts_cm: (n_shifts,) — shift values in metres
-        phases: phase labels
-    """
-    result = get_session_phase_rel_heatmaps(session, **kwargs)
-    if result is None:
-        print("No valid clusters for this session.")
-        return None
-    df, shifts_cm = result
-    # MSE per (phase, shift) = sum(SSE) / sum(n_features)
-    grouped = df.groupby(["phase", "shift_cm"]).agg(SSE=("SSE", "sum"), n_features=("n_features", "sum"))
-    grouped["MSE"] = grouped["SSE"] / grouped["n_features"]
-    MSE_df = grouped["MSE"].unstack("shift_cm")  # (n_phases, n_shifts)
-    MSE = MSE_df.values
-    phases = MSE_df.index.values
-    best_shifts_cm = shifts_cm[np.argmin(MSE, axis=1)]  # (n_phases,)
-
-    f, ax = plt.subplots(1, 1, figsize=(5, 3))
-    ax.plot(shifts_cm * 100, MSE.T)
-    ax.set_xlabel("Spatial shift (cm)")
-    ax.set_ylabel("MSE")
-    ax.spines[["top", "right"]].set_visible(False)
-    plt.tight_layout()
-
-    f2, ax2 = plt.subplots(1, 1, figsize=(5, 3))
-    ax2.plot(phases, best_shifts_cm * 100, marker="o")
-    ax2.axhline(0, color="k", linewidth=0.8, linestyle="--")
-    ax2.set_xlabel("Theta phase")
-    ax2.set_ylabel("Best shift (cm)")
-    ax2.spines[["top", "right"]].set_visible(False)
-    plt.tight_layout()
-
-    print(f"Best shifts (cm): {best_shifts_cm * 100}")
-    return MSE, best_shifts_cm, shifts_cm
-
-
-def save_all_phase_rel_heatmaps(verbose=True):
-    for subject_ID in SUBJECT_IDS:
-        sessions = gs.get_maze_sessions(
-            subject_IDs=[subject_ID],
-            maze_names="all",
-            days_on_maze="late",
-            with_data=[
-                "cluster_place_direction_tuning_metrics",
-                "navigation_df",
-                "navigation_theta_spike_counts_df",
-            ],
-            must_have_data=True,
-        )
-        for session in sessions:
-            if verbose:
-                print(session.name)
-            try:
-                res = get_session_phase_rel_heatmaps(
-                    session,
-                    verbose=verbose,
-                )
-            except Exception as e:
-                print(f"Error occurred while processing {session.name}: {e}")
-
-
-def get_session_SEE_df(
+# %%
+def get_session_SSE_df(
     session,
     split_half_corr_thres=0.5,
     bin_size=0.04,
@@ -280,10 +124,11 @@ def get_session_SEE_df(
     given cluster (determined solely by the occupancy-based valid mask).
 
     Returns:
-        df: DataFrame with columns [cluster_unique_ID, phase, shift_cm, SSE, n_features]
-        shifts_cm: (n_shifts,) array of shift values in metres
+        df: DataFrame with columns [cluster_unique_ID, phase, shift_cm, SSE, n_features,
+            split_half_corr, subject_ID, maze_name, day_on_maze, late_session]
     """
-    nav_spikes_df = get_theta_stratified_nav_spikes_df(session, split_half_corr_thres)
+    metrics_df = session.cluster_place_direction_tuning_metrics
+    nav_spikes_df = get_theta_stratified_nav_spikes_df(session, split_half_corr_thres, verbose=verbose)
     if nav_spikes_df is None:
         return None
     cluster_unique_IDs = nav_spikes_df.spike_count.columns.get_level_values(0).unique()
@@ -324,26 +169,32 @@ def get_session_SEE_df(
             print(cluster)
         # n_features for this cluster: total valid bins across all directions (constant across phase/shift)
         n_features_cluster = sum(n_valid)
+        # Pre-compute ref_masked per direction — identical for all phases
+        dir_ref_masked = {}
+        for j, _dir in enumerate(NSEW):
+            if n_valid[j] == 0:
+                continue
+            dir_df = dir2df[_dir]
+            pos = dir_df.centroid_position.values
+            ref_spikes = dir_df.spike_count[cluster].mean(axis=1).values
+            dir_ref_masked[j] = _get_upscaled_ratemap(
+                ref_spikes, pos, ratemap_kwargs, scale_factor, smooth_SD, upscale_bin_size
+            ).flatten()[dir_valid_masks[j]]
         for k, phase in enumerate(phases):
             # Accumulate SSE across directions for each shift
             sse_per_shift = np.zeros(len(shifts))
             for j, _dir in enumerate(NSEW):
                 if n_valid[j] == 0:
                     continue
-                mask = dir_valid_masks[j]
                 dir_df = dir2df[_dir]
                 pos = dir_df.centroid_position.values
-                ref_spikes = dir_df.spike_count[cluster].mean(axis=1).values
-                ref_masked = _get_upscaled_ratemap(
-                    ref_spikes, pos, ratemap_kwargs, scale_factor, smooth_SD, upscale_bin_size
-                ).flatten()[mask]
                 shift_spikes = dir_df.spike_count[cluster][phase].values
                 shift_up = _get_upscaled_ratemap(
                     shift_spikes, pos, ratemap_kwargs, scale_factor, smooth_SD, upscale_bin_size
                 )
                 for l, shift in enumerate(shifts):
-                    shifted_masked = _shift_ratemap(shift_up, _dir, shift).flatten()[mask]
-                    sse_per_shift[l] += np.nansum((shifted_masked - ref_masked) ** 2)
+                    shifted_masked = _shift_ratemap(shift_up, _dir, shift).flatten()[dir_valid_masks[j]]
+                    sse_per_shift[l] += np.nansum((shifted_masked - dir_ref_masked[j]) ** 2)
             for l, shift_cm in enumerate(shifts_cm):
                 records.append(
                     {
@@ -352,10 +203,16 @@ def get_session_SEE_df(
                         "shift_cm": shift_cm,
                         "SSE": sse_per_shift[l],
                         "n_features": n_features_cluster,
+                        "split_half_corr": metrics_df.loc[cluster].split_half_corr.value,
                     }
                 )
 
     df = pd.DataFrame(records)
+    # add session info
+    df["subject_ID"] = session.subject_ID
+    df["maze_name"] = session.maze_name
+    df["day_on_maze"] = session.day_on_maze
+    df["late_session"] = session.late_session
     return df
 
 
