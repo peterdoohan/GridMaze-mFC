@@ -39,11 +39,12 @@ def get_preferred_shift(df, min_split_half_corr=0.7):
     _df = df.copy()
     if min_split_half_corr is not None:
         _df = _df[_df.split_half_corr.gt(min_split_half_corr)]
-    grouped = _df.groupby(["subject_ID", "phase", "shift_m"])[["SSE", "n_features"]].sum()
+    # grouped = _df.groupby(["subject_ID", "phase", "shift_m"])[["SSE", "n_features"]].sum()
+    grouped = _df.groupby(["subject_ID", "cluster_unique_ID", "phase", "shift_m"])[["SSE", "n_features"]].sum()
     grouped["MSE"] = grouped["SSE"] / grouped["n_features"]
     mse = grouped["MSE"].unstack("shift_m")  # (n_phases, n_shifts)
     best_shifts = mse.idxmin(axis=1)  # Series: phase → best shift_cm
-    return best_shifts.unstack(0)
+    return best_shifts.groupby(level=[0, 2]).mean().unstack(0)
 
 
 # %%
