@@ -40,7 +40,17 @@ def plot_session_place_direction_tuning(session):
     return
 
 
-def plot_place_direction_tuning(simple_maze, place_direction_tuning_df, colormap="heat", fixed_vmin=False, ax=None):
+def plot_place_direction_tuning(
+    simple_maze,
+    place_direction_tuning_df,
+    colormap="heat",
+    fixed_vmin=False,
+    silhouette_node_size=650,
+    silhouette_edge_size=13,
+    star_base_length=0.05,
+    max_point_length=0.026,
+    ax=None,
+):
     if ax is None:
         f, ax = plt.subplots(1, 1, figsize=(5, 5), clear=True)
     mp.plot_directed_heatmap(
@@ -48,10 +58,10 @@ def plot_place_direction_tuning(simple_maze, place_direction_tuning_df, colormap
         place_direction_tuning_df,
         colormap=colormap,
         fixed_vmin=fixed_vmin,
-        silhouette_node_size=650,
-        silhouette_edge_size=13,
-        star_base_length=0.05,
-        max_point_length=0.026,
+        silhouette_node_size=silhouette_node_size,
+        silhouette_edge_size=silhouette_edge_size,
+        star_base_length=star_base_length,
+        max_point_length=max_point_length,
         value_label="Firing Rate (Hz)",
         ax=ax,
     )
@@ -220,7 +230,7 @@ def get_2D_ratemap(
     x_range=None,
     y_range=None,
     nan_unvisited=True,
-    min_occupancy=0.5,
+    min_occupancy=0,
 ):
     """
     Parameters

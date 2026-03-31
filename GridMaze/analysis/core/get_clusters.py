@@ -215,11 +215,11 @@ class Cluster:
 
         elif feature == "spatial":
             default_kwargs = {
-                "navigation_only": False,
-                "moving_only": True,
+                "navigation_only": True,
+                "moving_only": False,
                 "exclude_time_at_goal": False,
                 "bin_size": 0.03,
-                "smooth_SD": 0.04,
+                "smooth_SD": 0.05,
                 "maze_silhouette": True,
                 "cbar": True,
             }
@@ -240,6 +240,10 @@ class Cluster:
                 "exclude_time_at_goal": False,
                 "fixed_vmin": False,
                 "colormap": "heat",
+                "silhouette_node_size": 500,
+                "silhouette_edge_size": 10,
+                "star_base_length": 0.045,
+                "max_point_length": 0.03,
             }
 
         elif feature == "head_direction":
@@ -616,7 +620,14 @@ class Cluster:
             spatial.plot_place_tuning(*tuning_data, ax=ax)
         elif feature == "place_direction":
             spatial.plot_place_direction_tuning(
-                *tuning_data, colormap=feature_kwargs["colormap"], fixed_vmin=feature_kwargs["fixed_vmin"], ax=ax
+                *tuning_data,
+                colormap=feature_kwargs["colormap"],
+                fixed_vmin=feature_kwargs["fixed_vmin"],
+                silhouette_node_size=feature_kwargs["silhouette_node_size"],
+                silhouette_edge_size=feature_kwargs["silhouette_edge_size"],
+                star_base_length=feature_kwargs["star_base_length"],
+                max_point_length=feature_kwargs["max_point_length"],
+                ax=ax,
             )
         elif feature == "head_direction":
             head_direction.plot_head_direction_tuning(
