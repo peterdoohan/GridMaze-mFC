@@ -6,6 +6,7 @@ Library for the analysis of neural tuning to place_direction explaining low dime
 from cProfile import label
 import json
 import joblib
+from torch import fill
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
@@ -639,50 +640,64 @@ def get_pca_variance_explained(A, B):  # A & B: [n_samples, n_features]
 # %% derive metric for similart of place_direction across subjects
 
 
-def plot_place_direction_cross_subject_similarity(results_df, ax=None, print_stats=True):
-    """ """
-    # set up fig
-    if ax is None:
-        f, ax = plt.subplots(1, 1, figsize=(1.5, 3), clear=True)
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.set_ylabel("AUC")
-    ax.set_xticks([0, 1], ["within", "across"])
-    ax.set_xlabel("place_dir. \n similarity")
-    ax.set_xlim(-0.25, 1.25)
-    ax.set_ylim(0.5, 0.8)
+def plot_self_vs_other_cve_curves(auc_df, cve_df, maze_name="maze_1", fill_cve=True, axes=None, print_stats=True):
+    """
+    Plot within- vs. across-subject VE curves and AUC summary.
+    """
+    if axes is None:
+        f = plt.figure(figsize=(2, 2))
+        gs_spec = f.add_gridspec(2, 2, width_ratios=(1, 0.2), height_ratios=(1, 1), hspace=0.3)
+        axes = [f.add_subplot(gs_spec[:, 0]), f.add_subplot(gs_spec[1, 1])]
+    for ax in axes:
+        ax.spines[["top", "right"]].set_visible(False)
+    axes[0].set_ylabel("Prop. \n variance explained")
+    axes[0].set_xlabel("n components")
+    axes[1].set_ylabel("AUC")
+    # processing
+    _cve_df = cve_df.copy()
+    _auc_df = auc_df.copy()
+    if fill_cve:
+        _cve_df = fill_cve_df(_cve_df)
+    _auc_df = _auc_df[_auc_df.maze_name == maze_name]
+    _cve_df = _cve_df[_cve_df.maze_name == maze_name]
+    conditions = ["subject_pcs", "other_pcs"]
+    labels = ["self", "other"]
+    colors = ["black", "gray"]
+    components = np.sort(_cve_df["component"].unique())
+    axes[0].plot([components.min(), components.max()], [0, 1], color="k", linestyle="--", alpha=0.5)
 
-    # process data
-    mean_AUCs = results_df.groupby("subject")[["AUC_subject", "AUC_other"]].mean()
-    long_df = mean_AUCs.stack().reset_index()
-    long_df.columns = ["subject", "condition", "AUC"]
-    long_df["condition"] = long_df["condition"].map({"AUC_subject": "within", "AUC_other": "across"})
-    sns.swarmplot(
-        data=long_df,
-        x="condition",
-        hue="subject",
-        y="AUC",
-        palette="hls",
-        size=6,
-        alpha=0.5,
-        dodge=False,
-        zorder=1,
-        legend=False,
-    )
-    sns.pointplot(
-        data=long_df,
-        x="condition",
-        y="AUC",
-        capsize=0.1,
-        estimator=np.mean,
-        linestyles="",
-        dodge=False,
-        color="darkgrey",
-        linestyle="none",
-    )
+    # average across splits (and mazes) per subject, then mean ± SEM across subjects
+    subject_mean_ve = _cve_df.groupby(["subject", "component"])[conditions].mean().reset_index()
+    for cond, label, color in zip(conditions, labels, colors):
+        cond_ve = subject_mean_ve.pivot(index="subject", columns="component", values=cond)
+        mean = cond_ve.mean()
+        sem = cond_ve.sem()
+        axes[0].plot(components, mean, color=color, linewidth=1, label=label)
+        axes[0].fill_between(components, mean - sem, mean + sem, color=color, alpha=0.2)
+    axes[0].legend(loc="upper left", fontsize=8, frameon=False)
 
-    # do stats
+    # AUC: average across splits (and mazes) per subject, then mean ± SEM across subjects
+    auc_cols = ["AUC_subject", "AUC_other"]
+    subject_mean_auc = _auc_df.groupby("subject")[auc_cols].mean()
+    mean_auc = subject_mean_auc.mean()
+    sem_auc = subject_mean_auc.sem()
+    for i, (cond, label, color) in enumerate(zip(auc_cols, labels, colors)):
+        axes[1].errorbar(
+            x=i,
+            y=mean_auc[cond],
+            yerr=[[sem_auc[cond]], [sem_auc[cond]]],
+            fmt="o",
+            color=color,
+            capsize=0,
+            elinewidth=1.5,
+            markersize=4,
+        )
+    axes[1].set_xticks(range(len(labels)), labels, rotation=45, ha="right")
+    axes[1].set_xlim(-0.5, len(labels) - 0.5)
+    axes[1].set_ylim(0.5, 0.8)
+
     if print_stats:
-        t, p = ttest_rel(mean_AUCs["AUC_subject"], mean_AUCs["AUC_other"])
+        t, p = ttest_rel(subject_mean_auc["AUC_subject"], subject_mean_auc["AUC_other"])
         print(f"t={t:.2f}, p={p:.3f}")
 
 
@@ -781,3 +796,42 @@ def get_place_direction_cross_subject_similarity(
         auc_results_df.to_parquet(auc_save_path)
         cve_results_df.to_parquet(cve_save_path)
     return auc_results_df, cve_results_df
+
+
+def fill_cve_df(cve_results_df):
+    """
+    Fill missing rows in cumulative variance explained (CVE) results dataframe.
+    """
+    # Get max component per maze
+    max_components = cve_results_df.groupby("maze_name")["component"].max()
+
+    # Create complete index for all subject/split/maze combinations
+    idx = pd.MultiIndex.from_product(
+        [
+            cve_results_df["subject"].unique(),
+            cve_results_df["split"].unique(),
+            cve_results_df["maze_name"].unique(),
+        ],
+        names=["subject", "split", "maze_name"],
+    )
+
+    # Expand with components up to the max for each maze
+    expanded_rows = []
+    for subject, split, maze_name in idx:
+        max_comp = max_components[maze_name]
+        for component in range(int(max_comp) + 1):
+            expanded_rows.append({"subject": subject, "split": split, "maze_name": maze_name, "component": component})
+
+    cve_results_df = pd.DataFrame(expanded_rows).merge(
+        cve_results_df, on=["subject", "split", "maze_name", "component"], how="left"
+    )
+
+    # Sort for forward fill
+    cve_results_df = cve_results_df.sort_values(["subject", "split", "maze_name", "component"])
+
+    # Forward fill values within each subject/split/maze group
+    cve_results_df[["subject_pcs", "other_pcs"]] = cve_results_df.groupby(["subject", "split", "maze_name"])[
+        ["subject_pcs", "other_pcs"]
+    ].ffill()
+
+    return cve_results_df
