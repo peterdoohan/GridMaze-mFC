@@ -472,6 +472,27 @@ def plot_neural_behaviour_variance_explained(results_df, explaining="neurons", c
     ax.legend(fontsize="xx-small")
 
 
+def plot_cumulative_variance_explained(results_df, color="blue", ax=None):
+    """ """
+    # set up figure
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(1.5, 2), clear=True)
+    ax.spines[["top", "right"]].set_visible(False)
+    n_components = results_df.component.max()
+    ax.plot([0, n_components], [0, 1], color="black", ls="--", alpha=0.5)  # baseline
+    ax.set_xlabel("n components")
+    ax.set_ylabel("prop. \n variance explained")
+    # plot
+    df = results_df.groupby(["resample", "component"]).mean()  # average over splits
+    _df = df["B_explains_B"].unstack()
+    c = _df.columns.values
+    mean = _df.mean()
+    lower = _df.quantile(0.025)
+    upper = _df.quantile(0.975)
+    ax.plot(c, mean, color=color)
+    ax.fill_between(c, lower, upper, color=color, alpha=0.3)
+
+
 def get_neural_behaviour_variance_explained(
     maze_name,
     input_data=None,
@@ -483,7 +504,7 @@ def get_neural_behaviour_variance_explained(
     n_resamples=500,
     demean=False,
     norm_length=True,
-    verbose=True,
+    verbose=False,
     max_jobs=20,
     save=False,
 ):
