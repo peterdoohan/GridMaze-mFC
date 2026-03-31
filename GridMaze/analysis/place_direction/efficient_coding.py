@@ -188,15 +188,17 @@ def plot_neural_behavioural_ve_summary(
     ],
     axes=None,
 ):
-    # set up figure
+    # set up figure with GridSpec for better layout control
     if axes is None:
-        f, axes = plt.subplots(2, 1, figsize=(3, 5), height_ratios=(1, 0.4), clear=True)
+        f = plt.figure(figsize=(2.5, 2))
+        gs = f.add_gridspec(2, 2, width_ratios=(1, 0.4), height_ratios=(0.5, 1), hspace=0.3)
+        axes = [f.add_subplot(gs[:, 0]), f.add_subplot(gs[1, 1])]
     for ax in axes:
         ax.spines[["top", "right"]].set_visible(False)
     axes[0].plot([0, ve_df.component.max()], [0, 1], color="k", linestyle="--", alpha=0.5)
-    axes[0].set_ylabel("Prop. variance explained")
+    axes[0].set_ylabel("Prop. \n variance explained")
     axes[0].set_xlabel("n components")
-    axes[1].set_xlabel("AUC")
+    axes[1].set_ylabel("AUC")
 
     # process cum ve curve data (top axis)
     components = ve_df.component.unique()
@@ -205,25 +207,40 @@ def plot_neural_behavioural_ve_summary(
         cond_ve = ve[cond].unstack()
         mean = cond_ve.mean()
         std = cond_ve.std()  # sem across subjects from bootstrap perms
-        axes[0].plot(components, mean, color=color, linewidth=1.5, alpha=0.8, label=cond)
+        axes[0].plot(components, mean, color=color, linewidth=1.0, alpha=0.8, label=cond)
         axes[0].fill_between(
             components,
             mean - std,
             mean + std,
             color=color,
-            alpha=0.25,
+            alpha=0.2,
         )
-    axes[0].legend(loc="lower right", fontsize=8, frameon=False)
+    axes[0].legend(loc="upper right", fontsize=8, frameon=False)
 
-    # process AUC data (bottom axis)
-    _plot_auc_comparison(
-        auc_df,
-        conditions=conditions,
-        colors=colors,
-        print_stats=False,
-        comparions=None,
-        ax=axes[1],
-    )
+    # process AUC data (bottom axis) - inlined from _plot_auc_comparison
+    auc = auc_df.groupby("resample").mean().drop(columns=["split"])
+    mean_auc = auc.mean()
+    auc_lower = auc.quantile(0.025)
+    auc_upper = auc.quantile(0.975)
+    err_lower = mean_auc - auc_lower
+    err_upper = auc_upper - mean_auc
+    for i, (cond, color) in enumerate(zip(conditions, colors)):
+        axes[1].errorbar(
+            x=i,
+            y=mean_auc[cond],
+            yerr=[[err_lower[cond]], [err_upper[cond]]],
+            fmt="o",
+            color=color,
+            label=cond,
+            capsize=0,
+            elinewidth=1.5,
+            markersize=4,
+        )
+    axes[1].set_xticks(range(len(conditions)), conditions)
+    axes[1].tick_params(axis="x", rotation=45)
+    axes[1].set_ylim(0.5, 0.85)
+    axes[1].set_xlim(-0.5, len(conditions) - 0.5)
+    axes[1].invert_xaxis()
 
     if print_stats:
         print("comparison p-values:")
