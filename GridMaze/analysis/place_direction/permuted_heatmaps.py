@@ -43,13 +43,15 @@ def _stats(auc_df):
 def plot_permuted_vs_true_summary(auc_df, ve_df, print_stats=True, axes=None):
     # set up figure
     if axes is None:
-        f, axes = plt.subplots(2, 1, figsize=(3, 4), height_ratios=(1, 0.2))
+        f = plt.figure(figsize=(2, 2))
+        gs = f.add_gridspec(2, 2, width_ratios=(1, 0.2), height_ratios=(1, 1), hspace=0.3)
+        axes = [f.add_subplot(gs[:, 0]), f.add_subplot(gs[1, 1])]
     for ax in axes:
         ax.spines[["top", "right"]].set_visible(False)
     axes[0].plot([0, ve_df.component.max()], [0, 1], color="k", linestyle="--", alpha=0.5)
-    axes[0].set_ylabel("Prop. variance explained")
+    axes[0].set_ylabel("Prop. \n variance explained")
     axes[0].set_xlabel("n components")
-    axes[1].set_xlabel("AUC")
+    axes[1].set_ylabel("AUC")
 
     # process cum ve curve data (top axis)
     conditions = ["true", "permuted"]
@@ -68,7 +70,7 @@ def plot_permuted_vs_true_summary(auc_df, ve_df, print_stats=True, axes=None):
             color=color,
             alpha=0.2,
         )
-    axes[0].legend(loc="lower right", fontsize=8, frameon=False)
+    axes[0].legend(loc="upper left", fontsize=8, frameon=False)
 
     # process AUC data (bottom axis)
     auc = auc_df.groupby("resample").mean().drop(columns=["split"])
@@ -80,20 +82,19 @@ def plot_permuted_vs_true_summary(auc_df, ve_df, print_stats=True, axes=None):
     for i, (cond, color) in enumerate(zip(conditions, colors)):
         cond = cond + "_auc"
         axes[1].errorbar(
-            x=mean_auc[cond],
-            y=i,
-            xerr=[[err_lower[cond]], [err_upper[cond]]],
-            fmt="none",
+            x=i,
+            y=mean_auc[cond],
+            yerr=[[err_lower[cond]], [err_upper[cond]]],
+            fmt="o",
             color=color,
             label=cond,
-            capthick=1.5,
+            capsize=0,
             elinewidth=1.5,
-            capsize=5,
+            markersize=4,
         )
-    axes[1].set_yticks(range(len(conditions)), conditions)
-    axes[1].set_xlim(0.5, 0.85)
-    axes[1].set_ylim(-0.5, len(conditions) - 0.5)
-    axes[1].invert_yaxis()
+    axes[1].set_xticks(range(len(conditions)), conditions, rotation=45, ha="right")
+    axes[1].set_ylim(0.5, 0.85)
+    axes[1].set_xlim(-0.5, len(conditions) - 0.5)
 
     if print_stats:
         _stats(auc_df)
