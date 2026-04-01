@@ -32,7 +32,7 @@ RESULTS_DIR = RESULTS_PATH / "place_direction" / "structure_rsa"
 # %% Functions
 
 
-def plot_structure_RSA_summary(maze_names=["maze_1", "maze_2"], ax=None):
+def plot_structure_RSA_summary(maze_names=["maze_1", "maze_2"], plot_null_dist=False, ax=None):
     # load/generate data
     obs_dfs, perm_dfs = [], []
     for maze_name in maze_names:
@@ -59,16 +59,17 @@ def plot_structure_RSA_summary(maze_names=["maze_1", "maze_2"], ax=None):
     perm_mean = perm_df.groupby(["permutation"])[metrics].mean()
 
     # plot permuted dist
-    long_perm_df = perm_mean.melt(var_name="metric", value_name="beta")
-    sns.violinplot(
-        data=long_perm_df,
-        x="metric",
-        y="beta",
-        color="grey",
-        split=True,
-        inner=None,
-        ax=ax,
-    )
+    if plot_null_dist:
+        long_perm_df = perm_mean.melt(var_name="metric", value_name="beta")
+        sns.violinplot(
+            data=long_perm_df,
+            x="metric",
+            y="beta",
+            color="grey",
+            split=True,
+            inner=None,
+            ax=ax,
+        )
 
     # plot tobs means
     long_obs_df = obs_mean.melt(var_name="metric", value_name="beta")
