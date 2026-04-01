@@ -195,7 +195,7 @@ def plot_neural_behavioural_ve_summary(
         axes = [f.add_subplot(gs[:, 0]), f.add_subplot(gs[1, 1])]
     for ax in axes:
         ax.spines[["top", "right"]].set_visible(False)
-    axes[0].plot([0, ve_df.component.max()], [0, 1], color="k", linestyle="--", alpha=0.5)
+    axes[0].plot([0, ve_df.component.max()], [0, 1], color="k", linestyle="--", lw=1, alpha=1)
     axes[0].set_ylabel("Prop. \n variance explained")
     axes[0].set_xlabel("n components")
     axes[1].set_ylabel("AUC")

@@ -12,15 +12,17 @@ from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.distance_to_goal import population_tuning as dpt
 from GridMaze.analysis.place_direction import dimensionality_reduction as ppt
 
-from GridMaze.analysis.nbeGLM import load_model_sets as lms
-from GridMaze.analysis.nbeGLM import variance_explained as ve
+from GridMaze.analysis.neGLM import load_model_sets as lms
+from GridMaze.analysis.neGLM import variance_explained as ve
 
 # %% Global Variables
 
 # %% Functions
 
 
-def get_single_tuned_clusters(feature="distance_to_goal", maze_names=["maze_1", "maze_2", "rooms_maze"]):
+def get_single_tuned_clusters(
+    feature="distance_to_goal", exclusive=False, maze_names=["maze_1", "maze_2", "rooms_maze"]
+):
     """ """
     # load model set with full model (dtg, pd and ea feature groups) and reduced models for each feature
     results_df = lms.load_model_set_cv_scores("variance_explained", maze_names=maze_names, all_completed=True)
@@ -30,24 +32,22 @@ def get_single_tuned_clusters(feature="distance_to_goal", maze_names=["maze_1", 
         reduced_models=[
             "remove_distance_to_goal",
             "remove_place_direction",
-            "remove_egocentric_action_action",
         ],
         multiple_comparisons_corrected=False,
         alpha=0.05,
     )
     # filter for clusters tuned to just one feature
     if feature == "distance_to_goal":
-        mask = (
-            feature_tuned_df.distance_to_goal
-            & ~feature_tuned_df.place_direction
-            & ~feature_tuned_df.egocentric_action_action
-        )
+        if exclusive:
+            mask = feature_tuned_df.distance_to_goal & ~feature_tuned_df.place_direction
+        else:
+            mask = feature_tuned_df.distance_to_goal
+
     elif feature == "place_direction":
-        mask = (
-            ~feature_tuned_df.distance_to_goal
-            & feature_tuned_df.place_direction
-            & ~feature_tuned_df.egocentric_action_action
-        )
+        if exclusive:
+            mask = feature_tuned_df.place_direction & ~feature_tuned_df.distance_to_goal
+        else:
+            mask = feature_tuned_df.place_direction
     else:
         raise ValueError("Feature must be 'distance_to_goal' or 'place_direction'")
     # output cluster unique IDs
@@ -161,7 +161,7 @@ def plot_unique_place_direction_components(
     place_direction_tuning,
     simple_maze,
     dim_red="nmf",
-    n_components=8,
+    n_components=10,
     axes=None,
 ):
     """ """
@@ -175,7 +175,7 @@ def plot_unique_place_direction_components(
         raise ValueError("dim_red must be 'nmf' or 'pca'")
 
 
-def get_population_unique_place_direction_tuning_df(maze_name="maze_1"):
+def get_population_unique_place_direction_tuning_df(maze_name="maze_1", exclusive=False):
     # get all place-direction tuning curves
     population_place_direction_tuning = ppt.get_population_place_direction_tuning(
         subject_IDs="all",
@@ -189,7 +189,9 @@ def get_population_unique_place_direction_tuning_df(maze_name="maze_1"):
         place_direction_tuned=False,
     )
     # get clusters only tuned to place-direction
-    single_tuned_clusters = get_single_tuned_clusters(feature="place_direction", maze_names=[maze_name])
+    single_tuned_clusters = get_single_tuned_clusters(
+        feature="place_direction", exclusive=exclusive, maze_names=[maze_name]
+    )
     # filter
     place_direction_tuning = population_place_direction_tuning.loc[single_tuned_clusters]
     return place_direction_tuning
