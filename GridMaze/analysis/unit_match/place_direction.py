@@ -8,7 +8,7 @@ import h5py
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from matplotlib import axes, pyplot as plt
+from matplotlib import pyplot as plt
 from scipy.stats import ttest_rel
 
 from GridMaze.maze import representations as mr
@@ -129,6 +129,55 @@ def get_matched_heatmaps_df(
 
 
 # %% true vs permuted place-direction tuning correlation across mazes
+
+
+def plot_cross_maze_corrs_summary2(results, print_stats=True, min_matches=10, ax=None):
+    """ """
+    # setup fig
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(1, 2))
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.axhline(0, color="k", linestyle="--", alpha=0.5)
+    ax.set_ylabel("match correlation \n place-direction tuning")
+    ax.set_xlabel("match type")
+
+    # compute subject-level means
+    rows = []
+    for subject_ID, data in results.items():
+        true = data["true_corrs"]
+        if len(true) < min_matches:
+            continue
+        true_mean = np.mean(true)
+        permuted_mean = np.nanmean(data["permuted_corrs"])  # mean over all pairs and permutations
+        rows.append({"subject": subject_ID, "condition": "true", "corr": true_mean})
+        rows.append({"subject": subject_ID, "condition": "permuted", "corr": permuted_mean})
+    df = pd.DataFrame(rows)
+    # plot individual subject values behind
+    sns.stripplot(
+        data=df,
+        x="condition",
+        y="corr",
+        color="grey",
+        alpha=0.5,
+        size=5,
+        ax=ax,
+        zorder=1,
+    )
+    # plot mean +/- SEM across subjects
+    sns.pointplot(
+        data=df,
+        x="condition",
+        y="corr",
+        color="k",
+        errorbar="se",
+        capsize=0,
+        linestyle="none",
+        ax=ax,
+        zorder=2,
+    )
+    if print_stats:
+        _get_stats(results)
+    return
 
 
 def plot_cross_maze_corrs_summary(results, print_stats=True, min_matches=10, ax=None):
