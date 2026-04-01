@@ -230,3 +230,140 @@ def get_session_place_direction_tuning(
     place_direction_df.columns.names = ["maze_position", "direction"]
     place_direction_df.sort_index(axis=1, inplace=True)
     return place_direction_df
+
+
+# %% get population place tuning (no pd)
+
+
+def get_population_place_tuning(
+    subject_IDs="all",
+    maze_name="maze_1",
+    late_sessions=True,
+    sessions=None,
+    return_list=False,
+    include_multi_unit=False,
+    fill_nans="mean",
+    normalisation="length",
+    min_split_corr=0.5,
+    max_steps_to_goal=30,
+    place_direction_tuned=True,
+    verbose=False,
+):
+    """ """
+    # if session objects are not input, generate them from input filters
+    if sessions is None:
+        days_on_maze = "late" if late_sessions else "all"
+        if verbose:
+            print("Loading sessions ...")
+        sessions = gs.get_maze_sessions(
+            subject_IDs=subject_IDs,
+            maze_names=[maze_name],
+            days_on_maze=days_on_maze,
+            with_data=[
+                "navigation_df",
+                "navigation_spike_rates_df",
+                "cluster_metrics",
+                "cluster_place_direction_tuning_metrics",
+            ],
+            must_have_data=True,
+        )
+    dfs = []
+    for session in sessions:
+        if verbose:
+            print(session.name)
+        df = get_session_place_direction_tuning(
+            session,
+            include_multi_unit=include_multi_unit,
+            fill_nans=fill_nans,
+            normalisation=normalisation,
+            min_split_corr=min_split_corr,
+            max_steps_from_goal=max_steps_to_goal,
+            place_direction_tuned=place_direction_tuned,
+        )
+        if df is None:
+            continue  # not pd tuned clusters
+        df.index.name = "cluster_unique_ID"
+        df[("subject_ID", "")] = session.subject_ID
+        df.set_index(["subject_ID"], append=True, inplace=True)
+        dfs.append(df)
+    if return_list:
+        return dfs, sessions
+    else:
+        pop_pd_tuning_df = pd.concat(dfs, axis=0)
+        return pop_pd_tuning_df
+
+
+def get_session_place_tuning(
+    session,
+    navigation_rates_df=None,
+    include_multi_unit=False,
+    fill_nans="mean",
+    normalisation="length",
+    place_direction_tuned=True,
+    min_split_corr=0.5,
+    navigation_only=True,
+    moving_only=True,
+    exclude_time_at_goal=True,
+    minimum_occupancy=0.5,
+    max_steps_from_goal=30,
+    verbose=False,
+):
+    """
+    Returns place-direction tuning for all place-direction tuned clusters in a session.
+    w/ options for filtering clusters going in, data going into heatmap calculation, then
+    further value filling and normalisation of the heatmaps
+    """
+    # load data
+    simple_maze = session.simple_maze()
+    pd_tuning_metrics = session.cluster_place_direction_tuning_metrics
+    if navigation_rates_df is None:
+        navigation_rates_df = session.get_navigation_activity_df(
+            type="rates", cluster_kwargs={"single_units": True, "multi_units": include_multi_unit}
+        )
+    # filter for place_direction tuned clusters (roughly partitioned via split correlations)
+    # see analysis/processing/get_place_direction_tuning_metrics.py
+    cluster_filters = []
+    if place_direction_tuned:
+        cluster_filters.append(pd_tuning_metrics.place_direction_tuned)
+    if min_split_corr is not None:
+        cluster_filters.append(pd_tuning_metrics.split_half_corr.value.ge(min_split_corr))
+    if len(cluster_filters) > 0:
+        keep_clusters = pd_tuning_metrics[np.logical_and.reduce(cluster_filters)].index
+        if len(keep_clusters) == 0:
+            if verbose:
+                print(f"No place-direction cluster found with split_half_corr >= {min_split_corr}")
+            return None
+        reject_clusters = [c for c in navigation_rates_df.firing_rate.columns.values if c not in keep_clusters]
+        navigation_rates_df = navigation_rates_df.drop([("firing_rate", c) for c in reject_clusters], axis=1)
+    # get average place direction tuning
+    place_direction_df = spatial._get_place_direction_df(
+        simple_maze,
+        navigation_rates_df,
+        navigation_only,
+        moving_only,
+        exclude_time_at_goal,
+        minimum_occupancy,
+        max_steps_from_goal,
+    )
+    # fill nan values of unvisited place-directions
+    if fill_nans:
+        if fill_nans == "mean":
+            place_direction_df.T.fillna(place_direction_df.mean(axis=1), inplace=True)  # replace nans with the mean
+        elif fill_nans == "zero":
+            place_direction_df.fillna(0, inplace=True)
+        else:
+            raise ValueError(f"Unknown fill_nans method: {fill_nans}")
+    # normalise over clusters
+    if normalisation:
+        if normalisation == "mean":
+            place_direction_df = place_direction_df.div(place_direction_df.mean(axis=1), axis=0)
+        elif normalisation == "length":
+            place_direction_df = place_direction_df.div(place_direction_df.pow(2).sum(axis=1).pow(0.5), axis=0)
+        elif normalisation == "max":
+            place_direction_df = place_direction_df.div(place_direction_df.max(axis=1), axis=0)
+        else:
+            raise ValueError(f"Unknown normalisation method: {normalisation}")
+    # return df
+    place_direction_df.columns.names = ["maze_position", "direction"]
+    place_direction_df.sort_index(axis=1, inplace=True)
+    return place_direction_df

@@ -7,6 +7,7 @@ import json
 import h5py
 import numpy as np
 import pandas as pd
+import scipy as sp
 import seaborn as sns
 from matplotlib import pyplot as plt
 from scipy.stats import ttest_rel
@@ -68,7 +69,11 @@ def plot_cross_maze_nmf_components(mhm_df, maze_pair, n_components=10, cmap="Red
 
 
 def get_matched_heatmaps_df(
-    maze_pair=("maze_1", "maze_2"), min_split_half_corr=0.3, fill_nans="mean", normalisation="length", verbose=False
+    maze_pair=("maze_1", "maze_2"),
+    min_split_half_corr=0.3,
+    fill_nans="mean",
+    normalisation="length",
+    verbose=False,
 ):
     """ """
     # load heatmaps
@@ -91,18 +96,17 @@ def get_matched_heatmaps_df(
         )
         if verbose:
             print(f"generating place-direction heatmaps")
-        heatmaps.append(
-            pdr.get_population_place_direction_tuning(
-                sessions=sessions,
-                include_multi_unit=False,
-                fill_nans=fill_nans,  # for later DR
-                normalisation=normalisation,  # for later DR
-                min_split_corr=min_split_half_corr,
-                place_direction_tuned=False,
-                max_steps_to_goal=30,
-                verbose=False,
-            )
+        df = pdr.get_population_place_direction_tuning(
+            sessions=sessions,
+            include_multi_unit=False,
+            fill_nans=fill_nans,  # for later DR
+            normalisation=normalisation,  # for later DR
+            min_split_corr=min_split_half_corr,
+            place_direction_tuned=False,
+            max_steps_to_goal=30,
+            verbose=False,
         )
+        heatmaps.append(df)
     heatmaps_A, heatmaps_B = heatmaps
     # load all clusters matched across maze pair
     all_matches = []
@@ -131,7 +135,7 @@ def get_matched_heatmaps_df(
 # %% true vs permuted place-direction tuning correlation across mazes
 
 
-def plot_cross_maze_corrs_summary2(results, print_stats=True, min_matches=10, ax=None):
+def plot_cross_maze_corrs_summary(results, print_stats=True, min_matches=10, ax=None):
     """ """
     # setup fig
     if ax is None:
@@ -178,55 +182,6 @@ def plot_cross_maze_corrs_summary2(results, print_stats=True, min_matches=10, ax
     if print_stats:
         _get_stats(results)
     return
-
-
-def plot_cross_maze_corrs_summary(results, print_stats=True, min_matches=10, ax=None):
-    """ """
-    # setup fig
-    if ax is None:
-        f, ax = plt.subplots(1, 1, figsize=(2, 3))
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.axhline(0, color="k", linestyle="--", alpha=0.5)
-    colors = sns.color_palette("hls", len(SUBJECT_IDS))
-    offset = 0.05
-    for i, (subject_ID, data) in enumerate(results.items()):
-        true = data["true_corrs"]  # 1
-        if len(true) < min_matches:
-            continue
-        true_mean = np.mean(true)
-        true_sem = np.std(true) / np.sqrt(len(true))
-        permuted_means = np.nanmean(data["permuted_corrs"], axis=1)  # n_permutations
-        permuted_grand_mean = np.nanmean(permuted_means)
-        permuted_lower_CI = np.percentile(permuted_means, 2.5)
-        permuted_upper_CI = np.percentile(permuted_means, 97.5)
-        ax.errorbar(
-            0 + i * offset,
-            true_mean,
-            yerr=true_sem,
-            fmt="o",
-            color=colors[i],
-            label=subject_ID,
-            capsize=0,
-            elinewidth=2,
-        )
-        ax.errorbar(
-            1 + i * offset,
-            permuted_grand_mean,
-            yerr=[[permuted_grand_mean - permuted_lower_CI], [permuted_upper_CI - permuted_grand_mean]],
-            fmt="o",
-            color=colors[i],
-            capsize=0,
-            elinewidth=2,
-        )
-    x_mid = len(SUBJECT_IDS) * offset / 2
-    ax.legend()
-    ax.set_xlim(-1 * x_mid, 1 + 3 * x_mid)
-    ax.set_xticks([0 + x_mid, 1 + x_mid])
-    ax.set_xticklabels(["True", "Permuted"])
-    ax.set_ylabel("place-direction tuning corr.")
-    ax.set_xlabel("cross-maze\nmatched neurons")
-    if print_stats:
-        _get_stats(results)
 
 
 def _get_stats(results):
