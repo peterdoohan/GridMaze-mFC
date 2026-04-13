@@ -25,8 +25,10 @@ def get_maze_RDM_df(simple_maze, metric, kwargs={}):
         return _get_node_degree_RDM(simple_maze, **kwargs)
     elif metric == "betweenness_centrality":
         return _betweenness_centrality_RDM(simple_maze, **kwargs)
-    elif metric == "subgoal_distance":
-        return _subgoal_distance_RDM(simple_maze, **kwargs)
+    elif metric == "decision_point_distance":
+        return _decision_point_distance_RDM(simple_maze, **kwargs)
+    elif metric == "decision_point":
+        return _decision_point_RDM(simple_maze, **kwargs)
     elif metric == "corner":
         return _corner_RDM(simple_maze)
     elif metric == "boundary_distance":
@@ -124,30 +126,45 @@ def _betweenness_centrality_RDM(simple_maze, norm="max"):
     return RDM_df.astype(float)
 
 
-def _subgoal_distance_RDM(simple_maze, norm="max", subgoal_degrees=[3, 4]):
+def _decision_point_distance_RDM(simple_maze, norm="max", decision_point_degrees=[3, 4]):
     """
-    geodesic distance, subgoals defined by node degree, 3 or 4
+    RDM based on geodesic distance to nearest decision point (node with degree in decision_point_degrees).
     """
-    # get "subgoals"
     coord2label = mr.get_maze_coord2label(simple_maze)
-    subgoals = [coord for coord in simple_maze.nodes if simple_maze.degree[coord] in subgoal_degrees]
+    decision_points = [coord for coord in simple_maze.nodes if simple_maze.degree[coord] in decision_point_degrees]
     extended_maze = mr.get_extended_simple_maze(simple_maze)
     labels = list(coord2label.values())
     all_pairs_path_dist = dict(nx.all_pairs_dijkstra_path_length(extended_maze))
     RDM_df = pd.DataFrame(index=labels, columns=labels)
     for coord_1, pair_lengths in all_pairs_path_dist.items():
         label_1 = coord2label[coord_1]
-        subgoal_distance_1 = min([all_pairs_path_dist[coord_1][subgoal] for subgoal in subgoals])
+        decision_point_distance_1 = min([all_pairs_path_dist[coord_1][dp] for dp in decision_points])
         for coord_2, length in pair_lengths.items():
             label_2 = coord2label[coord_2]
-            subgoal_distance_2 = min([all_pairs_path_dist[coord_2][subgoal] for subgoal in subgoals])
-            RDM_df.loc[label_1, label_2] = abs(subgoal_distance_1 - subgoal_distance_2)
+            decision_point_distance_2 = min([all_pairs_path_dist[coord_2][dp] for dp in decision_points])
+            RDM_df.loc[label_1, label_2] = abs(decision_point_distance_1 - decision_point_distance_2)
     if norm == "max":
         RDM_df = RDM_df / RDM_df.values.max()
     else:
         raise NotImplementedError()
     # sort index and columns
     RDM_df = RDM_df.sort_index().sort_index(axis=1)
+    return RDM_df.astype(float)
+
+
+def _decision_point_RDM(simple_maze, decision_point_degrees=[3, 4]):
+    """Binary RDM: 0 if both locations are decision points, 1 otherwise."""
+    coord2label = mr.get_maze_coord2label(simple_maze)
+    decision_point_labels = [
+        coord2label[coord] for coord in simple_maze.nodes if simple_maze.degree[coord] in decision_point_degrees
+    ]
+    labels = list(coord2label.values())
+    RDM_df = pd.DataFrame(index=labels, columns=labels)
+    for label_1 in labels:
+        for label_2 in labels:
+            RDM_df.loc[label_1, label_2] = (
+                0 if label_1 in decision_point_labels and label_2 in decision_point_labels else 1
+            )
     return RDM_df.astype(float)
 
 

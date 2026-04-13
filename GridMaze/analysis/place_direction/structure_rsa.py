@@ -94,8 +94,12 @@ def plot_structure_RSA_summary(maze_names=["maze_1", "maze_2"], plot_null_dist=F
     ax.set_xticklabels(metrics, rotation=45, ha="right")
     ax.set_ylim(-0.05, 0.29)
     # stats
-    stats_df = _get_null_stats(obs_df, perm_df, metrics)
-    print(stats_df)
+    if plot_null_dist:
+        perm_stats_df = _get_null_stats(obs_df, perm_df, metrics)
+        print(perm_stats_df)
+    # beta tttest
+    beta_stats_df = _get_beta_stats(obs_df)
+    print(beta_stats_df)
 
 
 def get_RSA_null_df(maze_name="maze_1", n_permutations=1_000, verbose=True, save=False):
@@ -160,7 +164,8 @@ def run_RSA(
         "geodesic_distance",
         "boundary_distance",
         "betweenness_centrality",
-        "subgoal_distance",
+        "decision_point_distance",
+        "decision_point",
         "corner",
     ],
     orthogonalise_pairs=[("euclidean_distance", "geodesic_distance")],
@@ -241,15 +246,21 @@ def run_RSA(
         print(stats_df)
     if plot:
         _plot_RSA_results(results_df)
-    if save:
-        results_df.to_parquet(save_path)
+    # if save:
+    #     results_df.to_parquet(save_path)
     return results_df
 
 
 def _get_beta_stats(results_df):
     """ """
+    df = results_df.copy()
+    metrics = [col for col in df.columns if col not in ["subject_ID", "intercept", "R2", "maze_name"]]
+    if len(df.maze_name.unique()) > 1:
+        df = df.groupby(["subject_ID", "maze_name"])[metrics].mean().reset_index()
+    else:
+        df = df[metrics]
+
     degf = len(results_df) - 1
-    metrics = [col for col in results_df.columns if col not in ["subject_ID", "intercept", "R2"]]
     stats = []
     for metric in metrics:
         t_stat, p_val = ttest_1samp(results_df[metric], popmean=0.0)
@@ -369,14 +380,16 @@ def get_population_place_tuning_df(
 # %% run structure RSA on unit matched data
 
 
-def plot_cross_maze_beta_correlations(results_df, print_stats=True, min_neurons=10, ax=None):
+def plot_cross_maze_beta_correlations(results_df, print_stats=True, min_neurons=None, ax=None):
     """Plot mean +/- SEM of per-subject beta correlations across mazes."""
     if ax is None:
         _, ax = plt.subplots(1, 1, figsize=(2, 2))
     ax.spines[["top", "right"]].set_visible(False)
     ax.axhline(0, color="k", linestyle="--", alpha=0.5)
-
-    df = results_df.loc[results_df.n_neurons >= min_neurons]
+    if min_neurons is not None:
+        df = results_df.loc[results_df.n_neurons >= min_neurons]
+    else:
+        df = results_df.copy()
     metrics = df["metric"].unique()
     sns.pointplot(
         data=df,
@@ -429,12 +442,13 @@ def correlate_rsa_features_across_mazes(
         "geodesic_distance",
         "boundary_distance",
         "betweenness_centrality",
-        "subgoal_distance",
+        "decision_point_distance",
+        "decision_point",
         "corner",
     ],
     orthogonalise_pairs=[("euclidean_distance", "geodesic_distance")],
-    subgoal_degrees=[4],
     verbose=True,
+    plot=True,
     save=False,
 ):
     """Fit single-neuron RSA encoding models on matched neurons in each maze,
@@ -455,8 +469,7 @@ def correlate_rsa_features_across_mazes(
         simple_maze = mr.get_simple_maze(maze_name)
         model_RDM_dfs = []
         for metric in rsa_metrics:
-            kwargs = {"subgoal_degrees": subgoal_degrees} if metric == "subgoal_distance" else {}
-            model_RDM_dfs.append(mm.get_maze_RDM_df(simple_maze, metric=metric, kwargs=kwargs))
+            model_RDM_dfs.append(mm.get_maze_RDM_df(simple_maze, metric=metric))
         places = list(matched_heatmap_df[maze_name].columns)
 
         X_cols = []
@@ -524,17 +537,19 @@ def correlate_rsa_features_across_mazes(
             print(f"{subject_ID}: {int(valid.sum())} matched neurons")
 
     results_df = pd.DataFrame(results)
-    if save:
-        if verbose:
-            print(f"Saving cross-maze beta correlations to {save_path}")
-        results_df.to_parquet(save_path)
+    if plot:
+        plot_cross_maze_beta_correlations(results_df, print_stats=True)
+    # if save:
+    #     if verbose:
+    #         print(f"Saving cross-maze beta correlations to {save_path}")
+    #     results_df.to_parquet(save_path)
     return results_df
 
 
 def get_matched_place_heatmaps_df(
     maze_pair=("maze_1", "maze_2"),
     min_split_half_corr=0.3,
-    verbose=True,
+    verbose=False,
 ):
     """ """
     # load heatmaps
