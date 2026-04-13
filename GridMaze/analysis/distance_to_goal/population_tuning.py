@@ -315,7 +315,7 @@ def plot_curve_fit_distributions(summary_df, curve_fits=CURVE_FITS, ax=None):
     ax.legend(loc="upper left")
 
 
-def plot_cross_subject_curve_fit_comparison(summary_df, curve_fits=CURVE_FITS, print_stats=True, ax=None):
+def plot_cross_subject_curve_fit_comparison(summary_df, curve_fits=CURVE_FITS, colors=None, print_stats=True, ax=None):
     """ """
     # process data
     df = summary_df.groupby("subject_ID")[curve_fits].mean().unstack().reset_index()
@@ -327,36 +327,27 @@ def plot_cross_subject_curve_fit_comparison(summary_df, curve_fits=CURVE_FITS, p
     ax.spines[["top", "right"]].set_visible(False)
     ax.set_ylabel("mean R2")
     ax.set_ylim(0.65, 0.85)
+    # individual subjects as faint grey lines
+    for _, sdf in df.groupby("subject_ID"):
+        ax.plot(sdf["fit"], sdf["r2"], color="grey", alpha=0.5)
+    # group mean +/- SEM
+    palette = dict(zip(curve_fits, colors)) if colors else None
     sns.pointplot(
         data=df,
         x="fit",
         y="r2",
-        hue="subject_ID",
-        palette=sns.color_palette("hls", len(SUBJECT_IDS)),
-        errorbar=None,
-        dodge=False,
-        markers="o",
-        linestyles=None,
-        legend=False,
-        markersize=10,
-        linewidth=0,
-        alpha=0.5,
-        ax=ax,
-    )
-    sns.pointplot(
-        data=df,
-        x="fit",
-        y="r2",
+        hue="fit",
+        palette=palette,
         errorbar="se",
         linestyle="none",
-        marker="_",
-        markersize=20,
-        markeredgewidth=3,
+        marker="o",
+        markersize=8,
         err_kws={"linewidth": 3},
+        legend=False,
         ax=ax,
-        color="k",
     )
-    ax.tick_params(axis="x", which="both", top=False, bottom=True, labeltop=False, labelbottom=True, labelrotation=45)
+    ax.set_xlim(-0.3, len(curve_fits) - 0.7)
+    ax.tick_params(axis="x", rotation=30)
     if print_stats:
         assert len(curve_fits) == 2, "Only implemented for two curve fits"
         m1, m2 = curve_fits
