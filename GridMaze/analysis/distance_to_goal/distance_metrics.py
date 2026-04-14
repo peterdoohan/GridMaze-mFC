@@ -7,7 +7,7 @@ import json
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from scipy.stats import ttest_rel
+from scipy.stats import ttest_rel, ttest_1samp
 from matplotlib import pyplot as plt
 from itertools import combinations
 from joblib import Parallel, delayed
@@ -612,7 +612,7 @@ def plot_pairwise_CPD_cross_subject_comparisons(
                 ax.spines[["top", "right"]].set_visible(False)
                 ax.axhline(0, color="k", linestyle="--", alpha=0.5)
                 ax.set_xticks([0, 1])
-                ax.set_xticklabels(["x", "y"])
+                ax.set_xticklabels(["y", "x"])
             else:
                 ax.set_visible(False)
 
@@ -621,7 +621,7 @@ def plot_cross_subject_CPD_comparison(
     summary_df,
     comparison="distance_to_goal.geodesic_vs_distance_to_goal.euclidean",
     maze_names=["maze_1", "maze_2"],
-    colors=["royalblue", "grey"],
+    colors=["grey", "royalblue"],
     late_sessions=True,
     outlier_threshold=-0.5,
     ignore_labels=False,
@@ -652,17 +652,21 @@ def plot_cross_subject_CPD_comparison(
         ax.spines[["top", "right"]].set_visible(False)
         ax.set_ylabel("CPD (%)")
         ax.axhline(0, color="k", linestyle="--", alpha=0.5)
+    # reverse default x-axis ordering of the two metrics
+    metric_1, metric_2 = mean_cpd["metric"].unique()
+    metric_order = [metric_2, metric_1]
     # individual subjects as faint grey lines
     for _, sdf in mean_cpd.groupby("subject_ID"):
+        sdf = sdf.set_index("metric").loc[metric_order].reset_index()
         ax.plot(sdf["metric"], sdf["CPD"], color="grey", alpha=0.5)
     # group mean +/- SEM
-    metric_1, metric_2 = mean_cpd["metric"].unique()
     sns.pointplot(
         data=mean_cpd,
         x="metric",
         y="CPD",
         hue="metric",
-        palette={metric_1: colors[0], metric_2: colors[1]},
+        order=metric_order,
+        palette={metric_order[0]: colors[0], metric_order[1]: colors[1]},
         errorbar="se",
         linestyle="none",
         marker="o",
@@ -674,12 +678,15 @@ def plot_cross_subject_CPD_comparison(
     ax.set_xlim(-0.3, 1.3)
     ax.tick_params(axis="x", rotation=30)
     if print_stats:
-        m1, m2 = mean_cpd["metric"].unique()
-        t_stat, p_val = ttest_rel(
-            mean_cpd[mean_cpd["metric"] == m1]["CPD"],
-            mean_cpd[mean_cpd["metric"] == m2]["CPD"],
-        )
-        print(f"{comparison}: \n t-stat: {t_stat:.3f}, p-value: {p_val:.3f}")
+        m1, m2 = metric_order
+        cpd_m1 = mean_cpd[mean_cpd["metric"] == m1]["CPD"]
+        cpd_m2 = mean_cpd[mean_cpd["metric"] == m2]["CPD"]
+        t_stat, p_val = ttest_rel(cpd_m1, cpd_m2)
+        print(f"{comparison}: \n {m1} vs {m2}: t-stat: {t_stat:.3f}, p-value: {p_val:.3f}")
+        t_m1, p_m1 = ttest_1samp(cpd_m1, 0)
+        t_m2, p_m2 = ttest_1samp(cpd_m2, 0)
+        print(f" {m1} > 0: t-stat: {t_m1:.3f}, p-value: {p_m1:.3f}")
+        print(f" {m2} > 0: t-stat: {t_m2:.3f}, p-value: {p_m2:.3f}")
 
 
 def plot_pairwise_CPD_heatmap(
