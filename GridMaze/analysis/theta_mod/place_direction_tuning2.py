@@ -14,7 +14,7 @@ from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import filter as filt
 
 from GridMaze.analysis.cluster_tuning import spatial
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import gaussian_filter, zoom
 
 # %% Global variables
 
@@ -50,11 +50,13 @@ def get_preferred_shift(df, min_split_half_corr=0.7):
 # %%
 def get_SSE_df(
     split_half_corr_thres=0.5,
-    bin_size=0.04,
-    upscale_bin_size=0.001,
-    smooth_SD=0.05,
+    single_units_only=True,
+    phase_halfwidth=1,
+    bin_size=0.08,
+    upscale_bin_size=0.002,
+    smooth_SD=0.02,
     xy_range=(0, 1.4),
-    shift_range=0.015,
+    shift_range=0.02,
     zscore=True,
     verbose=True,
     save=False,
@@ -79,6 +81,8 @@ def get_SSE_df(
             return get_session_SSE_df(
                 session,
                 split_half_corr_thres=split_half_corr_thres,
+                single_units_only=single_units_only,
+                phase_halfwidth=phase_halfwidth,
                 bin_size=bin_size,
                 upscale_bin_size=upscale_bin_size,
                 smooth_SD=smooth_SD,
@@ -98,7 +102,7 @@ def get_SSE_df(
         sessions = gs.get_maze_sessions(
             subject_IDs=[subject],
             maze_names="all",
-            days_on_maze="late",
+            days_on_maze="all",
             with_data=[
                 "cluster_place_direction_tuning_metrics",
                 "navigation_df",
@@ -121,11 +125,13 @@ def get_SSE_df(
 def get_session_SSE_df(
     session,
     split_half_corr_thres=0.5,
-    bin_size=0.04,
-    upscale_bin_size=0.001,
-    smooth_SD=0.05,
+    single_units_only=True,
+    phase_halfwidth=1,
+    bin_size=0.08,
+    upscale_bin_size=0.002,
+    smooth_SD=0.02,
     xy_range=(0, 1.4),
-    shift_range=0.015,
+    shift_range=0.02,
     zscore=True,
     verbose=True,
 ):
@@ -145,7 +151,9 @@ def get_session_SSE_df(
             split_half_corr, subject_ID, maze_name, day_on_maze, late_session]
     """
     metrics_df = session.cluster_place_direction_tuning_metrics
-    nav_spikes_df = get_theta_stratified_nav_spikes_df(session, split_half_corr_thres, verbose=verbose)
+    nav_spikes_df = get_theta_stratified_nav_spikes_df(
+        session, split_half_corr_thres, single_units_only=single_units_only, verbose=verbose
+    )
     if nav_spikes_df is None:
         return None
     cluster_unique_IDs = nav_spikes_df.spike_count.columns.get_level_values(0).unique()
@@ -209,7 +217,12 @@ def get_session_SSE_df(
                 dir_ref_masked[j] = (ref_masked - dir_ref_mean[j]) / dir_ref_std[j]
             else:
                 dir_ref_masked[j] = ref_masked
-        for phase in phases:
+        phase_list = list(phases)
+        n_phases = len(phase_list)
+        for phase_idx, phase in enumerate(phase_list):
+            # Rolling average of spike counts across ±phase_halfwidth adjacent phases (circular)
+            window_indices = [(phase_idx + d) % n_phases for d in range(-phase_halfwidth, phase_halfwidth + 1)]
+            window_phases = [phase_list[i] for i in window_indices]
             # Accumulate SSE across directions for each shift
             sse_per_shift = np.zeros(len(shifts))
             for j, _dir in enumerate(NSEW):
@@ -217,7 +230,7 @@ def get_session_SSE_df(
                     continue
                 dir_df = dir2df[_dir]
                 pos = dir_df.centroid_position.values
-                shift_spikes = dir_df.spike_count[cluster][phase].values
+                shift_spikes = dir_df.spike_count[cluster][window_phases].mean(axis=1).values
                 shift_up = _get_upscaled_ratemap(
                     shift_spikes, pos, ratemap_kwargs, scale_factor, smooth_SD, upscale_bin_size
                 )
@@ -272,6 +285,7 @@ def _get_direction_valid_mask(dir_df, direction, ratemap_kwargs, scale_factor, s
     pos = dir_df.centroid_position.values
     pseudo_spikes = np.ones(len(dir_df))
     occ_map, _, _ = spatial.get_2D_ratemap(pseudo_spikes, pos, **ratemap_kwargs)
+    # use nearest-neighbour for the binary validity mask (interpolation would blur boundaries)
     upscaled = np.repeat(np.repeat(occ_map, scale_factor, axis=0), scale_factor, axis=1)
     valid_2d = ~np.isnan(upscaled)
     for shift in shifts:
@@ -279,10 +293,23 @@ def _get_direction_valid_mask(dir_df, direction, ratemap_kwargs, scale_factor, s
     return valid_2d.flatten()
 
 
+def _nan_aware_zoom(arr, scale_factor):
+    """Upscale a 2D array with cubic interpolation, correctly handling NaN (unvisited) bins."""
+    nan_mask = np.isnan(arr)
+    weights = (~nan_mask).astype(float)
+    data = np.nan_to_num(arr, nan=0.0)
+    zoomed_data = zoom(data, scale_factor, order=3)
+    zoomed_weights = zoom(weights, scale_factor, order=3)
+    valid = zoomed_weights > 0.01  # small threshold to avoid dividing by near-zero
+    result = np.full_like(zoomed_data, np.nan)
+    result[valid] = zoomed_data[valid] / zoomed_weights[valid]
+    return result
+
+
 def _get_upscaled_ratemap(spikes, pos, ratemap_kwargs, scale_factor, smooth_SD, upscale_bin_size):
-    """Compute ratemap at coarse resolution, upscale nearest-neighbour, then smooth."""
+    """Compute ratemap at coarse resolution, upscale with NaN-aware cubic interpolation, then smooth."""
     rate_map, _, _ = spatial.get_2D_ratemap(spikes, pos, **ratemap_kwargs)
-    upscaled = np.repeat(np.repeat(rate_map, scale_factor, axis=0), scale_factor, axis=1)
+    upscaled = _nan_aware_zoom(rate_map, scale_factor)
     if smooth_SD:
         upscaled = _smooth_upscaled_ratemap(upscaled, smooth_SD, upscale_bin_size)
     return upscaled
@@ -320,6 +347,7 @@ def _smooth_upscaled_ratemap(rate_map, smooth_SD, bin_size):
 def get_theta_stratified_nav_spikes_df(
     session,
     split_half_corr_thres=0.5,
+    single_units_only=True,
     moving_thres=0.05,
     verbose=True,
 ):
@@ -328,9 +356,10 @@ def get_theta_stratified_nav_spikes_df(
     navigation_df = session.navigation_df.copy()
     spikes_df = session.navigation_theta_spike_counts_df.reset_index(drop=True)
     # filter for clusters with strong pd tuning
-    consider_clusters = place_dir_metrics[
-        place_dir_metrics.split_half_corr.value.gt(split_half_corr_thres)
-    ].index.values
+    mask = place_dir_metrics.split_half_corr.value.gt(split_half_corr_thres)
+    if single_units_only:
+        mask = mask & place_dir_metrics.single_unit.squeeze()
+    consider_clusters = place_dir_metrics[mask].index.values
     if len(consider_clusters) == 0:
         if verbose:
             print(f"No place-dir. tuned cluster for session: {session.name}")
@@ -347,3 +376,96 @@ def get_theta_stratified_nav_spikes_df(
     nav_spikes_df = nav_spikes_df[nav_spikes_df.speed.gt(moving_thres)]
     nav_spikes_df = nav_spikes_df.reset_index(drop=True).sort_index(axis=0)
     return nav_spikes_df
+
+
+# %% Development / diagnostics
+
+
+def test_session_SSE(subject_ID=None, maze_name=None, day_on_maze=None, verbose=True, **kwargs):
+    """
+    Run get_session_SSE_df on a single session and print diagnostics.
+    Useful for rapid parameter tuning without running the full pipeline.
+
+    Pass any get_session_SSE_df parameter via **kwargs to override defaults.
+    """
+    # load a single session directly (faster than loading multiple and indexing)
+    _subject = subject_ID if subject_ID is not None else "m6"
+    _maze = maze_name if maze_name is not None else "maze_1"
+    _day = day_on_maze if day_on_maze is not None else 12
+    session = gs.get_maze_sessions(
+        subject_IDs=[_subject], maze_names=[_maze], days_on_maze=[_day], with_data="all", must_have_data=False
+    )
+    if not isinstance(session, list):
+        session = [session]
+    if len(session) == 0:
+        print(f"No sessions found for {_subject} / {_maze} / day {_day}")
+        return None
+    session = session[0]
+    print(f"Testing on session: {session.name}")
+    # run analysis
+    df = get_session_SSE_df(session, verbose=verbose, **kwargs)
+    if df is None:
+        print("No valid clusters found for this session.")
+        return None
+    # diagnostics
+    clusters = df.cluster_unique_ID.unique()
+    phases = df.phase.unique()
+    shifts = df.shift_m.unique()
+    print(f"\n--- Diagnostics ---")
+    print(f"  Clusters:  {len(clusters)}")
+    print(f"  Phases:    {len(phases)}")
+    print(f"  Shifts:    {len(shifts)}  (range: {shifts.min():.4f} to {shifts.max():.4f} m)")
+    print(f"  n_features per cluster: {df.groupby('cluster_unique_ID').n_features.first().describe()}")
+    # SSE landscape: is it flat or does it vary across shifts?
+    mse_by_shift = df.groupby(["phase", "shift_m"])[["SSE", "n_features"]].sum()
+    mse_by_shift["MSE"] = mse_by_shift["SSE"] / mse_by_shift["n_features"]
+    mse_pivot = mse_by_shift["MSE"].unstack("shift_m")
+    shift_range_per_phase = mse_pivot.max(axis=1) - mse_pivot.min(axis=1)
+    print(f"\n  MSE range across shifts (per phase):")
+    print(f"    mean: {shift_range_per_phase.mean():.6f}")
+    print(f"    min:  {shift_range_per_phase.min():.6f}")
+    print(f"    max:  {shift_range_per_phase.max():.6f}")
+    # preferred shifts
+    best_shifts = mse_pivot.idxmin(axis=1)
+    best_mse = mse_pivot.min(axis=1)
+    print(f"\n  Preferred shift per phase (m):")
+    for phase, shift in best_shifts.items():
+        print(f"    phase {phase:+.2f}: {shift:+.4f} m  (MSE={best_mse.loc[phase]:.4f})")
+    # Per-phase MSE curves: demean each phase to show relative shape
+    mse_demeaned = mse_pivot.sub(mse_pivot.mean(axis=1), axis=0)
+    shift_vals = mse_pivot.columns.values
+    print(f"\n  Per-phase MSE vs shift (demeaned across shifts):")
+    print(f"  {'phase':>8s}", end="")
+    # print a subset of shift values for readability
+    step = max(1, len(shift_vals) // 10)
+    display_shifts = shift_vals[::step]
+    for s in display_shifts:
+        print(f"  {s:+.004f}", end="")
+    print()
+    for phase in mse_demeaned.index:
+        print(f"  {phase:+8.2f}", end="")
+        for s in display_shifts:
+            val = mse_demeaned.loc[phase, s]
+            print(f"  {val:+.4f}", end="")
+        print()
+    # check for NaN
+    n_nan = df.SSE.isna().sum()
+    if n_nan > 0:
+        print(f"\n  WARNING: {n_nan} NaN values in SSE!")
+    else:
+        print(f"\n  No NaN values in SSE (good)")
+    # plot MSE vs shift per phase
+    import seaborn as sns
+    f, ax = plt.subplots(1, 1, figsize=(5, 3))
+    ax.spines[["top", "right"]].set_visible(False)
+    colors = sns.color_palette("husl", len(mse_demeaned.index))
+    for i, phase in enumerate(mse_demeaned.index):
+        ax.plot(shift_vals * 1000, mse_demeaned.loc[phase].values, color=colors[i], label=f"{phase:+.1f}")
+    ax.set_xlabel("shift (mm)")
+    ax.set_ylabel("MSE (demeaned)")
+    ax.set_title("MSE vs shift per theta phase")
+    ax.legend(fontsize=6, ncol=2, title="theta phase")
+    ax.axvline(0, color="k", linestyle="--", alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+    return df
