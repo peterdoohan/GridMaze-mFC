@@ -7,11 +7,13 @@ Another idea for measuring theta mod place-direction tuning
 import json
 import pandas as pd
 import numpy as np
+import seaborn as sns
 from joblib import Parallel, delayed
 from matplotlib import pyplot as plt
 
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import filter as filt
+from GridMaze.analysis.theta_mod import theta_utils as tu
 
 from GridMaze.analysis.cluster_tuning import spatial
 from scipy.ndimage import gaussian_filter, zoom
@@ -29,6 +31,48 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as f:
 NSEW = ["N", "S", "E", "W"]
 
 _DIR_SHIFT = {"N": (1, 0), "S": (-1, 0), "E": (0, 1), "W": (0, -1)}
+
+
+# %% plotting
+
+
+def plot_theta_mod_tuning_summary(
+    SSE_df,
+    maze_names=["maze_1", "maze_2", "rooms_maze"],
+    min_split_half_corr=0.5,
+    late_sessions_only=False,
+    demean=True,
+    color="grey",
+    label=None,
+    norm=False,
+    print_stats=True,
+    ax=None,
+):
+    # filter data
+    df = SSE_df[SSE_df.maze_name.isin(maze_names)]
+    if late_sessions_only:
+        df = df[df.late_session]
+    if min_split_half_corr is not None:
+        df = df[df.split_half_corr.gt(min_split_half_corr)]
+    # per-subject × phase preferred shift: MSE summed across clusters/maze/day, argmin over shift_m
+    grouped = df.groupby(["subject_ID", "phase", "shift_m"])[["SSE", "n_features"]].sum()
+    grouped["MSE"] = grouped["SSE"] / grouped["n_features"]
+    mse = grouped["MSE"].unstack("shift_m")  # (subject × phase, shift_m)
+    best_shifts = mse.idxmin(axis=1) * 1000  # m → mm
+    best_shifts = best_shifts.unstack("phase")  # (subject, phase)
+    # demean across phases per subject
+    if demean:
+        best_shifts = best_shifts.sub(best_shifts.mean(axis=1), axis=0)
+    # plot + sinusoid fit + theta modulation stats via theta_utils
+    tu.plot_decoding_bias(
+        best_shifts,
+        color=color,
+        label=label,
+        ylabel="preferred shift (mm)",
+        norm=norm,
+        print_stats=print_stats,
+        ax=ax,
+    )
 
 
 # %%
@@ -49,9 +93,9 @@ def get_preferred_shift(df, min_split_half_corr=0.7):
 
 # %%
 def get_SSE_df(
-    split_half_corr_thres=0.5,
+    split_half_corr_thres=0.3,
     single_units_only=True,
-    phase_halfwidth=1,
+    phase_halfwidth=0,
     bin_size=0.08,
     upscale_bin_size=0.002,
     smooth_SD=0.02,
@@ -124,9 +168,9 @@ def get_SSE_df(
 # %%
 def get_session_SSE_df(
     session,
-    split_half_corr_thres=0.5,
+    split_half_corr_thres=0.3,
     single_units_only=True,
-    phase_halfwidth=1,
+    phase_halfwidth=0,
     bin_size=0.08,
     upscale_bin_size=0.002,
     smooth_SD=0.02,
@@ -188,6 +232,9 @@ def get_session_SSE_df(
         pct_removed = 100 * (1 - total_valid / (len(NSEW) * flat_hm_size))
         print(f"Features removed by all-shifts validity mask: {pct_removed:.1f}%")
 
+    phase_list = list(phases)
+    n_phases = len(phase_list)
+    window_len = 2 * phase_halfwidth + 1
     records = []
     for cluster in cluster_unique_IDs:
         if verbose:
@@ -195,6 +242,9 @@ def get_session_SSE_df(
         # n_features for this cluster: total valid bins across all directions (constant across phase/shift)
         n_features_cluster = sum(n_valid)
         # Pre-compute ref_masked per direction — identical for all phases.
+        # Reference pools spikes across ALL theta phases (summed) for a denser, lower-variance
+        # estimate of the place field, then rescales by window_len/n_phases so the reference
+        # ratemap is on the same effective-rate scale as the phase-specific window-summed maps.
         # If zscore=True, divide by the ref std so each cluster/direction contributes
         # equally regardless of firing rate. The same std is applied to the shifted maps,
         # so the normalisation is consistent: (shifted_z - ref_z) = (shifted - ref) / ref_std.
@@ -206,10 +256,10 @@ def get_session_SSE_df(
                 continue
             dir_df = dir2df[_dir]
             pos = dir_df.centroid_position.values
-            ref_spikes = dir_df.spike_count[cluster].mean(axis=1).values
-            ref_masked = _get_upscaled_ratemap(
-                ref_spikes, pos, ratemap_kwargs, scale_factor, smooth_SD, upscale_bin_size
-            ).flatten()[dir_valid_masks[j]]
+            ref_spikes = dir_df.spike_count[cluster].sum(axis=1).values
+            ref_up = _get_upscaled_ratemap(ref_spikes, pos, ratemap_kwargs, scale_factor, smooth_SD, upscale_bin_size)
+            ref_up = ref_up * (window_len / n_phases)
+            ref_masked = ref_up.flatten()[dir_valid_masks[j]]
             if zscore:
                 dir_ref_mean[j] = np.nanmean(ref_masked)
                 ref_std = np.nanstd(ref_masked)
@@ -217,10 +267,8 @@ def get_session_SSE_df(
                 dir_ref_masked[j] = (ref_masked - dir_ref_mean[j]) / dir_ref_std[j]
             else:
                 dir_ref_masked[j] = ref_masked
-        phase_list = list(phases)
-        n_phases = len(phase_list)
         for phase_idx, phase in enumerate(phase_list):
-            # Rolling average of spike counts across ±phase_halfwidth adjacent phases (circular)
+            # Rolling sum of spike counts across ±phase_halfwidth adjacent phases (circular)
             window_indices = [(phase_idx + d) % n_phases for d in range(-phase_halfwidth, phase_halfwidth + 1)]
             window_phases = [phase_list[i] for i in window_indices]
             # Accumulate SSE across directions for each shift
@@ -230,7 +278,7 @@ def get_session_SSE_df(
                     continue
                 dir_df = dir2df[_dir]
                 pos = dir_df.centroid_position.values
-                shift_spikes = dir_df.spike_count[cluster][window_phases].mean(axis=1).values
+                shift_spikes = dir_df.spike_count[cluster][window_phases].sum(axis=1).values
                 shift_up = _get_upscaled_ratemap(
                     shift_spikes, pos, ratemap_kwargs, scale_factor, smooth_SD, upscale_bin_size
                 )
@@ -346,9 +394,9 @@ def _smooth_upscaled_ratemap(rate_map, smooth_SD, bin_size):
 
 def get_theta_stratified_nav_spikes_df(
     session,
-    split_half_corr_thres=0.5,
+    split_half_corr_thres=0.3,
     single_units_only=True,
-    moving_thres=0.05,
+    moving_thres=0.075,
     verbose=True,
 ):
     # load data
@@ -456,6 +504,7 @@ def test_session_SSE(subject_ID=None, maze_name=None, day_on_maze=None, verbose=
         print(f"\n  No NaN values in SSE (good)")
     # plot MSE vs shift per phase
     import seaborn as sns
+
     f, ax = plt.subplots(1, 1, figsize=(5, 3))
     ax.spines[["top", "right"]].set_visible(False)
     colors = sns.color_palette("husl", len(mse_demeaned.index))
