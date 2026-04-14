@@ -22,7 +22,7 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 
 def plot_performance_validation(
     results_df,
-    model_types=["baseline2", "baseline", "embedding"],
+    model_types=["baseline", "baseline2", "embedding"],
     input_features=[
         "place",
         "place_direction",
@@ -31,13 +31,13 @@ def plot_performance_validation(
     outlier_threshold=-0.6,
     plot_single_subjects=False,
     print_stats=True,
-    ax=None,
+    axes=None,
 ):
     """ """
     # set up figure
-    if ax is None:
-        f, ax = plt.subplots(figsize=(4, 3))
-    ax = _init_fig(ax=ax)
+    if axes is None:
+        f, axes = plt.subplots(2, 1, figsize=(4, 3.5), gridspec_kw={"height_ratios": [4, 1], "hspace": 0.25})
+    axes[0] = _init_fig(ax=axes[0])
     # process data
     df = _average_over_folds(results_df, outlier_threshold=outlier_threshold)
     # set multiindex column for baseline vs embedding comparison
@@ -59,24 +59,31 @@ def plot_performance_validation(
         .rename(columns={"level_2": "version", "level_3": "model_name"})
     )
     subj_avg = df_long.groupby(["subject_ID", "version", "model_name"])["score"].mean().reset_index()
+    # display rename for version labels
+    VERSION_RENAME = {"baseline": "GLMx", "baseline2": "GLM+", "embedding": "neGLM"}
+    df_long["version"] = df_long["version"].replace(VERSION_RENAME)
+    subj_avg["version"] = subj_avg["version"].replace(VERSION_RENAME)
+    # GLMx == GLM+ for the place-only model, collapse to GLM+ for cleaner layout
+    for _df in (df_long, subj_avg):
+        _df.loc[(_df["model_name"] == "place") & (_df["version"] == "GLMx"), "version"] = "GLM+"
+    display_hue_order = [VERSION_RENAME[m] for m in model_types]
+    display_palette = {"GLMx": "grey", "GLM+": "teal", "neGLM": "mediumslateblue"}
     # plot
     if plot_single_subjects:
-        sns.pointplot(
-            data=df_long,
+        sns.stripplot(
+            data=subj_avg,
             x="model_name",
             y="score",
-            hue="subject_ID",
-            order=model_types,
-            palette=sns.color_palette("hls", n_colors=len(SUBJECT_IDS)),
-            markers="o",
-            markersize=7,
-            markeredgewidth=0,
-            errorbar=None,
-            dodge=0.3,
-            linestyle="none",
+            hue="version",
+            hue_order=display_hue_order,
+            order=input_features,
+            palette=display_palette,
+            dodge=0.1,
+            size=3,
+            alpha=0.3,
+            jitter=False,
             legend=False,
-            alpha=0.8,
-            ax=ax,
+            ax=axes[0],
         )
     # plot
     sns.pointplot(
@@ -84,16 +91,25 @@ def plot_performance_validation(
         x="model_name",
         y="score",
         hue="version",
-        hue_order=model_types,
-        marker="_",
-        markersize=10,
-        markeredgewidth=3,
+        hue_order=display_hue_order,
+        order=input_features,
         errorbar="se",
-        dodge=0.4,
+        dodge=0.45,
         linestyle="none",
         alpha=1,
-        palette={"baseline": "grey", "baseline2": "teal", "embedding": "mediumslateblue"},
-        ax=ax,
+        palette=display_palette,
+        ax=axes[0],
+    )
+    axes[0].set_xlabel("")
+    plot_variable_table(
+        axes[1],
+        row_labels=["place", "direction", "distance_to_goal"],
+        columns=input_features,
+        presence={
+            "place": ["place"],
+            "place_direction": ["place", "direction"],
+            "place_direction_distance_to_goal": ["place", "direction", "distance_to_goal"],
+        },
     )
 
 
@@ -124,13 +140,13 @@ def plot_interaction_validation(
     colors=["grey", "grey", "lightgreen", "mediumslateblue"],
     plot_single_subjects=False,
     print_stats=True,
-    ax=None,
+    axes=None,
 ):
     """ """
     # set up figure
-    if ax is None:
-        f, ax = plt.subplots(figsize=(4, 3))
-    ax = _init_fig(ax=ax)
+    if axes is None:
+        f, axes = plt.subplots(2, 1, figsize=(4, 3.5), gridspec_kw={"height_ratios": [4, 1], "hspace": 0.25})
+    axes[0] = _init_fig(ax=axes[0])
     # process data
     df = _average_over_folds(results_df, outlier_threshold=outlier_threshold)
     # filter for input features and model types
@@ -143,36 +159,44 @@ def plot_interaction_validation(
     df_long = df.stack().reset_index(name="score")
     subj_avg = df_long.groupby(["subject_ID", "model_name"])["score"].mean().reset_index()
     if plot_single_subjects:
-        sns.pointplot(
-            data=df_long,
+        sns.stripplot(
+            data=subj_avg,
             x="model_name",
             y="score",
-            hue="subject_ID",
+            hue="model_name",
             order=order,
-            palette=sns.color_palette("hls", n_colors=len(SUBJECT_IDS)),
-            markers="o",
-            markersize=7,
-            markeredgewidth=0,
-            errorbar=None,
-            dodge=0.3,
-            linestyle="none",
+            palette=colors,
+            size=3,
+            alpha=0.3,
+            jitter=False,
             legend=False,
-            alpha=0.8,
-            ax=ax,
+            ax=axes[0],
         )
     sns.pointplot(
         data=subj_avg,
         x="model_name",
         y="score",
         hue="model_name",
-        marker="_",
-        markersize=10,
-        markeredgewidth=3,
+        order=order,
         errorbar="se",
         linestyle="none",
         palette=colors,
         alpha=1,
-        ax=ax,
+        ax=axes[0],
+    )
+    axes[0].set_xlabel("")
+    axes[0].tick_params(axis="x", labelbottom=False)
+    # auto-infer table contents from model names
+    all_vars = ["place", "direction", "distance_to_goal"]
+    presence = {m: [v for v in all_vars if v in m] for m in models}
+    row_labels = [v for v in all_vars if any(v in vs for vs in presence.values())]
+    connect_columns = [m for m in models if "nonlinear" in m]
+    plot_variable_table(
+        axes[1],
+        row_labels=row_labels,
+        columns=models,
+        presence=presence,
+        connect_columns=connect_columns,
     )
     if print_stats:
         t_stat, p_val, models = _interaction_validation_stats(subj_avg)
@@ -559,4 +583,50 @@ def _init_fig(ax):
     ax.set_xlabel("models")
     ax.set_ylabel("cv performance")
     ax.axhline(0, color="k", linestyle="--", alpha=0.5)
+    return ax
+
+
+def plot_variable_table(
+    ax,
+    row_labels,
+    columns,
+    presence,
+    dot_size=40,
+    dot_color="grey",
+    dot_marker="s",
+    dot_alpha=0.5,
+    connect_columns=None,
+):
+    """Grid of dots indicating which variables (rows) are in each model (columns)."""
+    n_rows, n_cols = len(row_labels), len(columns)
+    row_idx = {r: i for i, r in enumerate(row_labels)}
+    xs, ys = [], []
+    for col_i, col in enumerate(columns):
+        for var in presence.get(col, []):
+            if var in row_idx:
+                xs.append(col_i)
+                ys.append(row_idx[var])
+    if connect_columns:
+        for col_i, col in enumerate(columns):
+            if col not in connect_columns:
+                continue
+            ys_here = [row_idx[v] for v in presence.get(col, []) if v in row_idx]
+            if len(ys_here) < 2:
+                continue
+            ax.plot(
+                [col_i, col_i], [min(ys_here), max(ys_here)],
+                color=dot_color, alpha=dot_alpha, linewidth=2, zorder=0,
+            )
+    ax.scatter(xs, ys, s=dot_size, color=dot_color, marker=dot_marker, alpha=dot_alpha, edgecolors="none")
+    ax.set_xlim(-0.5, n_cols - 0.5)
+    ax.set_ylim(-0.5, n_rows - 0.5)
+    ax.invert_yaxis()
+    ax.set_xticks([])
+    ax.set_yticks(range(n_rows))
+    ax.set_yticklabels(row_labels)
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.tick_params(left=False, bottom=False)
     return ax
