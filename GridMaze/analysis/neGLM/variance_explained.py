@@ -34,6 +34,13 @@ def plot_cpd_clusters(
     features=["distance_to_goal", "place_direction"],
     remove_no_unique_variance_clusters=False,
     n_bins=30,
+    cmap="cividis",
+    pthresh=0.01,
+    scatter_color=".15",
+    scatter_size=5,
+    scatter_alpha=0.4,
+    xlims=(-15, 70),
+    ylims=(-15, 70),
     ax=None,
 ):
     """ """
@@ -41,8 +48,10 @@ def plot_cpd_clusters(
     if ax is None:
         f, ax = plt.subplots(1, 1, figsize=(3, 2.5))
     ax.spines[["top", "right"]].set_visible(False)
-    ax.axhline(0, color="k", linestyle="--", alpha=0.2)
-    ax.axvline(0, color="k", linestyle="--", alpha=0.2)
+    ax.axhline(0, color="k", linestyle="--", alpha=0.4)
+    ax.axvline(0, color="k", linestyle="--", alpha=0.4)
+    ax.set_xlabel(f"{features[0]} (%)")
+    ax.set_ylabel(f"{features[1]} (%)")
     # process data
     if remove_no_unique_variance_clusters:
         _feature_tuned_df = feature_tuned_df[feature_tuned_df.any(axis=1)]
@@ -53,79 +62,30 @@ def plot_cpd_clusters(
     x = filt_cpd_df[features[0]]
     y = filt_cpd_df[features[1]]
     # plot
+    sns.scatterplot(
+        x=x,
+        y=y,
+        s=scatter_size,
+        color=scatter_color,
+        alpha=scatter_alpha,
+        edgecolor="none",
+        ax=ax,
+    )
     sns.histplot(
         x=x,
         y=y,
         bins=n_bins,
-        ax=ax,
+        pthresh=pthresh,
+        cmap=cmap,
         cbar=True,
-    )
-
-
-def plot_cpd_scatter(
-    cpd_df,
-    feature_tuned_df,
-    remove_no_unique_variance_clusters=False,
-    colors=[
-        "silver",
-        "royalblue",
-        "crimson",
-        "mediumspringgreen",
-    ],
-    ax=None,
-    lims=(-15, 75),
-):
-    """ """
-    if ax is None:
-        f, ax = plt.subplots(1, 1, figsize=(3, 2.5))
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.axhline(0, color="k", linestyle="--", alpha=0.2)
-    ax.axvline(0, color="k", linestyle="--", alpha=0.2)
-    ax.set_xlabel("distance-to-goal (%)")
-    ax.set_ylabel("place-direction (%)")
-    # only include cells that have some variance explained across folds (in freature_tuned_df)
-    if remove_no_unique_variance_clusters:
-        _feature_tuned_df = feature_tuned_df[feature_tuned_df.any(axis=1)]
-    else:
-        _feature_tuned_df = feature_tuned_df.copy()
-
-    dist_tuned = _feature_tuned_df[_feature_tuned_df.distance_to_goal].index.get_level_values(1)
-    pd_tuned = _feature_tuned_df[_feature_tuned_df.place_direction].index.get_level_values(1)
-    dual_tuned = _feature_tuned_df[
-        _feature_tuned_df.distance_to_goal & _feature_tuned_df.place_direction
-    ].index.get_level_values(1)
-    not_tuned = _feature_tuned_df[
-        ~_feature_tuned_df.distance_to_goal & ~_feature_tuned_df.place_direction
-    ].index.get_level_values(1)
-    for group, color, label in zip(
-        [not_tuned, dist_tuned, pd_tuned, dual_tuned],
-        colors,
-        ["none", "distance-to-goal", "place-direction", "both"],
-    ):
-        filt_cpd_df = cpd_df.loc[cpd_df.index.get_level_values(0).isin(group)]
-        x = filt_cpd_df["distance_to_goal"]
-        y = filt_cpd_df["place_direction"]
-        ax.scatter(
-            x,
-            y,
-            c=color,
-            alpha=0.25,
-            edgecolor="none",
-            label=label,
-            s=10,
-        )
-    sns.kdeplot(
-        x=cpd_df["distance_to_goal"],
-        y=cpd_df["place_direction"],
-        levels=6,
-        color="k",
-        linewidths=0.5,
+        cbar_kws={"shrink": 0.5, "label": "neurons"},
         ax=ax,
-        alpha=0.5,
     )
-    ax.legend(fontsize=6)
-    ax.set_xlim(*lims)
-    ax.set_ylim(*lims)
+    cax = ax.figure.axes[-1]
+    for spine in cax.spines.values():
+        spine.set_visible(False)
+    ax.set_xlim(*xlims)
+    ax.set_ylim(*ylims)
 
 
 # %% Unique variance explained acoss cells
@@ -178,6 +138,10 @@ def get_feature_tuned_df(
 def plot_summary_pointplot(
     feature_tuned_df,
     models=["distance_to_goal", "place_direction"],
+    plot_single_subject=True,
+    marker_color=["crimson", "royalblue", "grey"],
+    subject_line_color="grey",
+    subject_line_alpha=0.3,
     ax=None,
 ):
     # set up fig
@@ -185,20 +149,22 @@ def plot_summary_pointplot(
         f, ax = plt.subplots(figsize=(2, 3))
     ax.spines[["top", "right"]].set_visible(False)
     ax.axhline(0, color="k", linestyle="--", alpha=0.5)
+    ax.set_xlabel("features")
     ax.set_ylabel("prop. neurons")
 
     df = feature_tuned_df.copy()
     # counts cells in each condition
     m1, m2 = models
+    both_label = f"{m1}+{m2}"
     counts = []
     for subject in SUBJECT_IDS:
         _df = df.loc[subject]
         total_count = len(_df)
         counts.append(
             {
-                (m1): len(_df[(_df[m1]) & (~_df[m2])]) / total_count,
-                (m2): len(_df[(~_df[m1]) & (_df[m2])]) / total_count,
-                (m1, m2): len(_df[(_df[m1]) & (_df[m2])]) / total_count,
+                m1: len(_df[(_df[m1]) & (~_df[m2])]) / total_count,
+                m2: len(_df[(~_df[m1]) & (_df[m2])]) / total_count,
+                both_label: len(_df[(_df[m1]) & (_df[m2])]) / total_count,
             }
         )
     counts_df = pd.DataFrame(counts)
@@ -211,43 +177,41 @@ def plot_summary_pointplot(
         )
     )
     # plot
-    order = [(m1), (m2), (m1, m2)]
-    colors = sns.color_palette("hls", n_colors=len(SUBJECT_IDS))
+    order = [m1, m2, both_label]
+    if plot_single_subject:
+        sns.lineplot(
+            data=long_df,
+            x="feature",
+            y="prop",
+            units="subject_ID",
+            estimator=None,
+            sort=False,
+            color=subject_line_color,
+            alpha=subject_line_alpha,
+            linewidth=2,
+            ax=ax,
+        )
     sns.pointplot(
         data=long_df,
         x="feature",
         y="prop",
-        hue="subject_ID",
+        hue="feature",
         order=order,
-        palette=colors,
-        markers="o",
-        markersize=7,
-        markeredgewidth=0,
-        errorbar=None,
-        dodge=0.1,
-        linestyle="none",
-        legend=False,
-        alpha=0.5,
-        ax=ax,
-    )
-    sns.pointplot(
-        data=long_df,
-        x="feature",
-        y="prop",
-        order=order,
-        markers="_",
-        color="k",
-        markersize=15,
-        markeredgewidth=3,
+        hue_order=order,
+        palette=dict(zip(order, marker_color)),
+        markersize=9,
         errorbar="se",
+        err_kws={"linewidth": 3},
         linestyle="none",
         legend=False,
         alpha=1,
         ax=ax,
     )
+    ax.set_xlim(-0.3, len(order) - 0.7)
+    ax.tick_params(axis="x", rotation=30)
 
 
-def plot_summary_venn_diagram(df, models, ax=None):
+def plot_summary_venn_diagram(df, models, colors=("crimson", "royalblue"), alpha=0.5, ax=None):
     """ """
     m1, m2 = models
     if ax is None:
@@ -266,6 +230,8 @@ def plot_summary_venn_diagram(df, models, ax=None):
             venn_counts["11"],
         ),
         set_labels=(m1, m2),
+        set_colors=colors,
+        alpha=alpha,
         ax=ax,
     )
 
