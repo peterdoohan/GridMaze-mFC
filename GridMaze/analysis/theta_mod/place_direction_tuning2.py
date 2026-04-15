@@ -14,6 +14,9 @@ from matplotlib import pyplot as plt
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import filter as filt
 from GridMaze.analysis.theta_mod import theta_utils as tu
+from GridMaze.analysis.neGLM import load_model_sets as lms
+from GridMaze.analysis.neGLM import variance_explained as ve
+
 
 from GridMaze.analysis.cluster_tuning import spatial
 from scipy.ndimage import gaussian_filter, zoom
@@ -39,6 +42,7 @@ _DIR_SHIFT = {"N": (1, 0), "S": (-1, 0), "E": (0, 1), "W": (0, -1)}
 def plot_theta_mod_tuning_summary(
     SSE_df,
     maze_names=["maze_1", "maze_2", "rooms_maze"],
+    place_tuned_only=False,
     min_split_half_corr=0.5,
     late_sessions_only=False,
     demean=True,
@@ -52,6 +56,9 @@ def plot_theta_mod_tuning_summary(
     df = SSE_df[SSE_df.maze_name.isin(maze_names)]
     if late_sessions_only:
         df = df[df.late_session]
+    if place_tuned_only:
+        place_tuned = get_place_tuned_clusters()
+        df = df[df.cluster_unique_ID.isin(place_tuned)]
     if min_split_half_corr is not None:
         df = df[df.split_half_corr.gt(min_split_half_corr)]
     # per-subject × phase preferred shift: MSE summed across clusters/maze/day, argmin over shift_m
@@ -73,9 +80,26 @@ def plot_theta_mod_tuning_summary(
         print_stats=print_stats,
         ax=ax,
     )
+    return best_shifts
 
 
 # %%
+
+
+def get_place_tuned_clusters():
+    """
+    get cluster unique IDs for cells that have only sig ve by place-direction (place for short)
+    """
+    feature_tuned_df = ve.get_feature_tuned_df(
+        lms.load_model_set_cv_scores("variance_explained_all_sessions"),
+        reduced_models=["remove_distance_to_goal", "remove_place_direction"],
+    )
+    place_tuned = (
+        feature_tuned_df[(~feature_tuned_df.distance_to_goal & feature_tuned_df.place_direction)]
+        .index.get_level_values(1)
+        .values
+    )
+    return place_tuned
 
 
 def get_preferred_shift(df, min_split_half_corr=0.7):
