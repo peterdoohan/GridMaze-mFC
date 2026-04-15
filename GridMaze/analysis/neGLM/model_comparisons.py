@@ -28,6 +28,7 @@ def plot_performance_validation(
         "place_direction",
         "place_direction_distance_to_goal",
     ],
+    colors=["grey", "crimson", "royalblue"],
     outlier_threshold=-0.6,
     plot_single_subjects=False,
     print_stats=True,
@@ -67,7 +68,7 @@ def plot_performance_validation(
     for _df in (df_long, subj_avg):
         _df.loc[(_df["model_name"] == "place") & (_df["version"] == "GLMx"), "version"] = "GLM+"
     display_hue_order = [VERSION_RENAME[m] for m in model_types]
-    display_palette = {"GLMx": "grey", "GLM+": "teal", "neGLM": "mediumslateblue"}
+    display_palette = {VERSION_RENAME[m]: c for m, c in zip(model_types, colors)}
     # plot
     if plot_single_subjects:
         sns.stripplot(
@@ -137,7 +138,7 @@ def plot_interaction_validation(
     results_df,
     outlier_threshold=-0.6,
     models=["place", "direction", "place_direction_factorised", "place_direction_nonlinear"],
-    colors=["grey", "grey", "lightgreen", "mediumslateblue"],
+    colors=["grey", "grey", "crimson", "royalblue"],
     plot_single_subjects=False,
     print_stats=True,
     axes=None,
@@ -229,23 +230,17 @@ def plot_other_feature_results(
         "place_direction.distance_to_goal.goal.egocentric_action.velocity",
     ],
     outlier_threshold=-0.6,
-    plot_single_subjects=True,
+    colors=None,
+    plot_single_subjects=False,
     print_stats=True,
-    stats_comparisons=[
-        ("place_direction", "place_direction.distance_to_goal"),
-        ("place_direction.distance_to_goal", "place_direction.distance_to_goal.goal"),
-        ("place_direction.distance_to_goal.goal", "place_direction.distance_to_goal.goal.egocentric_action"),
-        (
-            "place_direction.distance_to_goal.goal.egocentric_action",
-            "place_direction.distance_to_goal.goal.egocentric_action.velocity",
-        ),
-    ],
-    ax=None,
+    axes=None,
 ):
     # set up figure
-    if ax is None:
-        f, ax = plt.subplots(figsize=(4, 3))
-    ax = _init_fig(ax=ax)
+    if axes is None:
+        f, axes = plt.subplots(2, 1, figsize=(4, 3.5), gridspec_kw={"height_ratios": [4, 1], "hspace": 0.25})
+    axes[0] = _init_fig(ax=axes[0])
+    if colors is None:
+        colors = sns.color_palette("rocket_r", n_colors=len(models))
     # process data
     df = _average_over_folds(results_df, outlier_threshold=outlier_threshold)
     # filter for input features and model types
@@ -258,38 +253,47 @@ def plot_other_feature_results(
     df_long = df.stack().reset_index(name="score")
     subj_avg = df_long.groupby(["subject_ID", "model_name"])["score"].mean().reset_index()
     if plot_single_subjects:
-        sns.pointplot(
-            data=df_long,
+        sns.stripplot(
+            data=subj_avg,
             x="model_name",
             y="score",
-            hue="subject_ID",
+            hue="model_name",
             order=order,
-            palette=sns.color_palette("hls", n_colors=len(SUBJECT_IDS)),
-            markers="o",
-            markersize=7,
-            markeredgewidth=0,
-            errorbar=None,
-            dodge=0.3,
-            linestyle="none",
+            palette=colors,
+            size=3,
+            alpha=0.3,
+            jitter=False,
             legend=False,
-            alpha=0.8,
-            ax=ax,
+            ax=axes[0],
         )
     sns.pointplot(
         data=subj_avg,
         x="model_name",
         y="score",
-        marker="_",
-        markersize=10,
-        markeredgewidth=3,
+        hue="model_name",
+        order=order,
         errorbar="se",
         linestyle="none",
-        color="black",
+        palette=colors,
         alpha=1,
-        ax=ax,
+        ax=axes[0],
+    )
+    axes[0].set_xlabel("")
+    axes[0].tick_params(axis="x", labelbottom=False)
+    # auto-infer table contents from dot-separated model names
+    all_vars = list(dict.fromkeys(v for m in models for v in m.split(".")))
+    presence = {m: m.split(".") for m in models}
+    row_labels = all_vars
+    plot_variable_table(
+        axes[1],
+        row_labels=row_labels,
+        columns=models,
+        presence=presence,
+        connect_columns=models,
     )
     if print_stats:
         df = subj_avg.set_index(["subject_ID", "model_name"]).unstack().score
+        stats_comparisons = list(zip(models[:-1], models[1:]))
         stats_df = _get_other_feature_stats(df, stats_comparisons)
         print(stats_df)
 
@@ -302,6 +306,61 @@ def _get_other_feature_stats(df, stats_comparisons):
     stats_df = pd.DataFrame(results)
     stats_df["p_val_corr"] = multipletests(stats_df.p_val, method="fdr_bh")[1]
     return stats_df
+
+
+def plot_prop_max_variance_explained(
+    results_df,
+    small_model="place_direction.distance_to_goal",
+    big_model="place_direction.distance_to_goal.goal.egocentric_action.velocity",
+    colors=("mediumslateblue", "lightgrey"),
+    outlier_threshold=-0.6,
+    print_stats=True,
+    ax=None,
+):
+    """Pie chart: per-subject % of max variance explained captured by `small_model` vs `big_model`."""
+    if ax is None:
+        f, ax = plt.subplots(figsize=(2.5, 2.5))
+    ax.set_aspect("equal")
+    # process data
+    df = _average_over_folds(results_df, outlier_threshold=outlier_threshold)
+    df = df[[small_model, big_model]]
+    subj_avg = (
+        df.stack()
+        .reset_index(name="score")
+        .groupby(["subject_ID", "model_name"])["score"]
+        .mean()
+        .unstack("model_name")
+    )
+    # per-subject % of max variance explained
+    prop = subj_avg[small_model] / subj_avg[big_model] * 100
+    mean_small, sem_small = prop.mean(), prop.sem()
+    mean_other = 100 - mean_small
+    # pie chart
+    wedges, _ = ax.pie(
+        [mean_small, mean_other],
+        colors=colors,
+        startangle=90,
+        counterclock=False,
+        wedgeprops={"edgecolor": "white", "linewidth": 1},
+    )
+    # annotate each wedge centroid with mean ± sem
+    labels = [
+        f"{mean_small:.1f} ± {sem_small:.1f}%",
+        f"{mean_other:.1f} ± {sem_small:.1f}%",
+    ]
+    for wedge, label in zip(wedges, labels):
+        theta = np.deg2rad((wedge.theta1 + wedge.theta2) / 2)
+        ax.text(
+            0.6 * np.cos(theta),
+            0.6 * np.sin(theta),
+            label,
+            ha="center",
+            va="center",
+            fontsize=8,
+        )
+    if print_stats:
+        print(prop)
+        print(f"mean ± sem: {mean_small:.2f} ± {sem_small:.2f} %")
 
 
 # %% main variable interactions
@@ -594,7 +653,7 @@ def plot_variable_table(
     dot_size=40,
     dot_color="grey",
     dot_marker="s",
-    dot_alpha=0.5,
+    dot_alpha=1,
     connect_columns=None,
 ):
     """Grid of dots indicating which variables (rows) are in each model (columns)."""
@@ -614,8 +673,12 @@ def plot_variable_table(
             if len(ys_here) < 2:
                 continue
             ax.plot(
-                [col_i, col_i], [min(ys_here), max(ys_here)],
-                color=dot_color, alpha=dot_alpha, linewidth=2, zorder=0,
+                [col_i, col_i],
+                [min(ys_here), max(ys_here)],
+                color=dot_color,
+                alpha=dot_alpha,
+                linewidth=2,
+                zorder=0,
             )
     ax.scatter(xs, ys, s=dot_size, color=dot_color, marker=dot_marker, alpha=dot_alpha, edgecolors="none")
     ax.set_xlim(-0.5, n_cols - 0.5)

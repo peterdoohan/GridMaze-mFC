@@ -12,7 +12,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from matplotlib_venn import venn2
 
-from scipy.stats import ttest_1samp
+from scipy.stats import pearsonr, ttest_1samp
 from statsmodels.stats.multitest import multipletests
 
 
@@ -41,6 +41,7 @@ def plot_cpd_clusters(
     scatter_alpha=0.4,
     xlims=(-15, 70),
     ylims=(-15, 70),
+    print_stats=True,
     ax=None,
 ):
     """ """
@@ -86,6 +87,10 @@ def plot_cpd_clusters(
         spine.set_visible(False)
     ax.set_xlim(*xlims)
     ax.set_ylim(*ylims)
+    # per-subject correlation stats
+    summary = _cpd_correlation_stats(filt_cpd_df, features)
+    if print_stats:
+        print(summary)
 
 
 # %% Unique variance explained acoss cells
@@ -308,6 +313,26 @@ def plot_variance_explained(
     if print_stats:
         print(_variance_explained_stats(cpd_df))
     return
+
+
+def _cpd_correlation_stats(cpd_df, features):
+    """Per-subject Pearson r between two CPD features + one-sided t-test against 0 (negative)."""
+    f1, f2 = features
+    records = []
+    for subject, sub_df in cpd_df.groupby(level=1):
+        r, _ = pearsonr(sub_df[f1], sub_df[f2])
+        records.append({"subject_ID": subject, "r": r, "n_neurons": len(sub_df)})
+    corr_df = pd.DataFrame(records)
+    t_stat, p_val = ttest_1samp(corr_df["r"], 0, alternative="less")
+    summary = pd.Series(
+        {
+            "t_stat": t_stat,
+            "p_val": p_val,
+            "mean_r": corr_df["r"].mean(),
+            "sem_r": corr_df["r"].sem(),
+        }
+    )
+    return summary
 
 
 def _variance_explained_stats(cpd_df):
