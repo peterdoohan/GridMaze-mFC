@@ -3,19 +3,188 @@ Summarise egocentric-angle to goal tuning across the population
 """
 
 # %% imports
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import seaborn as sns
+from joblib import Parallel, delayed
 from scipy.ndimage import gaussian_filter1d
 from scipy.optimize import curve_fit
-from scipy.stats import ttest_1samp
+from scipy.stats import ttest_1samp, zscore
 from sklearn.metrics import r2_score
 
 from GridMaze.analysis.core import filter as filt
+from GridMaze.analysis.core import get_sessions as gs
 
 # %% Globabl variables
 
+from GridMaze.paths import RESULTS_PATH
 
-# %% Functions
+RESULTS_DIR = RESULTS_PATH / "ego_angle_tuning"
+RESULTS_DIR.mkdir(exist_ok=True, parents=True)
+
+
+# %% Population heatmap
+
+
+def plot_egocentric_angle_to_goal_heatmap(
+    population_tuning_df,
+    min_split_half_corr=0.6,
+    sort_by="von_mises_cv",
+    normalisation="zscore",
+    cmap=None,
+    vmin=None,
+    vmax=None,
+    ax=None,
+):
+    """Population heatmap of egocentric angle-to-goal tuning, rows sorted by preferred angle."""
+    heatmap_df = _get_heatmap_df(
+        population_tuning_df,
+        min_split_half_corr=min_split_half_corr,
+        sort_by=sort_by,
+        normalisation=normalisation,
+    )
+    D = heatmap_df["tuning_curve"].values
+    x = heatmap_df["tuning_curve"].columns.values.astype(float)
+
+    if normalisation == "zscore":
+        cmap = cmap or "coolwarm"
+        vmin = -2 if vmin is None else vmin
+        vmax = 2 if vmax is None else vmax
+        cbar_label = "Firing rate (z-score)"
+    else:
+        cmap = cmap or "viridis"
+        vmin = 0 if vmin is None else vmin
+        vmax = 1 if vmax is None else vmax
+        cbar_label = "Firing rate (norm.)"
+
+    if ax is None:
+        _, ax = plt.subplots(1, 1, figsize=(4, 4))
+    ax.spines[["top", "right"]].set_visible(False)
+
+    sns.heatmap(
+        D,
+        cmap=cmap,
+        vmin=vmin,
+        vmax=vmax,
+        ax=ax,
+        rasterized=True,
+        cbar_kws={"shrink": 0.5, "label": cbar_label},
+    )
+
+    tick_labels = [0, 90, 180, 270, 360]
+    tick_positions = [np.argmin(np.abs(x - t)) for t in tick_labels]
+    ax.set_xticks(tick_positions)
+    ax.set_xticklabels(tick_labels, rotation=0)
+    ax.set_xlabel("Egocentric angle to goal (°)")
+
+    y_tick = len(D) // 10 * 10
+    ax.set_yticks([y_tick])
+    ax.set_yticklabels([f"{y_tick}"], rotation=90)
+    ax.set_ylabel("Neurons (sorted by preferred angle)", labelpad=-10)
+    return ax
+
+
+def _get_heatmap_df(
+    population_tuning_df,
+    min_split_half_corr=0.3,
+    sort_by="von_mises_cv",
+    normalisation="zscore",
+):
+    """Filter, sort and per-row normalise the population tuning df for heatmap plotting."""
+    df = population_tuning_df[population_tuning_df[("split_half_corr", "")] > min_split_half_corr].copy()
+    mu_col = (sort_by, "mu")
+    df = df[df[mu_col].notna()]
+    df = df.sort_values(by=[mu_col], ascending=True)
+    values = df["tuning_curve"].values
+    if normalisation == "zscore":
+        df.loc[:, "tuning_curve"] = zscore(values, axis=1, nan_policy="omit")
+    elif normalisation == "max":
+        df.loc[:, "tuning_curve"] = values / np.nanmax(values, axis=1, keepdims=True)
+    else:
+        raise ValueError(f"Unknown normalisation: {normalisation}")
+    return df
+
+
+# %% Main data generation
+
+
+def get_egocentric_angle_to_goal_tuning(
+    subject_IDs="all",
+    maze_names="all",
+    late_sessions=False,
+    sessions=None,
+    n_jobs=-1,
+    save=False,
+    verbose=False,
+    **session_kwargs,
+):
+    """Cross-session egocentric angle-to-goal tuning.
+
+    Runs `get_session_egocentric_angle_to_goal_tuning` on every session matching
+    the filter args (or on `sessions` if provided) and concatenates the
+    per-session DataFrames into one. Sessions where no clusters pass the
+    split-half threshold are dropped.
+
+    Parameters
+    ----------
+    subject_IDs, maze_names : str | list
+        Passed to `gs.get_maze_sessions` when `sessions is None`.
+    late_sessions : bool
+        If True → `days_on_maze="late"`, else `"all"`.
+    sessions : iterable | MazeSession | None
+        If provided, skip session loading.
+    n_jobs : int | None
+        Passed to `joblib.Parallel`. `None` → sequential loop.
+    save : bool
+        If False (default) and a cached parquet exists at `save_path`, load
+        and return it. If True, always recompute and overwrite the cache.
+    **session_kwargs
+        Forwarded to `get_session_egocentric_angle_to_goal_tuning`
+        (e.g. `n_bins`, `n_splits`, `min_split_half_corr`, `smooth_SD`,
+        `include_multi_units`, `fit_n_inits`).
+    """
+    save_path = RESULTS_DIR / "egocentric_angle_to_goal_tuning.parquet"
+    if save_path.exists() and not save:
+        if verbose:
+            print(f"Loading cached tuning df from {save_path}")
+        return pd.read_parquet(save_path)
+
+    if sessions is None:
+        if verbose:
+            print("Loading sessions ...")
+        days_on_maze = "late" if late_sessions else "all"
+        sessions = gs.get_maze_sessions(
+            subject_IDs=subject_IDs,
+            maze_names=maze_names,
+            days_on_maze=days_on_maze,
+            with_data=["navigation_df", "navigation_spike_rates_df", "cluster_metrics"],
+            must_have_data=True,
+        )
+    # normalise single session → list
+    if not isinstance(sessions, (list, tuple)):
+        sessions = [sessions]
+
+    def _process_session(session):
+        try:
+            return get_session_egocentric_angle_to_goal_tuning(session, verbose=verbose, **session_kwargs)
+        except Exception as e:
+            print(f"[{session.name}] {type(e).__name__}: {e}")
+            return None
+
+    if n_jobs is not None:
+        dfs = Parallel(n_jobs=n_jobs)(delayed(_process_session)(s) for s in sessions)
+    else:
+        dfs = [_process_session(s) for s in sessions]
+    dfs = [d for d in dfs if d is not None]
+    if len(dfs) == 0:
+        return None
+    tuning_df = pd.concat(dfs, axis=0)
+    if save:
+        if verbose:
+            print(f"Saving tuning df to {save_path}")
+        tuning_df.to_parquet(save_path)
+    return tuning_df
 
 
 def get_session_egocentric_angle_to_goal_tuning(
@@ -59,16 +228,12 @@ def get_session_egocentric_angle_to_goal_tuning(
     angle_bin_key = ("angle_to_goal", "egocentric_bined")
     bin_edges = np.linspace(0, 360, num=n_bins + 1, endpoint=True)
     bins = pd.IntervalIndex.from_breaks(bin_edges)
-    navigation_rates_df[angle_bin_key] = pd.cut(
-        navigation_rates_df.angle_to_goal["egocentric"], bins=bins
-    )
+    navigation_rates_df[angle_bin_key] = pd.cut(navigation_rates_df.angle_to_goal["egocentric"], bins=bins)
 
     # 3. pre-compute per-trial × per-bin mean firing rates (vectorized over all clusters)
     #    index = (trial, bin); columns = cluster_unique_ID
     trial_bin_means = (
-        navigation_rates_df.groupby(["trial", angle_bin_key], observed=True)
-        .firing_rate.mean()
-        .firing_rate
+        navigation_rates_df.groupby(["trial", angle_bin_key], observed=True).firing_rate.mean().firing_rate
     )
     trial_bin_means.index.set_names(["trial", "egocentric_bin"], inplace=True)
 
@@ -118,9 +283,7 @@ def get_session_egocentric_angle_to_goal_tuning(
     keep_idx = np.where(keep_mask)[0]
 
     # 6. full-trial tuning curve for kept clusters, re-indexed onto full n_bins grid
-    full_tuning = (
-        trial_bin_means.groupby(level="egocentric_bin", observed=True).mean().loc[:, keep_IDs]
-    )
+    full_tuning = trial_bin_means.groupby(level="egocentric_bin", observed=True).mean().loc[:, keep_IDs]
     full_tuning = full_tuning.reindex(bins).sort_index()
 
     # 7. circular smoothing (wrap-padded gaussian along bin axis)
@@ -132,14 +295,12 @@ def get_session_egocentric_angle_to_goal_tuning(
         print(f"  fitting {len(keep_IDs)} clusters...")
     # 8a. cross-validated fit: fit each split-1 tuning curve, r2 on split-2
     cv_fits = [
-        _fit_cv(splits_1[:, :, c], splits_2[:, :, c], bin_mids, von_mises_4p,
-                n_inits=fit_n_inits, alpha=fit_alpha)
+        _fit_cv(splits_1[:, :, c], splits_2[:, :, c], bin_mids, von_mises_4p, n_inits=fit_n_inits, alpha=fit_alpha)
         for c in keep_idx
     ]
     # 8b. full-data fit: multi-init fit to the smoothed full tuning curve
     full_fits = [
-        _fit_single(bin_mids, smoothed[:, i], von_mises_4p, n_inits=fit_n_inits * 3)
-        for i in range(len(keep_IDs))
+        _fit_single(bin_mids, smoothed[:, i], von_mises_4p, n_inits=fit_n_inits * 3) for i in range(len(keep_IDs))
     ]
 
     # 9. non-parametric circular statistics on smoothed full curve

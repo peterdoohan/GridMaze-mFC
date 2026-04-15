@@ -285,7 +285,9 @@ def plot_variance_explained(
     features=["distance_to_goal", "place_direction"],
     print_stats=True,
     plot_single_subject=True,
-    orientation="vertical",
+    marker_color=["crimson", "royalblue"],
+    subject_line_color="grey",
+    subject_line_alpha=0.3,
     ax=None,
 ):
     """ """
@@ -293,14 +295,9 @@ def plot_variance_explained(
     if ax is None:
         f, ax = plt.subplots(figsize=(2, 3))
     ax.spines[["top", "right"]].set_visible(False)
-    if orientation == "vertical":
-        ax.axhline(0, color="k", linestyle="--", alpha=0.5)
-        ax.set_xlabel("features")
-        ax.set_ylabel("unique variance explained (%)")
-    else:
-        ax.axvline(0, color="k", linestyle="--", alpha=0.5)
-        ax.set_ylabel("features")
-        ax.set_xlabel("unique variance explained (%)")
+    ax.axhline(0, color="k", linestyle="--", alpha=0.5)
+    ax.set_xlabel("features")
+    ax.set_ylabel("unique variance explained (%)")
 
     # process data
     df = cpd_df.copy()
@@ -311,47 +308,37 @@ def plot_variance_explained(
         order = None
     long_df = df.stack().reset_index(name="score").rename(columns={"level_2": "feature"})
     subject_av = long_df.groupby(["subject_ID", "feature"])["score"].mean().reset_index()
-    colors = sns.color_palette("hls", n_colors=len(SUBJECT_IDS))
-    if orientation == "vertical":
-        x = "feature"
-        y = "score"
-        marker = "_"
-    else:
-        x = "score"
-        y = "feature"
-        marker = "|"
     if plot_single_subject:
-        sns.pointplot(
-            data=long_df,
-            x=x,
-            y=y,
-            hue="subject_ID",
-            order=order,
-            palette=colors,
-            markers="o",
-            markersize=7,
-            markeredgewidth=0,
-            errorbar=None,
-            dodge=0.1,
-            linestyle="none",
-            legend=False,
-            alpha=0.5,
+        sns.lineplot(
+            data=subject_av,
+            x="feature",
+            y="score",
+            units="subject_ID",
+            estimator=None,
+            sort=False,
+            color=subject_line_color,
+            alpha=subject_line_alpha,
+            linewidth=2,
             ax=ax,
         )
     sns.pointplot(
         data=subject_av,
-        x=x,
-        y=y,
-        marker=marker,
+        x="feature",
+        y="score",
+        hue="feature",
         order=order,
-        color="k",
-        markersize=15,
-        markeredgewidth=3,
+        hue_order=order,
+        palette=dict(zip(order, marker_color)),
+        markersize=9,
         errorbar="se",
+        err_kws={"linewidth": 3},
         linestyle="none",
+        legend=False,
         alpha=1,
         ax=ax,
     )
+    ax.set_xlim(-0.3, len(order) - 0.7)
+    ax.tick_params(axis="x", rotation=30)
     if print_stats:
         print(_variance_explained_stats(cpd_df))
     return
@@ -382,15 +369,32 @@ def _variance_explained_stats(cpd_df):
 def get_cpd_df(
     results_df,
     outlier_threshold=-0.6,
-    full_model_thres=0,
+    full_model_sig=True,
+    full_model_thres=False,
+    alpha=0.05,
     reduced_models=[
         "remove_distance_to_goal",
         "remove_place_direction",
     ],
 ):
     """ """
+    _df = results_df.copy()
+    # test full model against 0 across folds (before averaging collapses folds)
+    if full_model_sig:
+        _fold_df = (
+            _df[_df.model_name == "full_model"]
+            .set_index(["subject_ID", "cluster_unique_ID", "fold"])["cv_score"]
+            .unstack(level=2)
+        )
+        full_model_pval = _fold_df.apply(
+            lambda row: ttest_1samp(row, popmean=0, alternative="greater").pvalue,
+            axis=1,
+        )
+        keep_clusters = full_model_pval[full_model_pval.lt(alpha)].index.droplevel(0).values
+        _df = _df[_df.cluster_unique_ID.isin(keep_clusters)]
+
     # average over folds & remove neurons with large negative scores
-    df = mc._average_over_folds(results_df, outlier_threshold=outlier_threshold)
+    df = mc._average_over_folds(_df, outlier_threshold=outlier_threshold)
     if full_model_thres:
         df = df[df["full_model"] > full_model_thres]
     # filter for reduced models
