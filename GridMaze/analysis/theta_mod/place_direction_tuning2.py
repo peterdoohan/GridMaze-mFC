@@ -95,7 +95,7 @@ def get_place_tuned_clusters():
         reduced_models=["remove_distance_to_goal", "remove_place_direction"],
     )
     place_tuned = (
-        feature_tuned_df[(~feature_tuned_df.distance_to_goal & feature_tuned_df.place_direction)]
+        feature_tuned_df[(feature_tuned_df.place_direction)]  # ~feature_tuned_df.distance_to_goal &
         .index.get_level_values(1)
         .values
     )
