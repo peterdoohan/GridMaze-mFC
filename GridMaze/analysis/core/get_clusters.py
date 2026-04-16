@@ -183,6 +183,7 @@ class Cluster:
                 "n_bins": 120,
                 "goal_stratified": False,
                 "smooth_SD": 2,
+                "color": "black",
             }
 
         elif feature == "distance_to_goal":
@@ -571,6 +572,7 @@ class Cluster:
                     *tuning_data,
                     goal_stratified=feature_kwargs["goal_stratified"],
                     smooth_SD=feature_kwargs["smooth_SD"],
+                    color=feature_kwargs["color"],
                     ax=ax,
                 )
         elif feature == "distance_to_goal":

@@ -15,6 +15,7 @@ from sklearn.metrics import r2_score
 
 from GridMaze.analysis.core import filter as filt
 from GridMaze.analysis.core import get_sessions as gs
+from GridMaze.analysis.core.get_clusters import get_cluster
 
 # %% Globabl variables
 
@@ -29,7 +30,7 @@ RESULTS_DIR.mkdir(exist_ok=True, parents=True)
 
 def plot_egocentric_angle_to_goal_heatmap(
     population_tuning_df,
-    min_split_half_corr=0.5,
+    min_split_half_corr=0.6,
     sort_by="von_mises_cv",
     normalisation="zscore",
     cmap="cividis",
@@ -104,6 +105,216 @@ def _get_heatmap_df(
     else:
         raise ValueError(f"Unknown normalisation: {normalisation}")
     return df
+
+
+# %% Preferred angle distribution
+
+
+def plot_preferred_angle_distribution(
+    population_tuning_df,
+    min_split_half_corr=0.6,
+    mu_source="von_mises_cv",
+    sig_only=False,
+    n_bins=36,
+    color="darkblue",
+    ax=None,
+):
+    """Circular histogram of preferred angles (mu) across the population.
+
+    Convention: 0° = goal in front, 90° = goal to the left, 180° = goal behind,
+    270° = goal to the right. Plot is oriented with 0° at the top, angle
+    increasing counter-clockwise. Rayleigh test for non-uniformity and the
+    population mean vector are overlaid.
+
+    Parameters
+    ----------
+    mu_source : {"von_mises_cv", "von_mises_full", "circular_mean"}
+        Which `mu` estimate to plot.
+    sig_only : bool
+        If True and `mu_source == "von_mises_cv"`, keep only clusters with
+        `von_mises_cv.sig == True`.
+    """
+    if mu_source == "circular_mean":
+        mu_col = ("circular_mean", "")
+    else:
+        mu_col = (mu_source, "mu")
+
+    df = population_tuning_df[population_tuning_df[("split_half_corr", "")] > min_split_half_corr].copy()
+    if sig_only and mu_source == "von_mises_cv":
+        df = df[df[("von_mises_cv", "sig")] == True]  # noqa: E712
+    mus = df[mu_col].dropna().to_numpy() % 360
+    n = len(mus)
+
+    # Rayleigh test (large-n series expansion)
+    rad = np.deg2rad(mus)
+    cos_sum, sin_sum = np.cos(rad).sum(), np.sin(rad).sum()
+    R_bar = np.sqrt(cos_sum**2 + sin_sum**2) / n if n else np.nan
+    z = n * R_bar**2 if n else np.nan
+
+    # histogram
+    bin_edges = np.linspace(0, 360, n_bins + 1)
+    counts, _ = np.histogram(mus, bins=bin_edges)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+    if ax is None:
+        _, ax = plt.subplots(1, 1, figsize=(4, 4), subplot_kw={"projection": "polar"})
+    ax.set_theta_zero_location("N")
+    ax.set_theta_direction(1)  # counter-clockwise → 90° ends up on the left
+
+    width = np.deg2rad(360 / n_bins)
+    ax.bar(
+        np.deg2rad(bin_centers),
+        counts,
+        width=width,
+        color=color,
+        edgecolor="white",
+        linewidth=0.5,
+        align="center",
+    )
+
+    ax.set_xticks(np.deg2rad([0, 90, 180, 270]))
+    ax.set_xticklabels(["front\n0°", "left\n90°", "behind\n180°", "right\n270°"])
+    ax.set_yticklabels([])
+    ax.spines["polar"].set_visible(False)
+    return ax
+
+
+def von_mises_fwhm_deg(kappa):
+    """Full width at half maximum (in degrees) of a von Mises tuning curve.
+
+    FWHM measured at half-rise above the trough, using
+        cos(θ/2) = ln(cosh(κ)) / κ
+    valid for κ > 0. Returns NaN where κ is non-finite or ≤ 0.
+    """
+    k = np.asarray(kappa, dtype=float)
+    out = np.full_like(k, np.nan)
+    valid = np.isfinite(k) & (k > 0)
+    kv = k[valid]
+    # ln(cosh(k)) computed stably for large k: ln((1 + exp(-2k))/2) + k
+    ln_cosh = np.log1p(np.exp(-2 * kv)) - np.log(2) + kv
+    cos_half = ln_cosh / kv
+    cos_half = np.clip(cos_half, -1.0, 1.0)
+    out[valid] = 2 * np.rad2deg(np.arccos(cos_half))
+    return out
+
+
+def plot_preferred_angle_vs_width(
+    population_tuning_df,
+    min_split_half_corr=0.6,
+    mu_source="von_mises_cv",
+    sig_only=False,
+    mrl_lim=(0, 1),
+    angle_bins=24,
+    mrl_bins=20,
+    pthresh=0.05,
+    cmap="mako",
+    scatter_color="0.7",
+    scatter_size=10,
+    scatter_alpha=1.0,
+    ax=None,
+    cbar=True,
+):
+    """Preferred angle (mu) vs tuning concentration (MRL): 2D density + outlier scatter.
+
+    All cells are drawn as a grey scatter in the background; a 2D histogram is
+    overlaid on top with `pthresh` so only dense bins render — cells in sparse
+    bins remain visible as grey dots. MRL: 0 = uniform, 1 = perfectly
+    concentrated. Convention: 0° = front, 90° = left, 180° = back, 270° = right.
+    """
+    mu_col = (mu_source, "mu")
+    mrl_col = ("mean_resultant_length", "")
+
+    df = population_tuning_df[population_tuning_df[("split_half_corr", "")] > min_split_half_corr].copy()
+    if sig_only and mu_source == "von_mises_cv":
+        df = df[df[("von_mises_cv", "sig")] == True]  # noqa: E712
+    df = df[df[mu_col].notna() & df[mrl_col].notna()]
+
+    mu = df[mu_col].to_numpy() % 360
+    mrl = df[mrl_col].to_numpy()
+
+    if ax is None:
+        _, ax = plt.subplots(1, 1, figsize=(5, 4))
+
+    # background: all cells as grey dots (outliers stay visible where histogram is masked)
+    sns.scatterplot(
+        x=mu,
+        y=mrl,
+        s=scatter_size,
+        color=scatter_color,
+        alpha=scatter_alpha,
+        edgecolor="none",
+        ax=ax,
+    )
+    # foreground: 2D histogram, sparse bins masked out
+    sns.histplot(
+        x=mu,
+        y=mrl,
+        bins=(angle_bins, mrl_bins),
+        binrange=((0, 360), mrl_lim),
+        pthresh=pthresh,
+        cmap=cmap,
+        cbar=cbar,
+        cbar_kws={"label": "neurons", "shrink": 0.5},
+        ax=ax,
+    )
+    if cbar:
+        cb = ax.collections[-1].colorbar
+        if cb is not None:
+            cb.outline.set_visible(False)
+
+    ax.set_xticks([0, 90, 180, 270, 360])
+    ax.set_xticklabels(["front", "left", "back", "right", "front"])
+    ax.set_xlabel("Preferred egocentric angle to goal")
+    ax.set_ylabel("Tuning concentration (MRL)")
+    ax.set_xlim(0, 360)
+    ax.set_ylim(*mrl_lim)
+    ax.spines[["top", "right"]].set_visible(False)
+    return ax
+
+
+# %% Example cells
+
+
+def plot_example_egocentric_tuning(
+    cluster_unique_IDs={
+        "front": "m3.2022-07-13.maze_cluster54",
+        "left": "m8.2022-07-23.maze_cluster6",
+        "right": "m2.2022-07-12.maze_cluster52",
+        "back": "m6.2022-07-02.maze_cluster38",
+    },
+    feature_kwargs={"color": "goldenrod"},
+    labels=("front", "left", "right", "back"),
+    axes=None,
+):
+    """Plot egocentric angle-to-goal tuning for 4 example cells side-by-side.
+
+    Parameters
+    ----------
+    cluster_unique_IDs : dict | None
+        Maps direction label → cluster_unique_ID. If None, uses
+        `DEFAULT_EXAMPLE_CELLS`.
+    feature_kwargs : dict | None
+        Maps direction label → per-cell feature_kwargs dict forwarded to
+        `Cluster.plot_tuning(feature="angle_to_goal", ...)`. Missing keys use
+        defaults (angle_metric="egocentric"). Use this to set e.g. `color`,
+        `smooth_SD`, `n_bins` per cell.
+    labels : tuple
+        Order of the 4 subplots from left to right.
+    figsize : tuple
+    show_cluster_id : bool
+        If True, append the cluster_unique_ID under the direction label in each title.
+    """
+    if axes is None:
+        fig, axes = plt.subplots(2, 2, figsize=(4, 4), subplot_kw={"projection": "polar"})
+        axes = np.atleast_1d(axes).flatten()
+    for ax, label in zip(axes, labels):
+        cid = cluster_unique_IDs[label]
+        cluster = get_cluster(cid)
+        fkw = {"angle_metric": "egocentric", **feature_kwargs}
+        cluster.plot_tuning(feature="angle_to_goal", feature_kwargs=fkw, ax=ax)
+        ax.set_xticks(np.deg2rad([0, 90, 180, 270]))
+        ax.set_xticklabels(["front", "left", "back", "right"])
+        ax.spines["polar"].set_visible(False)
 
 
 # %% Main data generation

@@ -27,7 +27,7 @@ def plot_session_angle_to_goal_tuning(session, metric="egocentric", goal_stratif
     return
 
 
-def plot_angle_tuning(cluster_tuning, metric_key, goal_stratified=False, smooth_SD=2, ax=None):
+def plot_angle_tuning(cluster_tuning, metric_key, goal_stratified=False, smooth_SD=2, color="black", ax=None):
     metric_tuning = metric_key + "_tuning"
     if ax is None:
         f = plt.figure(figsize=(3, 3), clear=True)
@@ -48,7 +48,7 @@ def plot_angle_tuning(cluster_tuning, metric_key, goal_stratified=False, smooth_
         tuning_mean = np.concatenate([tuning_mean, [tuning_mean[0]]])
         tuning_sem = np.concatenate([tuning_sem, [tuning_sem[0]]])
         # plot
-        hd._plot_angle_aligned_rates(bins_rad, tuning_mean, tuning_sem, ax, color="black", label=metric_key)
+        hd._plot_angle_aligned_rates(bins_rad, tuning_mean, tuning_sem, ax, color=color, label=metric_key)
     else:
         goal2color = mp.get_goal2standard_color()
         for goal in cluster_tuning.goal.unique():
