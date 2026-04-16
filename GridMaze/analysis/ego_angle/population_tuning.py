@@ -29,10 +29,10 @@ RESULTS_DIR.mkdir(exist_ok=True, parents=True)
 
 def plot_egocentric_angle_to_goal_heatmap(
     population_tuning_df,
-    min_split_half_corr=0.6,
+    min_split_half_corr=0.5,
     sort_by="von_mises_cv",
     normalisation="zscore",
-    cmap=None,
+    cmap="cividis",
     vmin=None,
     vmax=None,
     ax=None,
@@ -81,7 +81,7 @@ def plot_egocentric_angle_to_goal_heatmap(
     y_tick = len(D) // 10 * 10
     ax.set_yticks([y_tick])
     ax.set_yticklabels([f"{y_tick}"], rotation=90)
-    ax.set_ylabel("Neurons (sorted by preferred angle)", labelpad=-10)
+    ax.set_ylabel("Neurons", labelpad=-10)
     return ax
 
 
