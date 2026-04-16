@@ -36,8 +36,8 @@ def get_model_set_params(seed=0, subfolder="other_features", overwrite=False):
         "egocentric_action",
         "velocity",
         "head_direction",
-        "allocentric_angle_to_goal",
         "egocentric_angle_to_goal",
+        "allocentric_angle_to_goal",
     ]
     for maze_name in ["maze_1", "maze_2", "rooms_maze"]:
         input_features = []

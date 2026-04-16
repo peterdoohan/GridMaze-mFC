@@ -15,7 +15,7 @@ DEFAULT_INPUT_DATA_KWARGS = {
     "subject_IDs": "all",
     "maze_name": "maze_1",
     "days_on_maze": "late",
-    "input_groups": ["place_direction", "distance_to_goal", "egocentric_action"],
+    "input_groups": ["place_direction", "distance_to_goal"],
     "input_group_kwargs": {},
     "resolution": 0.2,
     "max_steps_to_goal": 30,
