@@ -36,6 +36,54 @@ with open(EXPERIMENT_INFO_PATH / "maze_day2date.json", "r") as input_file:
 
 FS = 1500  # lfp sampling frequency
 
+# %% specific spectrogram bands plot (eg. theta 7-11Hz)
+
+
+def plot_average_band_power(
+    spectrogram_df,
+    band=(7, 11),
+    axes=None,
+    windows={"cue": (-0.5, 2.5), "reward": (-2.5, 0.1)},
+    late_session_only=True,
+    color="crimson",
+):
+    """Plot mean+sem across subjects of z-scored power in a frequency band
+    (default theta 7-11Hz), aligned to cue and reward.
+
+    Power is averaged across band frequencies and sessions per subject, then
+    mean/sem is computed across subjects.
+    """
+    # prepare axes
+    if axes is None:
+        fig, axes = plt.subplots(1, 2, figsize=(3, 1), sharey=True)
+        fig.subplots_adjust(wspace=0.1)
+    for ax in axes.flatten():
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.axvline(0, color="black", linestyle="--", alpha=0.2)
+        ax.axhline(0, color="black", linestyle="--", alpha=0.2)
+    axes[0].set_ylabel(f"{band[0]}-{band[1]}Hz \n power (z)")
+    for ax in axes[1:]:
+        ax.spines["left"].set_visible(False)
+        ax.tick_params(left=False, labelleft=False)
+    # process data
+    events = ["cue", "reward"]
+    event_xlabels = {"cue": "cue (s)", "reward": "reward (s)"}
+    df = spectrogram_df[spectrogram_df.late_session] if late_session_only else spectrogram_df
+    df = df[df.frequency.between(*band)]
+    for event, ax in zip(events, axes):
+        event_df = df[df.event == event]
+        subject_band_power = event_df.groupby("subject_ID").time.mean().time
+        t = subject_band_power.columns.values.astype(np.float64)
+        mean = subject_band_power.mean(axis=0).values
+        sem = subject_band_power.sem(axis=0).values
+        ax.plot(t, mean, color=color)
+        ax.fill_between(t, mean - sem, mean + sem, alpha=0.2, color=color)
+        ax.set_xlabel(event_xlabels[event])
+        ax.set_xlim(*windows[event])
+        ax.set_ylim(-0.1, 0.6)
+    return
+
+
 # %% Spectrogram plots
 
 
