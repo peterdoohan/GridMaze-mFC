@@ -6,7 +6,7 @@ Create analysis data structure with neuron spikes counted in per theta phase bin
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
+import matplotlib.colors as mcolors
 from matplotlib.collections import LineCollection
 from scipy.signal import butter, filtfilt, hilbert
 
@@ -169,20 +169,29 @@ def get_LFP(processed_data, shank=3, single_channel=False, remove_artifacts=True
 # %% plotting
 
 
+def _muted_hsv_colors(n, saturation=0.55, value=0.9):
+    """Cyclic HSV palette with reduced saturation — rainbow ordering, softer look."""
+    hues = np.linspace(0, 1, n, endpoint=False)
+    return np.array([mcolors.hsv_to_rgb([h, saturation, value]) for h in hues])
+
+
 def plot_theta_phase_stratified_spikes(
     session,
     time_window,
     n_bins=12,
     block_window=0.5,
+    selected_phase=1,
     clusters=None,
     cmap=None,
     axes=None,
 ):
     """Visualise how spikes stratify by theta phase in a given time window.
 
-    Top:    raw LFP
-    Middle: theta-filtered LFP, line segments coloured by instantaneous phase bin
-    Bottom: spike raster, each spike coloured by the phase bin it falls in
+    Panel 1: raw LFP
+    Panel 2: theta-filtered LFP, line segments coloured by instantaneous phase bin
+    Panel 3: spike raster, each spike coloured by the phase bin it falls in
+    Panel 4: spike raster for `selected_phase` bin only (single-colour, sparse)
+             — illustrates stratification by one theta phase.
 
     All panels share a time axis with faint grey bands alternating every
     `block_window` seconds (visual reference for spike-counting windows).
@@ -206,11 +215,11 @@ def plot_theta_phase_stratified_spikes(
 
     # prepare axes
     if axes is None:
-        _, axes = plt.subplots(3, 1, figsize=(12, 6), sharex=True, height_ratios=[1, 1, 2])
+        _, axes = plt.subplots(4, 1, figsize=(12, 7), sharex=True, height_ratios=[1, 1, 2, 2])
 
-    # discrete colormap for phase bins (default: seaborn cubehelix)
+    # discrete colormap for phase bins (default: muted cyclic HSV)
     if cmap is None:
-        bin_colors = np.array(sns.cubehelix_palette(n_colors=n_bins))
+        bin_colors = _muted_hsv_colors(n_bins)
     else:
         cmap_obj = plt.get_cmap(cmap, n_bins)
         bin_colors = np.array([cmap_obj(i) for i in range(n_bins)])
@@ -268,9 +277,28 @@ def plot_theta_phase_stratified_spikes(
             linewidths=1,
         )
     axes[2].set_ylabel("cluster")
-    axes[2].set_xlabel("Time (s)")
     axes[2].set_ylim(-0.5, len(clusters) - 0.5)
     axes[2].spines[["top", "right"]].set_visible(False)
+
+    # Panel 4: same raster but only spikes in selected_phase bin
+    selected_color = bin_colors[selected_phase]
+    sel_mask = spike_phase_bins == selected_phase
+    for row_i, c in enumerate(clusters):
+        m = (sc_w == c) & sel_mask
+        if not m.any():
+            continue
+        axes[3].scatter(
+            st_w[m],
+            np.full(m.sum(), row_i, dtype=float),
+            color=selected_color,
+            s=30,
+            marker="|",
+            linewidths=1,
+        )
+    axes[3].set_ylabel(f"cluster\n(θ bin {selected_phase})")
+    axes[3].set_xlabel("Time (s)")
+    axes[3].set_ylim(-0.5, len(clusters) - 0.5)
+    axes[3].spines[["top", "right"]].set_visible(False)
 
     return axes
 
@@ -297,7 +325,7 @@ def plot_theta_stratification_schematic(n_bins=12, cmap=None, ax=None):
     ax.axis("off")
 
     if cmap is None:
-        bin_colors = list(sns.cubehelix_palette(n_colors=n_bins))
+        bin_colors = list(_muted_hsv_colors(n_bins))
     else:
         cmap_obj = plt.get_cmap(cmap, n_bins)
         bin_colors = [cmap_obj(i) for i in range(n_bins)]
@@ -318,12 +346,9 @@ def plot_theta_stratification_schematic(n_bins=12, cmap=None, ax=None):
                 edgecolor="none",
             )
         )
-    ax.text(lx + lw / 2, ly + lh + 0.2, "spikes",
-            ha="center", va="bottom", fontsize=11, color=text_color)
-    ax.text(lx + lw / 2, ly - 0.25, "time",
-            ha="center", va="top", fontsize=9, color=accent)
-    ax.text(lx - 0.25, ly + lh / 2, "neurons",
-            ha="right", va="center", fontsize=9, color=accent, rotation=90)
+    ax.text(lx + lw / 2, ly + lh + 0.2, "spikes", ha="center", va="bottom", fontsize=11, color=text_color)
+    ax.text(lx + lw / 2, ly - 0.25, "time", ha="center", va="top", fontsize=9, color=accent)
+    ax.text(lx - 0.25, ly + lh / 2, "neurons", ha="right", va="center", fontsize=9, color=accent, rotation=90)
 
     # ARROW with label
     arrow_y = ly + lh / 2
@@ -331,11 +356,11 @@ def plot_theta_stratification_schematic(n_bins=12, cmap=None, ax=None):
         "",
         xy=(7.0, arrow_y),
         xytext=(4.0, arrow_y),
-        arrowprops=dict(arrowstyle="-|>", lw=1.2, color=accent,
-                        mutation_scale=18, shrinkA=0, shrinkB=0),
+        arrowprops=dict(arrowstyle="-|>", lw=1.2, color=accent, mutation_scale=18, shrinkA=0, shrinkB=0),
     )
-    ax.text(5.5, arrow_y + 0.3, "spike stratification\nby θ phase",
-            ha="center", va="bottom", fontsize=10, color=text_color)
+    ax.text(
+        5.5, arrow_y + 0.3, "spike stratification\nby θ phase", ha="center", va="bottom", fontsize=10, color=text_color
+    )
 
     # RIGHT: overlapping stack of per-phase matrices (rounded corners, no borders)
     sx, sy, rw, rh = 7.5, 0.6, 2.5, 1.8
@@ -353,16 +378,18 @@ def plot_theta_stratification_schematic(n_bins=12, cmap=None, ax=None):
         )
     top_x = sx + (n_bins - 1) * dx
     top_y = sy + (n_bins - 1) * dy
-    ax.text(top_x + rw / 2, top_y + rh + 0.2,
-            "spike counts per θ-bin\n(downsampled)",
-            ha="center", va="bottom", fontsize=11, color=text_color)
-    ax.text(sx - 0.25, sy + rh / 2, "neurons",
-            ha="right", va="center", fontsize=9, color=accent, rotation=90)
-    ax.text(sx + rw / 2, sy - 0.25, "time",
-            ha="center", va="top", fontsize=9, color=accent)
-    ax.text(sx + rw + 0.15, sy + rh / 2, "θ bin 1",
-            ha="left", va="center", fontsize=9, color=text_color)
-    ax.text(top_x + rw + 0.15, top_y + rh / 2, f"θ bin {n_bins}",
-            ha="left", va="center", fontsize=9, color=text_color)
+    ax.text(
+        top_x + rw / 2,
+        top_y + rh + 0.2,
+        "spike counts per θ-bin\n(downsampled)",
+        ha="center",
+        va="bottom",
+        fontsize=11,
+        color=text_color,
+    )
+    ax.text(sx - 0.25, sy + rh / 2, "neurons", ha="right", va="center", fontsize=9, color=accent, rotation=90)
+    ax.text(sx + rw / 2, sy - 0.25, "time", ha="center", va="top", fontsize=9, color=accent)
+    ax.text(sx + rw + 0.15, sy + rh / 2, "θ bin 1", ha="left", va="center", fontsize=9, color=text_color)
+    ax.text(top_x + rw + 0.15, top_y + rh / 2, f"θ bin {n_bins}", ha="left", va="center", fontsize=9, color=text_color)
 
     return ax
