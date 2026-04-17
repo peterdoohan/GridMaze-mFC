@@ -28,7 +28,7 @@ from GridMaze.analysis.distance_to_goal import distributions as dd
 from GridMaze.analysis.place_direction import future_decoding as fd
 
 from GridMaze.analysis.theta_mod import trajectory_decoding as tpd
-from GridMaze.analysis.distance_to_goal import theta_mod_decoder as tdd
+from GridMaze.analysis.theta_mod import distance_to_goal_decoder as tdd
 
 # %% global variables
 FRAME_RATE = 60

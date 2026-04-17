@@ -47,12 +47,27 @@ def get_tuned_neurons():
 # %% Functions
 
 
-def plot_subpopulation_theta_mod(theta_mod_df, print_stats=True, ax=None):
+def plot_subpopulation_theta_mod(
+    theta_mod_df,
+    populations=("all", "place_direction", "distance_to_goal"),
+    colors=None,
+    print_stats=True,
+    ylim=(0.95, 1.05),
+    ax=None,
+):
     """
     Plots the average theta modulation of all neurons, and specific subpopulations of
     distance-to-goal tuned neurons and place-direction tuned neurons as identified in
-    neGLM analyses
+    neGLM analyses. `populations` selects which subpopulations to plot and which
+    stats to print (valid ids: "all", "place_direction", "distance_to_goal").
+    `colors` is a sequence aligned with `populations`; if None, per-population defaults
+    are used.
     """
+    default_colors = {"all": "silver", "place_direction": "darkred", "distance_to_goal": "purple"}
+    if colors is None:
+        colors = [default_colors[p] for p in populations]
+    elif len(colors) != len(populations):
+        raise ValueError(f"colors (len {len(colors)}) must match populations (len {len(populations)})")
     # set up fig
     if ax is None:
         fig, ax = plt.subplots(figsize=(3, 3))
@@ -75,12 +90,19 @@ def plot_subpopulation_theta_mod(theta_mod_df, print_stats=True, ax=None):
     all_neurons_mask = np.ones(len(df), dtype=bool)
     place_direction_mask = df.feature_tuning.place_direction & ~df.feature_tuning.distance_to_goal
     distance_mask = ~df.feature_tuning.place_direction & df.feature_tuning.distance_to_goal
-    mod_dfs = []
-    for mask, label, color in zip(
-        [all_neurons_mask, place_direction_mask, distance_mask],
-        ["all", "place-direction tuned", "distance-to-goal tuned"],
-        ["silver", "darkred", "purple"],
-    ):
+
+    pop_specs = {
+        "all": (all_neurons_mask, "all"),
+        "place_direction": (place_direction_mask, "place-direction tuned"),
+        "distance_to_goal": (distance_mask, "distance-to-goal tuned"),
+    }
+    unknown = [p for p in populations if p not in pop_specs]
+    if unknown:
+        raise ValueError(f"unknown populations: {unknown}. valid: {list(pop_specs)}")
+
+    mod_dfs = {}
+    for pop_id, color in zip(populations, colors):
+        mask, label = pop_specs[pop_id]
         _df = df[mask]
         subj_avg = _df.groupby("subject_ID").spike_count.mean().spike_count
         _mean = subj_avg.mean()
@@ -98,32 +120,38 @@ def plot_subpopulation_theta_mod(theta_mod_df, print_stats=True, ax=None):
         )
         _x, _y = tdd.fit_sinusoid(phases, _mean, fit_constant=True, return_as="curve")
         ax.plot(_x, _y, color=color, linewidth=1.5, label=label)
-        mod_dfs.append(subj_avg)
+        mod_dfs[pop_id] = subj_avg
     ax.legend(fontsize=6)
-    ax.set_ylim(0.95, 1.05)
+    ax.set_ylim(*ylim)
     if print_stats:
-        # test if all curves are significanlty modulated
-        all_df, place_df, dist_df = mod_dfs
-        print("all neurons")
-        tdd._get_decoding_bias_stats(all_df)
-        print("place-direction tuned neurons")
-        tdd._get_decoding_bias_stats(place_df)
-        print("distance-to-goal tuned neurons")
-        tdd._get_decoding_bias_stats(dist_df)
-        # test offsets between populations
-        print("all vs. place-direction")
-        tdd.test_theta_offset(all_df, place_df)
-        print("all vs. distance")
-        tdd.test_theta_offset(all_df, dist_df)
-        print("distance vs. place-direction")
-        tdd.test_theta_offset(dist_df, place_df)
+        pop_print_labels = {
+            "all": "all neurons",
+            "place_direction": "place-direction tuned neurons",
+            "distance_to_goal": "distance-to-goal tuned neurons",
+        }
+        for pop_id in populations:
+            print(pop_print_labels[pop_id])
+            tdd._get_decoding_bias_stats(mod_dfs[pop_id])
+
+        pair_print_labels = {
+            ("all", "place_direction"): "all vs. place-direction",
+            ("all", "distance_to_goal"): "all vs. distance",
+            ("distance_to_goal", "place_direction"): "distance vs. place-direction",
+        }
+        for (a, b), label in pair_print_labels.items():
+            if a in populations and b in populations:
+                print(label)
+                tdd.test_theta_offset(mod_dfs[a], mod_dfs[b])
 
 
 # %% population theta modulation tuning curves
 
 
-def get_population_theta_mod_tuning(late_sessions=True, include_multi_units=True):
+def get_population_theta_mod_tuning(late_sessions=True, include_multi_units=True, save=False):
     """ """
+    save_path = RESULTS_DIR / f"population_theta_mod_tuning.parquet"
+    if not save and save_path.exists():
+        return pd.read_parquet(save_path)
     feature_tuned_df = get_tuned_neurons()
     dfs = []
     for subject in SUBJECT_IDS:
@@ -148,6 +176,8 @@ def get_population_theta_mod_tuning(late_sessions=True, include_multi_units=True
                 )
                 dfs.append(df)
     combined_df = pd.concat(dfs)
+    if save:
+        combined_df.to_parquet(save_path)
     return combined_df
 
 
