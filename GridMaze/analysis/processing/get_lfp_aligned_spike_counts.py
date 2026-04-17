@@ -5,18 +5,20 @@ Create analysis data structure with neuron spikes counted in per theta phase bin
 # %% Imports
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from matplotlib.collections import LineCollection
 from scipy.signal import butter, filtfilt, hilbert
 
 from GridMaze.analysis.core import load_data
 from GridMaze.analysis.core import convert
+from GridMaze.analysis.core import get_clusters as gc
 from GridMaze.analysis.event_aligned import lfp_utils as lu
 
 # %% Global Variables
 FS_LFP = 1500
 
 THETA_RANGE = (7, 11)
-
-_4HZ_RANGE = (2, 5)  # 4Hz oscillation range
 
 FRAME_RATE = 60  # Hz
 # %% Functions
@@ -27,13 +29,6 @@ def get_navigation_theta_spike_counts_df(processed_data_path, analysis_data_path
     see _get_navigation_lfp_phase_binned_spike_counts_df
     """
     return _get_navigation_lfp_phase_binned_spike_counts_df(processed_data_path, lfp_phase="theta", n_bins=n_bins)
-
-
-def get_navigation_4Hz_spike_counts_df(processed_data_path, analysis_data_path, n_bins=12):
-    """
-    see _get_navigation_lfp_phase_binned_spike_counts_df
-    """
-    return _get_navigation_lfp_phase_binned_spike_counts_df(processed_data_path, lfp_phase="4Hz", n_bins=n_bins)
 
 
 def _get_navigation_lfp_phase_binned_spike_counts_df(processed_data_path, lfp_phase="theta", n_bins=12):
@@ -87,10 +82,8 @@ def get_lfp_phase_binned_spike_counts(processed_data_path, lfp_phase="theta", n_
     lfp_times = load_data.load(processed_data_path / "lfp.times.npy")
     if lfp_phase == "theta":
         lfp_phase = get_lfp_phase(lfp_signal, freq_range=THETA_RANGE, N=4)
-    elif lfp_phase == "4Hz":
-        lfp_phase = get_lfp_phase(lfp_signal, freq_range=_4HZ_RANGE, N=3)
     else:
-        raise ValueError("lfp_phase must be 'theta' or '4Hz'")
+        raise ValueError("lfp_phase must be 'theta'")
     bin_edges, lfp_phase_bins = bin_lfp_phase(lfp_phase, n_bins=n_bins)
 
     # load frame times data
@@ -135,6 +128,7 @@ def get_lfp_phase(
     lfp_signal,
     freq_range=(7, 11),
     N=4,
+    return_filtered=False,
 ):
     """
     only for LFP (currently no CSD)
@@ -145,6 +139,8 @@ def get_lfp_phase(
     filt_osc = filtfilt(b, a, lfp_signal)
     analytic = hilbert(filt_osc)
     phase_hilbert = np.angle(analytic)
+    if return_filtered:
+        return filt_osc, phase_hilbert
     return phase_hilbert
 
 
@@ -168,3 +164,205 @@ def get_LFP(processed_data, shank=3, single_channel=False, remove_artifacts=True
     if remove_artifacts:
         lfp = lu._remove_artifacts(lfp, thres=500)
     return lfp
+
+
+# %% plotting
+
+
+def plot_theta_phase_stratified_spikes(
+    session,
+    time_window,
+    n_bins=12,
+    block_window=0.5,
+    clusters=None,
+    cmap=None,
+    axes=None,
+):
+    """Visualise how spikes stratify by theta phase in a given time window.
+
+    Top:    raw LFP
+    Middle: theta-filtered LFP, line segments coloured by instantaneous phase bin
+    Bottom: spike raster, each spike coloured by the phase bin it falls in
+
+    All panels share a time axis with faint grey bands alternating every
+    `block_window` seconds (visual reference for spike-counting windows).
+
+    Requires session to be loaded with: lfp_signal, lfp_times, lfp_metrics,
+    cluster_metrics, spike_times, spike_clusters.
+    """
+    # load signals
+    lfp = lu.get_LFP(session)
+    lfp_times = session.lfp_times
+    filt_osc, theta_phase = get_lfp_phase(lfp, freq_range=THETA_RANGE, N=4, return_filtered=True)
+    _, lfp_phase_bins = bin_lfp_phase(theta_phase, n_bins=n_bins)
+
+    # mask to time window
+    t0, t1 = time_window
+    mask = (lfp_times >= t0) & (lfp_times <= t1)
+    t = lfp_times[mask]
+    lfp_w = lfp[mask]
+    theta_w = filt_osc[mask]
+    phase_bins_w = lfp_phase_bins[mask]
+
+    # prepare axes
+    if axes is None:
+        _, axes = plt.subplots(3, 1, figsize=(12, 6), sharex=True, height_ratios=[1, 1, 2])
+
+    # discrete colormap for phase bins (default: seaborn cubehelix)
+    if cmap is None:
+        bin_colors = np.array(sns.cubehelix_palette(n_colors=n_bins))
+    else:
+        cmap_obj = plt.get_cmap(cmap, n_bins)
+        bin_colors = np.array([cmap_obj(i) for i in range(n_bins)])
+
+    # faint grey alternating bands every block_window seconds
+    block_edges = np.arange(t0, t1 + block_window, block_window)
+    for ax in axes:
+        for i in range(len(block_edges) - 1):
+            if i % 2 == 0:
+                ax.axvspan(block_edges[i], block_edges[i + 1], color="grey", alpha=0.1, linewidth=0)
+
+    # Panel 1: raw LFP
+    axes[0].plot(t, lfp_w, color="black", linewidth=0.8)
+    axes[0].set_ylabel("LFP (uV)")
+    axes[0].spines[["top", "right"]].set_visible(False)
+
+    # Panel 2: theta-filtered, line coloured per-segment by phase bin
+    points = np.array([t, theta_w]).T.reshape(-1, 1, 2)
+    segments = np.concatenate([points[:-1], points[1:]], axis=1)
+    seg_colors = bin_colors[phase_bins_w[:-1]]
+    lc = LineCollection(segments, colors=seg_colors, linewidth=1.5)
+    axes[1].add_collection(lc)
+    axes[1].set_xlim(t[0], t[-1])
+    theta_range = theta_w.max() - theta_w.min()
+    axes[1].set_ylim(theta_w.min() - 0.1 * theta_range, theta_w.max() + 0.1 * theta_range)
+    axes[1].set_ylabel(f"theta {THETA_RANGE[0]}-{THETA_RANGE[1]}Hz (uV)")
+    axes[1].spines[["top", "right"]].set_visible(False)
+
+    # Panel 3: spike raster, coloured by phase bin
+    spike_times = session.spike_times.reshape(-1)
+    spike_clusters = session.spike_clusters.reshape(-1)
+    spike_mask = (spike_times >= t0) & (spike_times <= t1)
+    st_w = spike_times[spike_mask]
+    sc_w = spike_clusters[spike_mask]
+    # phase bin for each spike
+    spike_lfp_idx = np.clip(np.searchsorted(lfp_times, st_w, side="left") - 1, 0, len(lfp_times) - 1)
+    spike_phase_bins = lfp_phase_bins[spike_lfp_idx]
+
+    # pick clusters (default: all clusters in session)
+    if clusters is None:
+        clusters = np.unique(session.spike_clusters)
+    clusters = np.asarray(clusters)
+
+    # plot raster (one row per cluster, in given order)
+    for row_i, c in enumerate(clusters):
+        m = sc_w == c
+        if not m.any():
+            continue
+        axes[2].scatter(
+            st_w[m],
+            np.full(m.sum(), row_i, dtype=float),
+            c=bin_colors[spike_phase_bins[m]],
+            s=30,
+            marker="|",
+            linewidths=1,
+        )
+    axes[2].set_ylabel("cluster")
+    axes[2].set_xlabel("Time (s)")
+    axes[2].set_ylim(-0.5, len(clusters) - 0.5)
+    axes[2].spines[["top", "right"]].set_visible(False)
+
+    return axes
+
+
+def plot_theta_stratification_schematic(n_bins=12, cmap=None, ax=None):
+    """Schematic showing how spikes are stratified into `n_bins` theta-phase
+    neuron × time matrices.
+
+    Left:  source spike-count matrix (neurons × time), coloured in vertical
+           stripes to indicate the continuously varying theta phase at each
+           time point.
+    Arrow: labelled "spike stratification by θ phase".
+    Right: stack of `n_bins` overlapping rectangles, each a single phase
+           colour, representing the per-phase-bin neurons × time matrices
+           output by `get_navigation_theta_spike_counts_df`.
+    """
+    import matplotlib.patches as mpatches
+
+    if ax is None:
+        _, ax = plt.subplots(1, 1, figsize=(9, 3))
+    ax.set_xlim(0, 12)
+    ax.set_ylim(0, 5)
+    ax.set_aspect("equal")
+    ax.axis("off")
+
+    if cmap is None:
+        bin_colors = list(sns.cubehelix_palette(n_colors=n_bins))
+    else:
+        cmap_obj = plt.get_cmap(cmap, n_bins)
+        bin_colors = [cmap_obj(i) for i in range(n_bins)]
+    text_color = "#444444"
+    accent = "#999999"
+
+    # LEFT: source matrix as vertical coloured stripes (phase varies with time)
+    lx, ly, lw, lh = 0.5, 1.0, 3.0, 2.5
+    n_stripes = n_bins * 3  # ~3 theta cycles across the matrix
+    sw = lw / n_stripes
+    for i in range(n_stripes):
+        ax.add_patch(
+            mpatches.Rectangle(
+                (lx + i * sw, ly),
+                sw,
+                lh,
+                facecolor=bin_colors[i % n_bins],
+                edgecolor="none",
+            )
+        )
+    ax.text(lx + lw / 2, ly + lh + 0.2, "spikes",
+            ha="center", va="bottom", fontsize=11, color=text_color)
+    ax.text(lx + lw / 2, ly - 0.25, "time",
+            ha="center", va="top", fontsize=9, color=accent)
+    ax.text(lx - 0.25, ly + lh / 2, "neurons",
+            ha="right", va="center", fontsize=9, color=accent, rotation=90)
+
+    # ARROW with label
+    arrow_y = ly + lh / 2
+    ax.annotate(
+        "",
+        xy=(7.0, arrow_y),
+        xytext=(4.0, arrow_y),
+        arrowprops=dict(arrowstyle="-|>", lw=1.2, color=accent,
+                        mutation_scale=18, shrinkA=0, shrinkB=0),
+    )
+    ax.text(5.5, arrow_y + 0.3, "spike stratification\nby θ phase",
+            ha="center", va="bottom", fontsize=10, color=text_color)
+
+    # RIGHT: overlapping stack of per-phase matrices (rounded corners, no borders)
+    sx, sy, rw, rh = 7.5, 0.6, 2.5, 1.8
+    dx, dy = 0.15, 0.15
+    for i in range(n_bins):
+        ax.add_patch(
+            mpatches.FancyBboxPatch(
+                (sx + i * dx, sy + i * dy),
+                rw,
+                rh,
+                boxstyle="round,pad=0,rounding_size=0.08",
+                facecolor=bin_colors[i],
+                edgecolor="none",
+            )
+        )
+    top_x = sx + (n_bins - 1) * dx
+    top_y = sy + (n_bins - 1) * dy
+    ax.text(top_x + rw / 2, top_y + rh + 0.2,
+            "spike counts per θ-bin\n(downsampled)",
+            ha="center", va="bottom", fontsize=11, color=text_color)
+    ax.text(sx - 0.25, sy + rh / 2, "neurons",
+            ha="right", va="center", fontsize=9, color=accent, rotation=90)
+    ax.text(sx + rw / 2, sy - 0.25, "time",
+            ha="center", va="top", fontsize=9, color=accent)
+    ax.text(sx + rw + 0.15, sy + rh / 2, "θ bin 1",
+            ha="left", va="center", fontsize=9, color=text_color)
+    ax.text(top_x + rw + 0.15, top_y + rh / 2, f"θ bin {n_bins}",
+            ha="left", va="center", fontsize=9, color=text_color)
+
+    return ax
