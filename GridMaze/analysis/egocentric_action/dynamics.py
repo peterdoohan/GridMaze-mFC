@@ -41,7 +41,7 @@ def get_population_tuning_df(
         include_action_type=True,
         window=window,
         min_split_half_corr=min_split_half_corr,
-        max_jobs=10,
+        n_jobs=10,
         with_metrics=True,
         verbose=verbose,
     )
@@ -142,11 +142,11 @@ def _3d_plot(A, pc_components, PCs, ax, color, ls, choice_type, action):
     traj_x = A.T @ pc_components[PCs[0], :]
     traj_y = A.T @ pc_components[PCs[1], :]
     traj_z = A.T @ pc_components[PCs[2], :]
-    ax.plot(traj_x, traj_y, traj_z, color=color, linestyle=ls, label=f"{choice_type} {action}", lw=2)
+    ax.plot(traj_x, traj_y, traj_z, color=color, linestyle=ls, label=f"{choice_type} {action}", lw=1.5)
     # add markers for the start and end of each trajectory
     facecolor = "none" if choice_type == "forced" else color
-    ax.scatter(traj_x[0], traj_y[0], traj_z[0], color=color, marker="o", facecolor=facecolor, s=50)
-    ax.scatter(traj_x[-1], traj_y[-1], traj_z[-1], color=color, marker="*", facecolor=facecolor, s=50)
+    ax.scatter(traj_x[0], traj_y[0], traj_z[0], color=color, marker="o", facecolor=facecolor, s=25)
+    ax.scatter(traj_x[-1], traj_y[-1], traj_z[-1], color=color, marker="*", facecolor=facecolor, s=25)
 
 
 def _2d_plot(A, pc_components, PCs, ax, color, ls, choice_type, action):
