@@ -45,6 +45,7 @@ def plot_average_band_power(
     axes=None,
     windows={"cue": (-0.5, 2.5), "reward": (-2.5, 0.1)},
     late_session_only=True,
+    ylims=[(-0.1, 0.6), (-0.1, 0.6)],
     color="crimson",
 ):
     """Plot mean+sem across subjects of z-scored power in a frequency band
@@ -55,22 +56,22 @@ def plot_average_band_power(
     """
     # prepare axes
     if axes is None:
-        fig, axes = plt.subplots(1, 2, figsize=(3, 1), sharey=True)
+        fig, axes = plt.subplots(1, 2, figsize=(3, 1), sharey=False)
         fig.subplots_adjust(wspace=0.1)
     for ax in axes.flatten():
         ax.spines[["top", "right"]].set_visible(False)
         ax.axvline(0, color="black", linestyle="--", alpha=0.2)
         ax.axhline(0, color="black", linestyle="--", alpha=0.2)
     axes[0].set_ylabel(f"{band[0]}-{band[1]}Hz \n power (z)")
-    for ax in axes[1:]:
-        ax.spines["left"].set_visible(False)
-        ax.tick_params(left=False, labelleft=False)
+    # for ax in axes[1:]:
+    #     ax.spines["left"].set_visible(False)
+    #     ax.tick_params(left=False, labelleft=False)
     # process data
     events = ["cue", "reward"]
     event_xlabels = {"cue": "cue (s)", "reward": "reward (s)"}
     df = spectrogram_df[spectrogram_df.late_session] if late_session_only else spectrogram_df
     df = df[df.frequency.between(*band)]
-    for event, ax in zip(events, axes):
+    for event, ax, ylim in zip(events, axes, ylims):
         event_df = df[df.event == event]
         subject_band_power = event_df.groupby("subject_ID").time.mean().time
         t = subject_band_power.columns.values.astype(np.float64)
@@ -80,7 +81,7 @@ def plot_average_band_power(
         ax.fill_between(t, mean - sem, mean + sem, alpha=0.2, color=color)
         ax.set_xlabel(event_xlabels[event])
         ax.set_xlim(*windows[event])
-        ax.set_ylim(-0.1, 0.6)
+        ax.set_ylim(*ylim)
     return
 
 
