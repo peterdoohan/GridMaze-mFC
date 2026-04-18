@@ -125,6 +125,7 @@ def get_SLURM_script(
 #SBATCH --cpus-per-task=24
 #SBATCH -p {partition}
 {gres_directive}
+#SBATCH --exclude=gpu-sr670-23
 #SBATCH --mem={RAM}
 #SBATCH --time=72:00:00
 
