@@ -10,7 +10,6 @@ from matplotlib import pyplot as plt
 from joblib import Parallel, delayed
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
-from pingouin import multivariate_ttest
 from scipy.stats import ttest_1samp
 from statsmodels.stats.multitest import multipletests
 from matplotlib.ticker import ScalarFormatter
@@ -23,6 +22,7 @@ from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.distance_to_goal import distributions as dd
 from GridMaze.analysis.distance_to_goal import logreg_decoder as ld
 from GridMaze.analysis.place_direction.future_decoding import get_decision_points
+from GridMaze.analysis.theta_mod import theta_utils as tu
 
 
 # %% Global Variables
@@ -119,30 +119,14 @@ def plot_decoding_theta_bias(
         df = df[df.speed.between(*speed_range)]
     _df = df.groupby(["subject_ID"]).lfp_phase.mean()
     x_norm = _df.sub(_df.mean(axis=1), axis=0)
-    phase_mean_decoding = x_norm.lfp_phase
-    # # average across subjects
-    mean = phase_mean_decoding.mean()
-    sem = phase_mean_decoding.sem()
-    phase = mean.index.astype(float)
-    # plotting
-    if ax is None:
-        f, ax = plt.subplots(1, 1, figsize=(3, 3))
-    ax.axhline(0, color="k", linestyle="--", alpha=0.5)
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.errorbar(
-        phase,
-        mean.values,
-        yerr=sem.values,
-        fmt="o-",
+    phase_mean_decoding = x_norm.lfp_phase * 100  # m -> cm
+    tu.plot_decoding_bias(
+        phase_mean_decoding,
         color=color,
-        markersize=6,
-        linewidth=2,
-        capsize=None,
-        elinewidth=2,
+        ylabel="decoding bias (cm)\n (distance-to-goal)",
+        print_stats=print_stats,
+        ax=ax,
     )
-    _format_ax(ax)
-    if print_stats:
-        _get_decoding_bias_stats(phase_mean_decoding)
     return
 
 
@@ -156,18 +140,6 @@ def _format_ax(ax):
     formatter.set_powerlimits((0, 0))
     ax.yaxis.set_major_formatter(formatter)
     return
-
-
-def _get_decoding_bias_stats(phase_mean_decoding):
-    """ """
-    phis = phase_mean_decoding.columns.astype(float)
-    data = phase_mean_decoding.values
-    beta_cos = data.dot(np.cos(phis))
-    beta_sin = data.dot(np.sin(phis))
-    betas = np.column_stack([beta_cos, beta_sin])
-    zeros = np.zeros_like(betas)
-    mv_test = multivariate_ttest(betas, zeros, paired=False)
-    return print(mv_test)
 
 
 # %% populate and load data

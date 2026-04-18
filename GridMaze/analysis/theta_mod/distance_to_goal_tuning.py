@@ -12,7 +12,6 @@ from matplotlib import pyplot as plt
 from scipy.ndimage import gaussian_filter1d
 from scipy.interpolate import interp1d
 from scipy.stats import ttest_1samp
-from scipy.stats import circmean, circstd
 
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import filter as filt
@@ -319,7 +318,11 @@ def get_opt_heatmap_x_shift(
 
 
 def get_population_theta_split_distance_tuning(
-    subject_ID="all", method="peak_trough", verbose=True, min_split_half_corr=0.7
+    subject_ID="all",
+    method="peak_trough",
+    peak_trough_inds=([4, 5, 6], [9, 10, 11]),
+    verbose=True,
+    min_split_half_corr=0.7,
 ):
     """ """
     all_tuning_curves = []
@@ -344,7 +347,10 @@ def get_population_theta_split_distance_tuning(
                 print(session.name)
             if method == "peak_trough":
                 tuning_curves = get_session_theta_split_distance_tuning(
-                    session, min_split_half_corr=min_split_half_corr
+                    session,
+                    min_split_half_corr=min_split_half_corr,
+                    theta_peak_ind=peak_trough_inds[0],
+                    theta_trough_ind=peak_trough_inds[1],
                 )
             elif method == "mean_all_phases":
                 tuning_curves = get_session_theta_split_distance_tuning_all_phases(
@@ -593,7 +599,9 @@ def get_population_distance_tuning_theta_x_shifts_all_phases(
     return results_df
 
 
-def plot_theta_mod_x_shifts(results_df, color="teal", plot_decoding_ref=True, print_stats=True, ax=None):
+def plot_theta_mod_x_shifts(
+    results_df, color="teal", ref_color="darkblue", plot_decoding_ref=True, print_stats=True, ax=None
+):
     # set up fig
     if ax is None:
         f, ax = plt.subplots(1, 1, figsize=(2, 2))
@@ -610,30 +618,16 @@ def plot_theta_mod_x_shifts(results_df, color="teal", plot_decoding_ref=True, pr
         decoding_mod_df = tdd.load_decoding_results(lfp_type="theta_mid")
         decoding_bias = decoding_mod_df.groupby(["subject_ID"]).lfp_phase.mean().lfp_phase
         decoding_bias_norm = decoding_bias.sub(decoding_bias.mean(axis=1), axis=0)
-        decoding_xmax = get_mod_max(decoding_bias_norm)
-        # plot decoding mod max ref lines
-        _decoding_mean = circmean(decoding_xmax, high=np.pi, low=-np.pi)
-        _decoding_sem = circstd(decoding_xmax, high=np.pi, low=-np.pi) / np.sqrt(len(decoding_xmax))
-        ax.fill_betweenx(
-            [0, 2],
-            _decoding_mean - _decoding_sem,
-            _decoding_mean + _decoding_sem,
-            color="purple",
-            alpha=0.2,
-        )
-        ax.vlines(_decoding_mean, color="purple", linestyle="-", ymin=0, ymax=2, alpha=0.2)
-        # same for tuning bias df
-        tuning_xmax = get_mod_max(df)
-        _tuning_mean = circmean(tuning_xmax, high=np.pi, low=-np.pi)
-        _tuning_sem = circstd(tuning_xmax, high=np.pi, low=-np.pi) / np.sqrt(len(tuning_xmax))
-        ax.fill_betweenx(
-            [0, 2],
-            _tuning_mean - _tuning_sem,
-            _tuning_mean + _tuning_sem,
-            color=color,
-            alpha=0.2,
-        )
-        ax.vlines(_tuning_mean, color=color, linestyle="-", ymin=0, ymax=2, alpha=0.2)
+        decoding_bias_cm = decoding_bias_norm.mul(100)  # m -> cm
+        # fit sinusoid to subject-averaged decoding results, rescale amplitude to match tuning fit
+        phases = decoding_bias_cm.columns.values.astype(float)
+        decoding_mean = decoding_bias_cm.mean(axis=0).values
+        dec_params = tmu.fit_sinusoid(phases, decoding_mean, fit_constant=True, return_as="params")
+        tuning_params = tmu.fit_sinusoid(phases, df.mean(axis=0).values, fit_constant=True, return_as="params")
+        scale = tuning_params["A"] / dec_params["A"]
+        _x = np.linspace(-np.pi, np.pi, 100)
+        _y = scale * dec_params["A"] * np.sin(_x + dec_params["phi"])
+        ax.plot(_x, _y, color=ref_color, alpha=0.3, linewidth=1.5)
         if print_stats:
             # test if decoding and tuning are sig offset
             print("tuning-bias vs decoding bias:")

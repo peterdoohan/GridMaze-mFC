@@ -25,6 +25,7 @@ from GridMaze.analysis.core import folds
 from GridMaze.analysis.core import downsample as ds
 from GridMaze.analysis.core import convert
 from GridMaze.analysis.theta_mod import theta_utils as tmu
+from GridMaze.analysis.theta_mod import distance_to_goal_decoder as tdd
 
 from GridMaze.maze import representations as mr
 from GridMaze.maze import plotting as mp
@@ -42,6 +43,8 @@ MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
 
 FRAME_RATE = 60
 
+STEP_DISTANCE = 0.09  # m (9cm between tower->edge)
+
 # %% Vis data
 
 
@@ -52,18 +55,12 @@ def plot_theta_mod_trajectory_error(
     all_traj_defined=True,
     steps_to_goal=None,
     decision_points=False,
-    color="grey",
+    color="darkred",
+    label=None,
     print_stats=True,
+    plot_distance_ref=True,
     ax=None,
 ):
-    if ax is None:
-        f, ax = plt.subplots(1, 1, figsize=(2, 2))
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.axhline(0, color="black", linestyle="--", alpha=0.5)
-    ax.set_ylabel("decoding bias (steps)")
-    ax.set_xlabel("theta phase (rad)")
-    ax.set_xticks(np.arange(-np.pi, np.pi + 0.1, np.pi / 2))
-    ax.set_xticklabels(["-π", "-π/2", "0", "π/2", "π"])
     # filter data
     df = summary_df.copy()
     if all_traj_defined:
@@ -72,27 +69,134 @@ def plot_theta_mod_trajectory_error(
         df = df[df.steps_to_goal.between(*steps_to_goal)]
     if decision_points:
         df = filter_decision_points(df, decision_points="future")
-    # average data for each subject
-    subject_means = df.groupby(["subject_ID", "theta_phase"])[f"{error}_error"].mean().unstack(0)
+    # flip signed error so +ve = pred further from goal (consistent with distance analyses)
+    if error == "signed":
+        df = df.copy()
+        df.loc[:, "signed_error"] *= -1
+    # average data for each subject (rows=subjects, cols=phases)
+    place_bias = df.groupby(["subject_ID", "theta_phase"])[f"{error}_error"].mean().unstack(0).T
     if normalise:
-        subject_means = subject_means.sub(subject_means.mean(), axis=1)
-    grand_mean = subject_means.mean(1)
-    grand_sem = subject_means.sem(1)
-    # plot
-    ax.errorbar(
-        grand_mean.index.values,
-        grand_mean.values,
-        yerr=grand_sem.values,
-        fmt="o-",
+        place_bias = place_bias.sub(place_bias.mean(axis=1), axis=0)
+    # convert from steps to mm
+    place_bias = place_bias * STEP_DISTANCE * 1000
+    # plot + stats
+    tmu.plot_decoding_bias(
+        place_bias,
         color=color,
-        markersize=6,
-        linewidth=2,
-        capsize=None,
-        elinewidth=2,
+        label=label,
+        ylabel="decoding bias (mm)",
+        print_stats=print_stats,
+        ax=ax,
     )
-    # stats
-    if print_stats:
-        tmu.test_theta_modulation(subject_means.T)
+    # overlay distance decoding sinusoid as reference (amplitude matched to place fit)
+    if plot_distance_ref:
+        if ax is None:
+            ax = plt.gca()
+        distance_mod_df = tdd.load_decoding_results(lfp_type="theta_mid")
+        dist_bias = distance_mod_df.groupby(["subject_ID"]).lfp_phase.mean().lfp_phase
+        dist_bias = dist_bias.sub(dist_bias.mean(axis=1), axis=0)
+        phases = dist_bias.columns.values.astype(float)
+        dist_fit = tmu.fit_sinusoid(phases, dist_bias.mean().values, fit_constant=True, return_as="params")
+        place_fit = tmu.fit_sinusoid(phases, place_bias.mean().values, fit_constant=True, return_as="params")
+        _x = np.linspace(-np.pi, np.pi, 100)
+        scale = place_fit["A"] / dist_fit["A"] if dist_fit["A"] > 0 else 1.0
+        _y = scale * dist_fit["A"] * np.sin(_x + dist_fit["phi"])
+        ax.plot(_x, _y, color="indigo", alpha=0.4, linewidth=1.5, label="distance (ref.)")
+        if print_stats:
+            print("place vs distance offset:")
+            tmu.test_theta_offset(dist_bias, place_bias)
+
+
+def plot_trough_phases(
+    summary_df,
+    error="signed",
+    all_traj_defined=True,
+    steps_to_goal=None,
+    decision_points=False,
+    colors=("darkblue", "darkred"),
+    ax=None,
+):
+    """
+    Per-subject trough phase of sinusoid fit to decoding bias, for both place
+    (this analysis) and distance (loaded). Horizontal plot with faint grey lines
+    connecting same-subject troughs across conditions and mean ± SEM markers.
+    """
+    # place bias (same processing as plot_theta_mod_trajectory_error)
+    df = summary_df.copy()
+    if all_traj_defined:
+        df = df[df.all_traj_defined]
+    if steps_to_goal is not None:
+        df = df[df.steps_to_goal.between(*steps_to_goal)]
+    if decision_points:
+        df = filter_decision_points(df, decision_points="future")
+    if error == "signed":
+        df = df.copy()
+        df.loc[:, "signed_error"] *= -1
+    place_bias = df.groupby(["subject_ID", "theta_phase"])[f"{error}_error"].mean().unstack(0).T
+    place_bias = place_bias.sub(place_bias.mean(axis=1), axis=0)
+
+    # distance bias
+    distance_mod_df = tdd.load_decoding_results(lfp_type="theta_mid")
+    dist_bias = distance_mod_df.groupby(["subject_ID"]).lfp_phase.mean().lfp_phase
+    dist_bias = dist_bias.sub(dist_bias.mean(axis=1), axis=0)
+
+    # per-subject trough phase (min of A*sin(x + phi) + C is at x = -pi/2 - phi)
+    def _troughs(bias_df):
+        phases = bias_df.columns.values.astype(float)
+        out = {}
+        for subject in bias_df.index:
+            fit = tmu.fit_sinusoid(phases, bias_df.loc[subject].values, fit_constant=True, return_as="params")
+            trough = (-np.pi / 2 - fit["phi"] + np.pi) % (2 * np.pi) - np.pi
+            out[subject] = trough
+        return out
+
+    place_troughs = _troughs(place_bias)
+    dist_troughs = _troughs(dist_bias)
+    subjects = sorted(set(place_troughs) & set(dist_troughs))
+    trough_df = pd.DataFrame(
+        [
+            {"subject_ID": s, "condition": c, "trough": t}
+            for s in subjects
+            for c, t in [("distance", dist_troughs[s]), ("place", place_troughs[s])]
+        ]
+    )
+
+    # plot
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(2, 0.5))
+    ax.spines[["top", "right"]].set_visible(False)
+    # faint grey lines connecting subjects across conditions (y=0 distance, y=1 place)
+    for s in subjects:
+        ax.plot(
+            [dist_troughs[s], place_troughs[s]],
+            [0, 1],
+            color="grey",
+            alpha=0.3,
+            linewidth=1,
+            zorder=1,
+        )
+    # mean ± sem (one pointplot per condition so each gets its own color)
+    for cond, color in zip(["distance", "place"], colors):
+        sns.pointplot(
+            data=trough_df[trough_df.condition == cond],
+            x="trough",
+            y="condition",
+            order=["distance", "place"],
+            ax=ax,
+            errorbar="se",
+            markers="o",
+            linestyles="",
+            capsize=0,
+            color=color,
+            orient="h",
+            zorder=3,
+        )
+    ax.set_xlabel("theta phase (trough)")
+    ax.set_ylabel("")
+    ax.set_xticks(np.arange(0, np.pi + 0.1, np.pi / 2))
+    ax.set_xticklabels(["0", "π/2", "π"])
+    ax.set_xlim(0, np.pi)
+    ax.set_ylim(1.3, -0.3)
 
 
 def filter_decision_points(summary_df, decision_points="future"):
