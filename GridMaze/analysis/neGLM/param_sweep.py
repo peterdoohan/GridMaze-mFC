@@ -51,6 +51,7 @@ def plot_hyperparam_sweep(
     variant_color="grey",
     plot_single_subjects=True,
     print_stats=True,
+    annotate_baseline=True,
     ax=None,
 ):
     """
@@ -74,7 +75,7 @@ def plot_hyperparam_sweep(
     subj_avg = long_df.groupby(["subject_ID", "model_name"])["score"].mean().reset_index()
 
     # order by hyperparam value; baseline sits at its default value
-    order, labels = _sweep_order(subj_avg.model_name.unique(), hyperparam)
+    order, labels = _sweep_order(subj_avg.model_name.unique(), hyperparam, annotate_baseline=annotate_baseline)
     palette = {m: baseline_color if m == "baseline" else variant_color for m in order}
 
     if plot_single_subjects:
@@ -141,28 +142,42 @@ def plot_training_curves(
     axes[0].set_ylabel("train loss")
 
     # panel 2: train vs test embedding perf
-    _plot_curve(axes[1], df, "train_embedding_perf", color=train_color,
-                plot_single_subjects=plot_single_subjects, label="train")
-    _plot_curve(axes[1], df, "test_embedding_perf", color=test_color,
-                plot_single_subjects=plot_single_subjects, label="test")
-    axes[1].set_ylabel("embedding performance")
+    _plot_curve(
+        axes[1], df, "train_embedding_perf", color=train_color, plot_single_subjects=plot_single_subjects, label="train"
+    )
+    _plot_curve(
+        axes[1], df, "test_embedding_perf", color=test_color, plot_single_subjects=plot_single_subjects, label="test"
+    )
+    axes[1].set_ylabel("performance")
     axes[1].legend(frameon=False, loc="best")
     axes[1].axhline(0, color="k", linestyle="--", alpha=0.5)
 
     axes[0].set_title(model_name)
-    plt.tight_layout()
-    return axes
 
 
 def _plot_curve(ax, df, metric, color, plot_single_subjects=False, label=None):
     if plot_single_subjects:
         sns.lineplot(
-            data=df, x="epoch", y=metric, units="subject_ID", estimator=None,
-            color=color, alpha=0.3, linewidth=1, legend=False, ax=ax,
+            data=df,
+            x="epoch",
+            y=metric,
+            units="subject_ID",
+            estimator=None,
+            color=color,
+            alpha=0.3,
+            linewidth=1,
+            legend=False,
+            ax=ax,
         )
     sns.lineplot(
-        data=df, x="epoch", y=metric, color=color, errorbar="se",
-        linewidth=2, label=label, ax=ax,
+        data=df,
+        x="epoch",
+        y=metric,
+        color=color,
+        errorbar="se",
+        linewidth=2,
+        label=label,
+        ax=ax,
     )
 
 
@@ -174,12 +189,11 @@ def plot_hyperparam_sweep_summary(
     variant_color="grey",
     plot_single_subjects=True,
     print_stats=False,
-    sharey=True,
     axes=None,
 ):
     """One panel per hyperparameter, y-axis shared so absolute CV performance is comparable."""
     if axes is None:
-        _, axes = plt.subplots(1, len(hyperparams), figsize=(3 * len(hyperparams), 3), sharey=sharey)
+        _, axes = plt.subplots(1, len(hyperparams), figsize=(3 * len(hyperparams), 3), sharey=True)
     axes = np.atleast_1d(axes)
     for ax, hp in zip(axes, hyperparams):
         plot_hyperparam_sweep(
@@ -190,20 +204,16 @@ def plot_hyperparam_sweep_summary(
             variant_color=variant_color,
             plot_single_subjects=plot_single_subjects,
             print_stats=print_stats,
+            annotate_baseline=False,
             ax=ax,
         )
-    # only leftmost panel keeps the y-label when sharing
-    if sharey:
-        for ax in axes[1:]:
-            ax.set_ylabel("")
-    plt.tight_layout()
     return axes
 
 
 # %% Utils
 
 
-def _sweep_order(model_names, hyperparam):
+def _sweep_order(model_names, hyperparam, annotate_baseline=True):
     """Return (ordered model_names, display labels) sorted by hyperparam value; baseline at its default."""
     records = []
     for m in model_names:
@@ -217,8 +227,8 @@ def _sweep_order(model_names, hyperparam):
         df["sort_key"] = df.value.astype(float)
         df["label"] = df.value.apply(_format_numeric_label)
     df = df.sort_values("sort_key").reset_index(drop=True)
-    # mark baseline in the label
-    df.loc[df.model_name == "baseline", "label"] = df.loc[df.model_name == "baseline", "label"] + "\n(baseline)"
+    if annotate_baseline:
+        df.loc[df.model_name == "baseline", "label"] = df.loc[df.model_name == "baseline", "label"] + "\n(baseline)"
     return df.model_name.tolist(), df.label.tolist()
 
 
