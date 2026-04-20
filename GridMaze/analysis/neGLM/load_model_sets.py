@@ -57,15 +57,13 @@ def load_permuted_model_set_cv_scores(
     return pd.concat(dfs, ignore_index=True)
 
 
-def _get_result_dfs(_dir, all_completed=True, permutation=None):
+def _get_result_dfs(_dir, all_completed=True, permutation=None, filename="cv_scores.csv"):
     _dfs = []
     results_dirs = [f for f in _dir.iterdir() if f.is_dir()]
     for results_dir in results_dirs:
         # check if results have been processed
         if (results_dir / "DONE.txt").exists():
-            # load cv scores
-            cv_scores_path = results_dir / "cv_scores.csv"
-            df = pd.read_csv(cv_scores_path)
+            df = pd.read_csv(results_dir / filename)
             model_name = results_dir.name
             df["model_name"] = model_name
             if permutation is not None:
@@ -77,6 +75,22 @@ def _get_result_dfs(_dir, all_completed=True, permutation=None):
             else:
                 continue
     return _dfs
+
+
+def load_model_set_training(model_set, maze_names=["maze_1", "maze_2", "rooms_maze"], all_completed=True):
+    """
+    Load training logs for every model in a model set.
+    Folder structure: model_set/maze_name/model_name/training.csv
+    (columns: epoch, train_loss, train_embedding_perf, test_embedding_perf, subject_ID, maze_name, day_on_maze)
+    """
+    model_set_dir = RESULTS_DIR / model_set
+    dfs = []
+    for maze_name in maze_names:
+        _dir = model_set_dir / maze_name
+        if not _dir.exists():
+            raise FileNotFoundError(f"Model set directory does not exist: {_dir}")
+        dfs.extend(_get_result_dfs(_dir, all_completed=all_completed, filename="training.csv"))
+    return pd.concat(dfs, ignore_index=True)
 
 
 def load_model(
