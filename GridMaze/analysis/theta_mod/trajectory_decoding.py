@@ -56,6 +56,7 @@ def plot_theta_mod_trajectory_error(
     steps_to_goal=None,
     decision_points=False,
     color="darkred",
+    ref_color="darkblue",
     label=None,
     print_stats=True,
     plot_distance_ref=True,
@@ -101,7 +102,7 @@ def plot_theta_mod_trajectory_error(
         _x = np.linspace(-np.pi, np.pi, 100)
         scale = place_fit["A"] / dist_fit["A"] if dist_fit["A"] > 0 else 1.0
         _y = scale * dist_fit["A"] * np.sin(_x + dist_fit["phi"])
-        ax.plot(_x, _y, color="indigo", alpha=0.4, linewidth=1.5, label="distance (ref.)")
+        ax.plot(_x, _y, color=ref_color, alpha=0.4, linewidth=1.5, label="distance (ref.)")
         if print_stats:
             print("place vs distance offset:")
             tmu.test_theta_offset(dist_bias, place_bias)
