@@ -333,6 +333,98 @@ def _cpd_correlation_stats(cpd_df, features):
     return summary
 
 
+def _cell_identity_shuffle_pearson(a, b, n_permutations, rng):
+    """Vectorised per-permutation Pearson r between `a` and shuffles of `b`.
+
+    Cell-identity shuffle null: holds `a` fixed, randomly re-pairs entries of `b`
+    with the rows of `a`. Tests whether the cell-wise pairing of two per-cell
+    statistics is informative beyond what's expected from their marginals.
+    """
+    n = len(a)
+    a_c = a - a.mean()
+    b_c = b - b.mean()
+    denom = np.sqrt(np.sum(a_c**2) * np.sum(b_c**2))
+    perms = np.stack([rng.permutation(n) for _ in range(n_permutations)])
+    return (b_c[perms] @ a_c) / denom
+
+
+def cpd_correlation_test(cpd_df, features, n_permutations=10_000, seed=0):
+    """Cell-identity shuffle null for the per-subject CPD correlation between two features.
+
+    Replaces the "test against 0" of `_cpd_correlation_stats` with a non-parametric
+    null that holds each subject's per-cell uVE values fixed and randomly re-pairs
+    them across cells. Returns:
+        per_subject : DataFrame indexed by subject_ID with real r and per-subject p
+        group       : Series with cross-subject mean r (real vs null) and group p
+        null_means  : (n_permutations,) cross-subject mean r per shuffle
+    """
+    f1, f2 = features
+    rng = np.random.default_rng(seed)
+    real_records = []
+    null_per_subject = []
+    for subject, sub_df in cpd_df.groupby(level=1):
+        a = sub_df[f1].to_numpy()
+        b = sub_df[f2].to_numpy()
+        r_real, _ = pearsonr(a, b)
+        null_rs = _cell_identity_shuffle_pearson(a, b, n_permutations, rng)
+        p_subject = (np.sum(null_rs <= r_real) + 1) / (n_permutations + 1)
+        real_records.append(
+            {"subject_ID": subject, "r_real": r_real, "n_neurons": len(a), "p_subject": p_subject}
+        )
+        null_per_subject.append(null_rs)
+    per_subject = pd.DataFrame(real_records).set_index("subject_ID")
+    null_arr = np.stack(null_per_subject)  # (n_subjects, n_permutations)
+    null_means = null_arr.mean(axis=0)
+    real_mean = per_subject["r_real"].mean()
+    p_group = (np.sum(null_means <= real_mean) + 1) / (n_permutations + 1)
+    group = pd.Series(
+        {
+            "real_mean_r": real_mean,
+            "null_mean_r_mean": null_means.mean(),
+            "null_mean_r_std": null_means.std(),
+            "p_group": p_group,
+            "n_permutations": n_permutations,
+            "n_subjects": len(per_subject),
+        }
+    )
+    return {"per_subject": per_subject, "group": group, "null_means": null_means}
+
+
+def plot_cpd_correlation_null(
+    cpd_df,
+    features=["distance_to_goal", "place_direction"],
+    n_permutations=10_000,
+    seed=0,
+    real_color="crimson",
+    null_color="0.7",
+    n_bins=40,
+    print_stats=True,
+    ax=None,
+):
+    """Histogram of cell-identity shuffle null vs real cross-subject mean r."""
+    test = cpd_correlation_test(cpd_df, features, n_permutations=n_permutations, seed=seed)
+    null_means = test["null_means"]
+    real_mean = test["group"]["real_mean_r"]
+    p_group = test["group"]["p_group"]
+    if ax is None:
+        f, ax = plt.subplots(1, 1, figsize=(3, 2.5))
+    ax.spines[["top", "right"]].set_visible(False)
+    counts, edges = np.histogram(null_means, bins=n_bins)
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    ax.fill_between(centers, counts, color=null_color, alpha=0.5, linewidth=0)
+    ax.plot(centers, counts, color=null_color, linewidth=1.2)
+    ax.axvline(real_mean, color=real_color, linewidth=2)
+    ax.axvline(0, color="k", linestyle="--", alpha=0.4)
+    ax.set_xlabel(f"mean r across subjects\n({features[0]} vs {features[1]})")
+    ax.set_ylabel("# permutations")
+    ax.set_ylim(bottom=0)
+    if print_stats:
+        print(test["group"])
+        print()
+        print(test["per_subject"])
+    return test
+
+
 def _variance_explained_stats(cpd_df):
     """ """
     # average over neurons for each subject
