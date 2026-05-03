@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
+from scipy.stats import spearmanr
 
 from GridMaze.analysis.neGLM.get_input_data import get_input_data
 from GridMaze.analysis.neGLM.run_neGLM import (
@@ -98,7 +99,7 @@ def test_neGLM(
     return learning_curve_df, cv_score_df, ridge_cv_score_df, perm_cv_score_df
 
 
-def test_no_regularisation(
+def test_higher_regularisation(
     input_data_kwargs=DEFAULT_INPUT_DATA_KWARGS,
     model_init_kwargs=DEFAULT_MODEL_INIT_KWARGS,
     model_train_kwargs=DEFAULT_MODEL_TRAIN_KWARGS,
@@ -120,7 +121,7 @@ def test_no_regularisation(
 
     Returns (learning_curve_df, cv_score_df, ridge_cv_score_df, perm_cv_score_df)."""
     no_reg_score_kwargs = deepcopy(score_kwargs)
-    no_reg_score_kwargs["alpha"] = 1e-12
+    no_reg_score_kwargs["alpha"] = 10
     no_reg_score_kwargs["optimal_alpha"] = False
     return test_neGLM(
         input_data_kwargs=input_data_kwargs,
@@ -305,3 +306,99 @@ def _compute_unique_variance(fold_outputs, all_input_groups):
         rows.append(_unique(ridge_full, ridge_red, variable, "Ridge-real"))
         rows.append(_unique(perm_full, perm_red, variable, "Ridge-permuted"))
     return pd.concat(rows, axis=0, ignore_index=True)
+
+
+def plot_test_unique_variance_results(results_path):
+    """Visualise the output of `test_unique_variance`. Produces a 1×4 figure:
+
+    Panels 1–3: scatter of per-cell unique variance (%) for variable_a vs variable_b,
+    one panel each for Poisson-real, Ridge-real, and the FIRST Ridge-permuted draw.
+    Each panel is annotated with the across-cells Spearman ρ.
+
+    Panel 4: histogram of Spearman ρ across the K Ridge-permuted draws (the null
+    distribution of the negative-correlation factorisation signature). The Poisson-real
+    and Ridge-real ρ from panels 1–2 are overlaid as vertical lines for reference.
+
+    Reads `unique_variance.csv` (for Poisson-real / Ridge-real) and the per-variant
+    `{full_model, remove_<v>}/perm_cv_scores.csv` files (for per-permutation Ridge)."""
+    results_path = Path(results_path)
+    NEURON_KEYS = ["subject_ID", "maze_name", "day_on_maze", "cluster_unique_ID"]
+
+    unique_var = pd.read_csv(results_path / "unique_variance.csv")
+    variables = list(unique_var["variable"].unique())
+    assert len(variables) == 2, f"plot expects exactly 2 variables, got {variables}"
+    var_a, var_b = variables
+
+    # per-permutation unique variance, recomputed from the per-variant perm_cv_scores csvs
+    perm_full = pd.read_csv(results_path / "full_model" / "perm_cv_scores.csv")
+    perm_red = {v: pd.read_csv(results_path / f"remove_{v}" / "perm_cv_scores.csv") for v in variables}
+
+    def _per_neuron_per_perm_mean(df):
+        return df.groupby(NEURON_KEYS + ["permutation"], as_index=False)["cv_score"].mean()
+
+    pf = _per_neuron_per_perm_mean(perm_full)
+
+    def _perm_unique(reduced_df, variable):
+        merged = pf.merge(
+            _per_neuron_per_perm_mean(reduced_df),
+            on=NEURON_KEYS + ["permutation"],
+            suffixes=("_full", "_reduced"),
+        )
+        merged["unique_score"] = merged["cv_score_full"] - merged["cv_score_reduced"]
+        merged["variable"] = variable
+        return merged[NEURON_KEYS + ["permutation", "variable", "unique_score"]]
+
+    perm_unique = {v: _perm_unique(perm_red[v], v) for v in variables}
+
+    # Spearman ρ per permutation across cells
+    perm_corrs = []
+    for k in sorted(perm_unique[var_a]["permutation"].unique()):
+        a_k = perm_unique[var_a].query("permutation == @k").rename(columns={"unique_score": "ua"})
+        b_k = perm_unique[var_b].query("permutation == @k").rename(columns={"unique_score": "ub"})
+        merged_k = a_k.merge(b_k, on=NEURON_KEYS)
+        rho_k, _ = spearmanr(merged_k["ua"], merged_k["ub"], nan_policy="omit")
+        perm_corrs.append(rho_k)
+    perm_corrs = np.array(perm_corrs)
+
+    # wide-form per-cell tables for the scatter panels
+    def _to_wide(df):
+        return df.pivot_table(index=NEURON_KEYS, columns="variable", values="unique_score").reset_index()
+
+    poisson_wide = _to_wide(unique_var[unique_var["method"] == "Poisson-real"])
+    ridge_wide = _to_wide(unique_var[unique_var["method"] == "Ridge-real"])
+    perm_first_long = pd.concat(
+        [perm_unique[v].query("permutation == 0") for v in variables], axis=0, ignore_index=True
+    )
+    perm_first_wide = _to_wide(perm_first_long[NEURON_KEYS + ["variable", "unique_score"]])
+
+    fig, axes = plt.subplots(1, 4, figsize=(16, 4))
+
+    panels = [
+        (poisson_wide, "Poisson (real)"),
+        (ridge_wide, "Ridge (real)"),
+        (perm_first_wide, "Ridge (permutation 0)"),
+    ]
+    for ax, (data_wide, title) in zip(axes[:3], panels):
+        x = data_wide[var_a].to_numpy() * 100  # → percent
+        y = data_wide[var_b].to_numpy() * 100
+        rho, _ = spearmanr(x, y, nan_policy="omit")
+        ax.scatter(x, y, alpha=0.5, s=12)
+        ax.axhline(0, color="gray", linewidth=0.5)
+        ax.axvline(0, color="gray", linewidth=0.5)
+        ax.set_xlabel(f"{var_a} unique var (%)")
+        ax.set_ylabel(f"{var_b} unique var (%)")
+        ax.set_title(f"{title}\nSpearman ρ = {rho:.3f}")
+
+    # Panel 4: histogram of perm Spearman ρ + true lines
+    ax = axes[3]
+    ax.hist(perm_corrs, bins=20, color="gray", alpha=0.7)
+    poisson_rho, _ = spearmanr(poisson_wide[var_a], poisson_wide[var_b], nan_policy="omit")
+    ridge_rho, _ = spearmanr(ridge_wide[var_a], ridge_wide[var_b], nan_policy="omit")
+    ax.axvline(poisson_rho, color="C0", linewidth=2, label=f"Poisson ρ = {poisson_rho:.3f}")
+    ax.axvline(ridge_rho, color="C1", linewidth=2, label=f"Ridge ρ = {ridge_rho:.3f}")
+    ax.set_xlabel(f"Spearman ρ\n(unique {var_a} vs unique {var_b})")
+    ax.set_ylabel("count")
+    ax.set_title(f"Null dist (n={len(perm_corrs)} perms)")
+    ax.legend(fontsize="small")
+
+    fig.tight_layout()

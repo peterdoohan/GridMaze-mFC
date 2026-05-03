@@ -79,6 +79,7 @@ def eval_representation(
     n_folds=None,
     optimal_alpha=False,
     optimal_alpha_range=10.0 ** np.arange(2, -5, -1),
+    optimal_alpha_n_folds=5,
     alpha=1e-3,
     loss="poisson",
     split_seed=None,
@@ -116,7 +117,7 @@ def eval_representation(
             print(f"Evaluating {N} neurons in parallel with {n_jobs} jobs")
         scores = Parallel(n_jobs=n_jobs)(
             delayed(_eval_neuron)(
-                n, x, y, enough_spikes, trials, n_folds, inds, alpha, optimal_alpha, optimal_alpha_range, loss, split_seed
+                n, x, y, enough_spikes, trials, n_folds, inds, alpha, optimal_alpha, optimal_alpha_range, optimal_alpha_n_folds, loss, split_seed
             )
             for n in range(N)
         )
@@ -126,7 +127,7 @@ def eval_representation(
             print(f"Evaluating {N} neurons")
         scores = [
             _eval_neuron(
-                n, x, y, enough_spikes, trials, n_folds, inds, alpha, optimal_alpha, optimal_alpha_range, loss, split_seed
+                n, x, y, enough_spikes, trials, n_folds, inds, alpha, optimal_alpha, optimal_alpha_range, optimal_alpha_n_folds, loss, split_seed
             )
             for n in range(N)
         ]
@@ -135,7 +136,7 @@ def eval_representation(
 
 
 def _eval_neuron(
-    n, x, y, enough_spikes, trials, n_folds, inds, alpha, optimal_alpha, optimal_alpha_range, loss="poisson", split_seed=None
+    n, x, y, enough_spikes, trials, n_folds, inds, alpha, optimal_alpha, optimal_alpha_range, optimal_alpha_n_folds=5, loss="poisson", split_seed=None
 ):
     """ """
     y_n = y[n, :]  # target spike counts
@@ -159,7 +160,7 @@ def _eval_neuron(
                     y_n_train,
                     trials_train,
                     alphas=optimal_alpha_range,
-                    n_folds=n_folds,
+                    n_folds=optimal_alpha_n_folds,
                     loss=loss,
                     split_seed=split_seed,
                 )

@@ -48,7 +48,7 @@ def get_model_set_params(seed=0, subfolder="variance_explained_all_sessions"):
             model_train_kwargs = deepcopy(ju.DEFAULT_MODEL_TRAIN_KWARGS)
             # use defualt score kwargs
             score_kwargs = deepcopy(ju.DEFAULT_SCORE_KWARGS)
-            score_kwargs["n_folds"] = 10  # double default for more power in t-tests across folds
+            score_kwargs["n_folds"] = 10  # for more power in t-tests across folds
             model_set_params.append(
                 {
                     "model_name": model_name,
