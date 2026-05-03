@@ -32,7 +32,7 @@ from jobs.neGLM.utils import (
     DEFAULT_SCORE_KWARGS,
 )
 
-# %% Imports
+# %% functions
 
 
 def run_cv_neGLM(
@@ -50,20 +50,37 @@ def run_cv_neGLM(
     """
     Leave-one-session-out cross-validated neGLM.
 
-    n_permutations > 0 additionally scores the trained embedding against rotationally-
-    permuted held-out spikes (Haar-uniform rotation across neurons, see _rotate_spikes)
-    to test whether encoded variables are factorised across neurons. The aggregated null
-    is saved to perm_cv_scores.csv and returned alongside the non-permuted cv_scores_df.
+    Always: scores the trained embedding on held-out spikes with Poisson regression
+    → cv_scores.csv (headline embedding-quality, Poisson D²).
+
+    n_permutations > 0: additionally scores against rotationally-permuted held-out
+    spikes (Haar-uniform rotation across neurons, see _rotate_spikes) to test whether
+    encoded variables are factorised across neurons. Because rotated spikes are
+    real-valued, the rotation null uses Ridge regression → perm_cv_scores.csv (R²).
+    A matched Ridge-on-true-spikes baseline (ridge_cv_scores.csv, R²) is saved
+    alongside; that — not cv_scores.csv — is the apples-to-apples reference for the
+    rotation null.
 
     save_fold_models=True pickles each per-fold model + held-out test_session under
     save_path/models/, so permutations can be rerun from disk without retraining.
     """
-    setup = _setup_run("run_cv_neGLM", locals())
+    assert not (
+        save_fold_models and save_path is None
+    ), "save_fold_models=True requires save_path; otherwise per-fold pickles silently go nowhere"
+    setup = _setup_run(
+        "run_cv_neGLM",
+        save_path=save_path,
+        overwrite=overwrite,
+        verbose=verbose,
+        seed=seed,
+        input_data_kwargs=input_data_kwargs,
+        params=locals(),
+    )
     if setup is None:
         return
     input_data, model_params, save_path = setup
 
-    learning_curve_dfs, cluster_cv_scores, perm_cluster_cv_scores = [], [], []
+    learning_curve_dfs, cluster_cv_score_dfs, ridge_cv_score_dfs, perm_cv_score_dfs = [], [], [], []
     n_sessions = len(input_data)
     for i in range(n_sessions):
         if verbose:
@@ -72,79 +89,31 @@ def run_cv_neGLM(
         test_session = input_data[i]  # single session
         train_sessions = input_data[:i] + input_data[i + 1 :]  # all other sessions
 
-        # init + train
-        model = models.neGLM(**model_init_kwargs)
-        if verbose:
-            print("     learning embedding ...")
-        model.train(train_sessions, test_session, **model_train_kwargs)
-
-        # optionally pickle model + held-out test session so permutations can be rerun from disk
-        if save_fold_models:
-            _save_outputs(
-                save_path,
-                model=model,
-                test_session=test_session,
-                fold_idx=i,
-                subdir="models",
-                write_done=False,
-            )
-
-        learning_curve_dfs.append(
-            _get_learning_curve_df(
-                model.train_losses,
-                model.test_perfs,
-                model.train_perfs,
-                model_train_kwargs,
-                test_session_info=test_session["session_info"],
-            )
+        learning_curve_df, cv_score_df, ridge_cv_score_df, perm_cv_score_df = _run_single_fold(
+            train_sessions=train_sessions,
+            test_session=test_session,
+            model_init_kwargs=model_init_kwargs,
+            model_train_kwargs=model_train_kwargs,
+            score_kwargs=score_kwargs,
+            n_permutations=n_permutations,
+            fold_idx=i,
+            save_path=save_path,
+            save_fold_models=save_fold_models,
+            verbose=verbose,
         )
-
-        test_X = test_session["X"]
-        test_spikes = test_session["spikes"]
-        test_trial_ids = test_session["trial_ids"]
-
-        # non-permuted reference: score the trained embedding on the true held-out spikes
-        if verbose:
-            print("     testing performance on held-out session ...")
-        test_perf = model.score(
-            x=test_X,
-            y=test_spikes,
-            trials=test_trial_ids,
-            **score_kwargs,
-        )
-        cluster_cv_scores.append(
-            _get_cluster_cross_val_df(
-                test_perf,
-                test_session["session_info"],
-                test_session["cluster_unique_IDs"],
-            )
-        )
-
-        # optional permutation null
-        if n_permutations > 0:
-            if verbose:
-                print("     testing performance on rotationally permuted held-out session ...")
-            perm_dfs = []
-            for perm in range(n_permutations):
-                rotated_test_spikes = _rotate_spikes(test_spikes)
-                test_perf = model.score(
-                    x=test_X,
-                    y=rotated_test_spikes,
-                    trials=test_trial_ids,
-                    **score_kwargs,
-                )
-                perm_df = _get_cluster_cross_val_df(
-                    test_perf,
-                    test_session["session_info"],
-                    test_session["cluster_unique_IDs"],
-                )
-                perm_df["permutation"] = perm
-                perm_dfs.append(perm_df)
-            perm_cluster_cv_scores.append(pd.concat(perm_dfs, axis=0))
+        learning_curve_dfs.append(learning_curve_df)
+        cluster_cv_score_dfs.append(cv_score_df)
+        if ridge_cv_score_df is not None:
+            ridge_cv_score_dfs.append(ridge_cv_score_df)
+        if perm_cv_score_df is not None:
+            perm_cv_score_dfs.append(perm_cv_score_df)
 
     training_df = pd.concat(learning_curve_dfs, axis=0).reset_index(drop=True)
-    cv_scores_df = pd.concat(cluster_cv_scores, axis=0).reset_index(drop=True)
-    perm_cv_scores_df = pd.concat(perm_cluster_cv_scores, axis=0).reset_index(drop=True) if n_permutations > 0 else None
+    cv_scores_df = pd.concat(cluster_cv_score_dfs, axis=0).reset_index(drop=True)
+    ridge_cv_scores_df = (
+        pd.concat(ridge_cv_score_dfs, axis=0).reset_index(drop=True) if n_permutations > 0 else None
+    )
+    perm_cv_scores_df = pd.concat(perm_cv_score_dfs, axis=0).reset_index(drop=True) if n_permutations > 0 else None
 
     if save_path is not None:
         _save_outputs(
@@ -152,12 +121,13 @@ def run_cv_neGLM(
             model_params=model_params,
             training_df=training_df,
             cv_scores_df=cv_scores_df,
+            ridge_cv_scores_df=ridge_cv_scores_df,
             perm_cv_scores_df=perm_cv_scores_df,
             verbose=verbose,
         )
 
     if n_permutations > 0:
-        return cv_scores_df, perm_cv_scores_df
+        return cv_scores_df, ridge_cv_scores_df, perm_cv_scores_df
     return cv_scores_df
 
 
@@ -170,13 +140,21 @@ def run_cv_baselineGLM(
     overwrite=False,
 ):
     """run regular GLM *without* learned neural-behavioural embedding"""
-    setup = _setup_run("run_cv_baselineGLM", locals())
+    setup = _setup_run(
+        "run_cv_baselineGLM",
+        save_path=save_path,
+        overwrite=overwrite,
+        verbose=verbose,
+        seed=seed,
+        input_data_kwargs=input_data_kwargs,
+        params=locals(),
+    )
     if setup is None:
         return
     input_data, model_params, save_path = setup
 
     # get cv var explained by input features for all neurons
-    cluster_cv_scores = []
+    cluster_cv_score_dfs = []
     n_sessions = len(input_data)
     for i in range(n_sessions):
         if verbose:
@@ -192,14 +170,14 @@ def run_cv_baselineGLM(
             trials=test_session["trial_ids"],
             **score_kwargs,
         )
-        cluster_cv_scores.append(
+        cluster_cv_score_dfs.append(
             _get_cluster_cross_val_df(
                 test_scores,
                 test_session["session_info"],
                 test_session["cluster_unique_IDs"],
             )
         )
-    cv_scores_df = pd.concat(cluster_cv_scores, axis=0).reset_index(drop=True)
+    cv_scores_df = pd.concat(cluster_cv_score_dfs, axis=0).reset_index(drop=True)
     if save_path is not None:
         _save_outputs(
             save_path,
@@ -223,7 +201,15 @@ def train_neGLM(
     """
     non-cv training embedding model on all input data. Useful for looking at latents
     """
-    setup = _setup_run("train_neGLM", locals())
+    setup = _setup_run(
+        "train_neGLM",
+        save_path=save_path,
+        overwrite=overwrite,
+        verbose=verbose,
+        seed=seed,
+        input_data_kwargs=input_data_kwargs,
+        params=locals(),
+    )
     if setup is None:
         return
     input_data, model_params, save_path = setup
@@ -257,60 +243,191 @@ def train_neGLM(
 # %% helper functions
 
 
-def _rotate_spikes(spikes):
+def _run_single_fold(
+    train_sessions,
+    test_session,
+    model_init_kwargs,
+    model_train_kwargs,
+    score_kwargs,
+    n_permutations=0,
+    fold_idx=None,
+    save_path=None,
+    save_fold_models=False,
+    verbose=True,
+):
+    """Train one neGLM embedding on `train_sessions`, score on `test_session`, optionally
+    score against rotationally-permuted held-out spikes. Returns
+    (learning_curve_df, cv_score_df, ridge_cv_score_df_or_None, perm_cv_score_df_or_None).
+
+    cv_score_df is the Poisson D² headline score; ridge_cv_score_df is the Ridge R²
+    matched control for perm_cv_score_df (both Ridge, both on the same z, only
+    difference is the rotation). The Ridge baseline + permutation null only run when
+    n_permutations > 0.
+
+    fold_idx + save_path + save_fold_models control optional pickling of the trained
+    model + held-out test_session under save_path/models/."""
+    # init + train
+    model = models.neGLM(**model_init_kwargs)
+    if verbose:
+        print("     learning embedding ...")
+    model.train(train_sessions, test_session, **model_train_kwargs)
+
+    # optionally pickle model + held-out test session so permutations can be rerun from disk
+    if save_fold_models:
+        _save_outputs(
+            save_path,
+            model=model,
+            test_session=test_session,
+            fold_idx=fold_idx,
+            subdir="models",
+            write_done=False,
+        )
+
+    learning_curve_df = _get_learning_curve_df(
+        model.train_losses,
+        model.test_perfs,
+        model.train_perfs,
+        model_train_kwargs,
+        test_session_info=test_session["session_info"],
+    )
+
+    # Poisson scoring of the trained embedding on held-out spikes (headline)
+    if verbose:
+        print("     testing performance on held-out session (Poisson) ...")
+    test_perf = model.score(
+        x=test_session["X"],
+        y=test_session["spikes"],
+        trials=test_session["trial_ids"],
+        **score_kwargs,
+    )
+    cv_score_df = _get_cluster_cross_val_df(
+        test_perf,
+        test_session["session_info"],
+        test_session["cluster_unique_IDs"],
+    )
+
+    # Ridge baseline + permutation null (only useful as a pair, gated together)
+    ridge_cv_score_df = None
+    perm_cv_score_df = None
+    if n_permutations > 0:
+        if verbose:
+            print("     testing performance on held-out session (Ridge baseline) ...")
+        ridge_score_kwargs = {**score_kwargs, "loss": "gaussian"}
+        ridge_test_perf = model.score(
+            x=test_session["X"],
+            y=test_session["spikes"],
+            trials=test_session["trial_ids"],
+            **ridge_score_kwargs,
+        )
+        ridge_cv_score_df = _get_cluster_cross_val_df(
+            ridge_test_perf,
+            test_session["session_info"],
+            test_session["cluster_unique_IDs"],
+        )
+
+        if verbose:
+            print("     testing performance on rotationally permuted held-out session ...")
+        perm_cv_score_df = _score_permutations(
+            model, test_session, n_permutations, score_kwargs, verbose=verbose, base_seed=fold_idx
+        )
+
+    return learning_curve_df, cv_score_df, ridge_cv_score_df, perm_cv_score_df
+
+
+def _score_permutations(model, test_session, n_permutations, score_kwargs, verbose=False, base_seed=None):
+    """Score a trained embedding against `n_permutations` rotationally-permuted draws of
+    the held-out spikes; returns a single DataFrame with one row per (neuron, fold,
+    permutation). With verbose=True, prints progress every 100 permutations.
+
+    base_seed: when given, the k-th permutation's Q is sampled from
+    `np.random.default_rng((base_seed, k))` so the same sequence of K rotations is
+    reproducible across calls with the same base_seed (e.g. matched-Q subtraction
+    across different model variants on the same test session). When None, falls back
+    to numpy's global RNG.
+
+    Uses Ridge (loss="gaussian") since rotated spikes are real-valued — Poisson rejects."""
+    ridge_score_kwargs = {**score_kwargs, "loss": "gaussian"}
+    test_X = test_session["X"]
+    test_spikes = test_session["spikes"]
+    test_trial_ids = test_session["trial_ids"]
+    perm_dfs = []
+    for perm in range(n_permutations):
+        rng = np.random.default_rng((base_seed, perm)) if base_seed is not None else None
+        rotated_test_spikes = _rotate_spikes(test_spikes, rng=rng)
+        test_perf = model.score(
+            x=test_X,
+            y=rotated_test_spikes,
+            trials=test_trial_ids,
+            **ridge_score_kwargs,
+        )
+        perm_df = _get_cluster_cross_val_df(
+            test_perf,
+            test_session["session_info"],
+            test_session["cluster_unique_IDs"],
+        )
+        perm_df["permutation"] = perm
+        perm_dfs.append(perm_df)
+        if verbose and (perm + 1) % 100 == 0:
+            print(f"          {perm + 1}/{n_permutations} permutations done ...")
+    return pd.concat(perm_dfs, axis=0)
+
+
+def _rotate_spikes(spikes, rng=None):
     """
     Apply a Haar-uniform random rotation across neurons to test whether information
     about encoded variables is factorised across neurons or mixed.
 
     spikes: array of shape (N_neurons, T_time)
+    rng: optional np.random.Generator for deterministic Q. If None, draws from numpy's
+         global RNG (legacy behaviour).
     Returns: Q @ spikes, where Q is sampled uniformly from O(N_neurons).
-
-    Sampling follows Mezzadri (2007) / https://mathstoshare.com/2024/03/09/uniformly-sampling-orthogonal-matrices/:
-    QR-decompose a standard Gaussian matrix, then multiply each column of Q by the
-    sign of the corresponding diagonal of R so Q is Haar-uniform on O(N).
     """
     n_neurons = spikes.shape[0]
-    Z = np.random.randn(n_neurons, n_neurons)
+    if rng is None:
+        Z = np.random.standard_normal((n_neurons, n_neurons))
+    else:
+        Z = rng.standard_normal((n_neurons, n_neurons))
     Q, R = np.linalg.qr(Z)
     Q = Q * np.sign(np.diag(R))  # sign correction → Haar-uniform on O(n_neurons)
     return Q @ spikes
 
 
-def _setup_run(fn_name, fn_locals):
+def _setup_run(fn_name, save_path, overwrite, verbose, seed, input_data_kwargs, params):
     """
     Shared setup for run_*/train_* entry points: validates save_path, returns early if
     outputs already exist, captures model params, sets seeds, and loads input data.
 
+    `params` is the dict captured into model_params.json (typically locals() at the top
+    of the caller). Other args are referenced explicitly so static analysis sees them.
+
     Returns (input_data, model_params, save_path), or None if the run should be skipped.
     """
-    save_path = Path(fn_locals["save_path"]) if fn_locals["save_path"] is not None else None
-    if _outputs_exist(save_path, fn_locals["overwrite"], fn_locals["verbose"]):
+    save_path = Path(save_path) if save_path is not None else None
+    if _outputs_exist(save_path, overwrite, verbose):
         return None
 
-    model_params = copy.deepcopy(fn_locals)
+    model_params = copy.deepcopy(params)
     model_params["fn"] = fn_name
 
-    np.random.seed(fn_locals["seed"])
-    torch.manual_seed(fn_locals["seed"])
+    np.random.seed(seed)
+    torch.manual_seed(seed)
 
-    if fn_locals["verbose"]:
+    if verbose:
         print("Loading input data ...")
-    input_data = get_input_data(**fn_locals["input_data_kwargs"])
+    input_data = get_input_data(**input_data_kwargs)
 
     return input_data, model_params, save_path
 
 
 def _outputs_exist(save_path, overwrite, verbose):
-    """
-    also returns False is save_path is None
-    """
-    if save_path is not None:
-        if not overwrite and (save_path / "DONE.txt").exists():
-            if verbose:
-                print(f"model output already populated, set overwrite=True to overwrite existing results")
-            return True
-    else:
+    """True iff save_path/DONE.txt exists and overwrite is False."""
+    if save_path is None or overwrite:
         return False
+    if (save_path / "DONE.txt").exists():
+        if verbose:
+            print("model output already populated, set overwrite=True to overwrite existing results")
+        return True
+    return False
 
 
 def _save_outputs(
@@ -318,6 +435,7 @@ def _save_outputs(
     model_params=None,
     training_df=None,
     cv_scores_df=None,
+    ridge_cv_scores_df=None,
     perm_cv_scores_df=None,
     model=None,
     test_session=None,
@@ -339,18 +457,21 @@ def _save_outputs(
         save_path.mkdir(parents=True, exist_ok=True)
     if verbose:
         print(f"Saving outputs to: {save_path}")
-    # save model params
+    # save model params (don't mutate the caller's dict)
     if model_params is not None:
-        model_params["save_path"] = str(save_path)  # make .json serializable
+        params_to_save = {**model_params, "save_path": str(save_path)}  # make .json serializable
         with open(save_path / "model_params.json", "w") as f:
-            json.dump(model_params, f, indent=4)
+            json.dump(params_to_save, f, indent=4)
     # save model training data
     if training_df is not None:
         training_df.to_csv(save_path / "training.csv", index=False)
-    # save cv neuron scores
+    # save cv neuron scores (Poisson D²)
     if cv_scores_df is not None:
         cv_scores_df.to_csv(save_path / "cv_scores.csv", index=False)
-    # save permutation cv neuron scores
+    # save Ridge cv neuron scores (R²) — matched baseline for the rotation null
+    if ridge_cv_scores_df is not None:
+        ridge_cv_scores_df.to_csv(save_path / "ridge_cv_scores.csv", index=False)
+    # save permutation cv neuron scores (Ridge R² on rotated spikes)
     if perm_cv_scores_df is not None:
         perm_cv_scores_df.to_csv(save_path / "perm_cv_scores.csv", index=False)
     # save model and/or test_session pickle (optional subdir + per-fold index suffix)
@@ -373,7 +494,7 @@ def _save_outputs(
 
 
 def _get_learning_curve_df(train_losses, test_perfs, train_perfs, model_train_kwargs, test_session_info=None):
-    """ """
+    """One row per recorded training epoch with train/test embedding perf and train loss."""
     nepochs = model_train_kwargs["nepochs"]
     test_freq = model_train_kwargs["test_freq"]
     test_epochs = np.arange(0, nepochs, test_freq)
@@ -395,8 +516,7 @@ def _get_learning_curve_df(train_losses, test_perfs, train_perfs, model_train_kw
 
 
 def _get_cluster_cross_val_df(test_perf, test_session_info, cluster_unique_IDs):
-    """ """
-    # if test session is eval session, not in training data
+    """Long-form per-(neuron, fold) cv_score table tagged with the test session's metadata."""
     n_folds = test_perf.shape[1]
     dfs = []
     for fold in range(n_folds):
