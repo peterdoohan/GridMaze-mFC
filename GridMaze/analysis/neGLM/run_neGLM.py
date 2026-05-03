@@ -298,6 +298,7 @@ def _run_single_fold(
         x=test_session["X"],
         y=test_session["spikes"],
         trials=test_session["trial_ids"],
+        split_seed=fold_idx,
         **score_kwargs,
     )
     cv_score_df = _get_cluster_cross_val_df(
@@ -317,6 +318,7 @@ def _run_single_fold(
             x=test_session["X"],
             y=test_session["spikes"],
             trials=test_session["trial_ids"],
+            split_seed=fold_idx,
             **ridge_score_kwargs,
         )
         ridge_cv_score_df = _get_cluster_cross_val_df(
@@ -358,6 +360,7 @@ def _score_permutations(model, test_session, n_permutations, score_kwargs, verbo
             x=test_X,
             y=rotated_test_spikes,
             trials=test_trial_ids,
+            split_seed=base_seed,
             **ridge_score_kwargs,
         )
         perm_df = _get_cluster_cross_val_df(

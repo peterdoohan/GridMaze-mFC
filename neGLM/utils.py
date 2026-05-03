@@ -27,9 +27,11 @@ def eval_function(x_train, y_train, x_test, y_test, alpha=1e-3, loss="poisson"):
     return clf.score(x_test, y_test)  # evaluate the goodness of the fit
 
 
-def find_optimal_regularization_strength(x, y, trials, alphas=10.0 ** np.arange(2, -5, -1), n_folds=5, loss="poisson"):
+def find_optimal_regularization_strength(
+    x, y, trials, alphas=10.0 ** np.arange(2, -5, -1), n_folds=5, loss="poisson", split_seed=None
+):
 
-    inds = split_trials(trials, n_folds)
+    inds = split_trials(trials, n_folds, seed=split_seed)
 
     perfs = np.zeros((n_folds, len(alphas)))
     for fold in range(n_folds):
@@ -79,6 +81,7 @@ def eval_representation(
     optimal_alpha_range=10.0 ** np.arange(2, -5, -1),
     alpha=1e-3,
     loss="poisson",
+    split_seed=None,
     n_jobs=None,
     verbose=False,
 ):
@@ -97,7 +100,7 @@ def eval_representation(
     if n_folds is not None:
         assert trials is not None
         trials = np.asarray(trials)
-        inds = split_trials(trials, n_folds)
+        inds = split_trials(trials, n_folds, seed=split_seed)
         if loss == "poisson":
             # require spikes in all splits — only meaningful for non-negative counts
             enough_spikes = np.array([(np.amin([y[n, :][ind].sum() for ind in inds]) > 0) for n in range(N)])
@@ -113,7 +116,7 @@ def eval_representation(
             print(f"Evaluating {N} neurons in parallel with {n_jobs} jobs")
         scores = Parallel(n_jobs=n_jobs)(
             delayed(_eval_neuron)(
-                n, x, y, enough_spikes, trials, n_folds, inds, alpha, optimal_alpha, optimal_alpha_range, loss
+                n, x, y, enough_spikes, trials, n_folds, inds, alpha, optimal_alpha, optimal_alpha_range, loss, split_seed
             )
             for n in range(N)
         )
@@ -122,14 +125,18 @@ def eval_representation(
         if verbose:
             print(f"Evaluating {N} neurons")
         scores = [
-            _eval_neuron(n, x, y, enough_spikes, trials, n_folds, inds, alpha, optimal_alpha, optimal_alpha_range, loss)
+            _eval_neuron(
+                n, x, y, enough_spikes, trials, n_folds, inds, alpha, optimal_alpha, optimal_alpha_range, loss, split_seed
+            )
             for n in range(N)
         ]
     scores = np.array(scores)
     return scores
 
 
-def _eval_neuron(n, x, y, enough_spikes, trials, n_folds, inds, alpha, optimal_alpha, optimal_alpha_range, loss="poisson"):
+def _eval_neuron(
+    n, x, y, enough_spikes, trials, n_folds, inds, alpha, optimal_alpha, optimal_alpha_range, loss="poisson", split_seed=None
+):
     """ """
     y_n = y[n, :]  # target spike counts
     if not enough_spikes[n]:
@@ -148,7 +155,13 @@ def _eval_neuron(n, x, y, enough_spikes, trials, n_folds, inds, alpha, optimal_a
             if optimal_alpha:
                 # first find the optimal regularization strength through crossvalidation on the training data
                 alpha = find_optimal_regularization_strength(
-                    x_train, y_n_train, trials_train, alphas=optimal_alpha_range, n_folds=n_folds, loss=loss
+                    x_train,
+                    y_n_train,
+                    trials_train,
+                    alphas=optimal_alpha_range,
+                    n_folds=n_folds,
+                    loss=loss,
+                    split_seed=split_seed,
                 )
 
             # then fit a model to the full training data with that regularization strength
