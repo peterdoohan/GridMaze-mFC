@@ -117,7 +117,7 @@ class neGLM(torch.nn.Module):
         self.Nout = sum(self.num_neurons_per_session)  # total number of output neurons
         cum_neurons_per_session = np.cumsum([0] + self.num_neurons_per_session)
         self.neuron_indices_by_session = [
-            torch.arange(cum_neurons_per_session[i], cum_neurons_per_session[i + 1]) for i in range(len(train_data) - 1)
+            torch.arange(cum_neurons_per_session[i], cum_neurons_per_session[i + 1]) for i in range(len(train_data))
         ]
 
         # add cluster_unique_IDs to model ouputs if provided
