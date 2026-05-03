@@ -46,7 +46,7 @@ DEFAULT_MODEL_TRAIN_KWARGS = {
 }
 
 DEFAULT_SCORE_KWARGS = {
-    "n_folds": 5,
+    "n_folds": 10,
     "optimal_alpha": True,
     "n_jobs": 24,
     "verbose": False,
