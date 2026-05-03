@@ -119,19 +119,17 @@ def plot_scenario_cell(
     fig.tight_layout()
 
 
-def smoke_test(navigation_strategies_df=None, last_n_days_on_maze=5):
+def smoke_test(navigation_strategies_df=None, last_n_days_on_maze=5, decision_points_only=True):
     """Generate the four headline figures with full stats printout."""
     if navigation_strategies_df is None:
         navigation_strategies_df = gid.get_navigation_strategies_df(verbose=True)
 
-    figs = {}
-
     print("\n========== Plot 1: pairwise disagree triptych ==========")
-    figs["pairwise"] = plot_pairwise_disagree(
+    plot_pairwise_disagree(
         navigation_strategies_df,
         last_n_days_on_maze=last_n_days_on_maze,
+        decision_points_only=decision_points_only,
     )
-
     scenarios = {
         "VHnotS": ("vector == habit", "vector != structure"),
         "VSnotH": ("vector == structure", "vector != habit"),
@@ -140,10 +138,11 @@ def smoke_test(navigation_strategies_df=None, last_n_days_on_maze=5):
     }
     for key, constraints in scenarios.items():
         print(f"\n========== Plot 2 ({key}): {' & '.join(constraints)} ==========")
-        figs[key] = plot_scenario_cell(
+        plot_scenario_cell(
             navigation_strategies_df,
             constraints=constraints,
             last_n_days_on_maze=last_n_days_on_maze,
+            decision_points_only=decision_points_only,
         )
 
 
