@@ -141,7 +141,7 @@ module load cuda/11.8
 conda deactivate
 conda activate goalNav_mEC
 
-python <<EOF
+python -u <<EOF
 from GridMaze.analysis.neGLM import run_neGLM as rn
 rn.{run_fn}(**{model_params})
 EOF
