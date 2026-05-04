@@ -119,6 +119,63 @@ def plot_scenario_cell(
     fig.tight_layout()
 
 
+def plot_optimal_across_scenarios(
+    navigation_strategies_df,
+    scenarios,
+    optimal_strategy="structure",
+    maze_names=DEFAULT_MAZE_NAMES,
+    last_n_days_on_maze=5,
+    decision_points_only=True,
+    print_stats=True,
+    ax=None,
+):
+    """For each scenario (label → tuple of constraints), restrict to that subset and
+    plot per-subject P(chose optimal action) on the y-axis. Each bar is a scenario;
+    chance ticks, vs-chance asterisks, and pairwise paired t-tests across scenarios
+    come from `_plot_bars_with_chance`."""
+    df = _filter_df(navigation_strategies_df, maze_names, last_n_days_on_maze, decision_points_only)
+
+    scenarios = dict(scenarios)
+    order = list(scenarios.keys())
+
+    frames = []
+    for label, constraints in scenarios.items():
+        keep = _scenario_keep_mask(df, list(constraints))
+        sub = df.loc[keep]
+        per_subj = _per_subject_means(sub, target_strategies=[optimal_strategy])
+        per_subj = per_subj.assign(target_strategy=label)
+        frames.append(per_subj)
+
+        if print_stats:
+            n_total = len(keep)
+            n_kept = int(keep.sum())
+            title = " & ".join(constraints)
+            print(
+                f"\n--- [{label}: {title}]: {n_kept}/{n_total} ({100 * n_kept / max(n_total, 1):.1f}%) decisions kept ---"
+            )
+
+    per_subj_all = pd.concat(frames, ignore_index=True)
+    palette = dict(zip(order, sns.color_palette(CMAP, n_colors=len(order))))
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(max(3, 1.2 * len(order)), 3))
+    else:
+        fig = ax.figure
+
+    _plot_bars_with_chance(
+        ax,
+        per_subj_all,
+        order=order,
+        palette=palette,
+        print_stats=print_stats,
+    )
+    ax.set_xlabel("scenario")
+    ax.set_ylabel(f"P(chose {optimal_strategy} top action)")
+    plt.setp(ax.get_xticklabels(), rotation=20, ha="right")
+    fig.tight_layout()
+    return fig
+
+
 def smoke_test(navigation_strategies_df=None, last_n_days_on_maze=5, decision_points_only=True):
     """Generate the four headline figures with full stats printout."""
     if navigation_strategies_df is None:
@@ -144,6 +201,31 @@ def smoke_test(navigation_strategies_df=None, last_n_days_on_maze=5, decision_po
             last_n_days_on_maze=last_n_days_on_maze,
             decision_points_only=decision_points_only,
         )
+
+
+def smoke_test_optimal(navigation_strategies_df=None, last_n_days_on_maze=5, decision_points_only=True):
+    """Generate one figure: P(chose optimal/structure action) across scenarios."""
+    if navigation_strategies_df is None:
+        navigation_strategies_df = gid.get_navigation_strategies_df(verbose=True)
+
+    scenarios = {
+        "all": (),
+        "V=S": ("vector == structure",),
+        "V≠S": ("vector != structure",),
+        "H=S": ("habit == structure",),
+        "H≠S": ("habit != structure",),
+        "VHnotS": ("vector == habit", "vector != structure"),
+        "VSnotH": ("vector == structure", "vector != habit"),
+        "SHnotV": ("structure == habit", "structure != vector"),
+        "all_disagree": ("habit != vector", "habit != structure", "structure != vector"),
+    }
+    print("\n========== P(optimal) across scenarios ==========")
+    fig = plot_optimal_across_scenarios(
+        navigation_strategies_df,
+        scenarios=scenarios,
+        last_n_days_on_maze=last_n_days_on_maze,
+        decision_points_only=decision_points_only,
+    )
 
 
 # %% Internals — filtering
