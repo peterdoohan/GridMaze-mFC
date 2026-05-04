@@ -6,6 +6,7 @@ distance_to_goal, place, direction, egocentric_action) using the nbeGLM model co
 
 # %% Imports
 import json
+import copy
 import pandas as pd
 import numpy as np
 import seaborn as sns
@@ -17,7 +18,6 @@ from statsmodels.stats.multitest import multipletests
 
 
 from GridMaze.analysis.neGLM import model_comparisons as mc
-
 
 # %% Global Variables
 from GridMaze.paths import EXPERIMENT_INFO_PATH
@@ -36,6 +36,7 @@ def plot_cpd_clusters(
     n_bins=30,
     cmap="cividis",
     pthresh=0.01,
+    vmax=None,
     scatter_color=".15",
     scatter_size=5,
     scatter_alpha=0.4,
@@ -78,6 +79,7 @@ def plot_cpd_clusters(
         bins=n_bins,
         pthresh=pthresh,
         cmap=cmap,
+        vmax=vmax,
         cbar=True,
         cbar_kws={"shrink": 0.5, "label": "neurons"},
         ax=ax,
@@ -91,6 +93,50 @@ def plot_cpd_clusters(
     summary = _cpd_correlation_stats(filt_cpd_df, features)
     if print_stats:
         print(summary)
+
+
+def _filter_cpd_df(cpd_df, feature_tuned_df, remove_no_unique_variance_clusters=False):
+    # remove cells that have no sig variance explained across folds fo either feature
+    if remove_no_unique_variance_clusters:
+        _feature_tuned_df = feature_tuned_df[feature_tuned_df.any(axis=1)]
+    else:
+        # feature tuned df, by in its creation filters for cells that have sig var across folds in the full model
+        _feature_tuned_df = feature_tuned_df.copy()
+    tuned_clusters = _feature_tuned_df.index.get_level_values(1)
+    filt_cpd_df = cpd_df.loc[cpd_df.index.get_level_values(0).isin(tuned_clusters)]
+    return filt_cpd_df
+
+
+# %% factorised vs. mixed coding statistics
+
+
+def normalised_cpd_shuffle(cpd, clip=True, n=10_000, seed=0):
+    """ """
+    rng = np.random.default_rng(seed)
+
+    x, y = cpd
+    if clip:
+        x = np.clip(x, 0, None)
+        y = np.clip(y, 0, None)
+
+    null = []
+    for _ in range(n):
+        x_s = rng.permutation(x)
+        y_s = rng.permutation(y)
+
+    return
+
+
+def pearson(x, y):
+    return pearsonr(x, y)[0]
+
+
+def overlap(x, y, thresh=0.1):
+    return np.mean(np.sum(np.minimum(x, y) > thresh) / np.sum(np.maximum(x, y) > thresh))
+
+
+def axis_proj_ratio(x, y, eps=1e-12):
+    return np.minimum(x, y).sum() / (np.maximum(x, y).sum() + eps)
 
 
 # %% Unique variance explained acoss cells
@@ -368,9 +414,7 @@ def cpd_correlation_test(cpd_df, features, n_permutations=10_000, seed=0):
         r_real, _ = pearsonr(a, b)
         null_rs = _cell_identity_shuffle_pearson(a, b, n_permutations, rng)
         p_subject = (np.sum(null_rs <= r_real) + 1) / (n_permutations + 1)
-        real_records.append(
-            {"subject_ID": subject, "r_real": r_real, "n_neurons": len(a), "p_subject": p_subject}
-        )
+        real_records.append({"subject_ID": subject, "r_real": r_real, "n_neurons": len(a), "p_subject": p_subject})
         null_per_subject.append(null_rs)
     per_subject = pd.DataFrame(real_records).set_index("subject_ID")
     null_arr = np.stack(null_per_subject)  # (n_subjects, n_permutations)
