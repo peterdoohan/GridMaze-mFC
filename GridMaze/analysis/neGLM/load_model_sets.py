@@ -34,27 +34,39 @@ def load_model_set_cv_scores(model_set, maze_names=["maze_1", "maze_2", "rooms_m
     return pd.concat(dfs, ignore_index=True)
 
 
-def load_permuted_model_set_cv_scores(
-    model_set, maze_names=["maze_1", "maze_2", "rooms_maze"], ps=[0], all_completed=True
+def load_model_set_rotation_null(
+    model_set,
+    maze_names=["maze_1", "maze_2", "rooms_maze"],
+    all_completed=True,
 ):
     """
-    See results/neGLM/{model_set}/permuation/model_set_params.json to see find model params
-    Note these results folders have folder structure
-       - model_set/permutation/maze_name/model_name/cv_scores.csv (containing cv fit scores for each cluster
-         where spikes and behaviour data have been randomly circularly permuted)
+    Load the rotation-null triplet for a model set whose runs were generated with
+    n_permutations > 0 (see run_neGLM.run_cv_neGLM).
+
+    Returns (cv_scores_df, ridge_cv_scores_df, perm_cv_scores_df):
+      - cv_scores_df:       Poisson D² on true held-out spikes (headline embedding score).
+      - ridge_cv_scores_df: Ridge R² on true held-out spikes — matched baseline for the
+                            rotation null (this, not cv_scores_df, is the apples-to-apples
+                            reference for perm_cv_scores_df).
+      - perm_cv_scores_df:  Ridge R² on Haar-rotated held-out spikes; one row per
+                            (neuron, fold, permutation).
+
+    Folder structure: model_set/maze_name/model_name/{cv_scores,ridge_cv_scores,perm_cv_scores}.csv
     """
-    dfs = []
-    for p in ps:
-        model_set_dir = RESULTS_DIR / model_set / str(p)
-        if not model_set_dir.exists():
-            raise FileNotFoundError(f"Model set directory does not exist: {model_set_dir}")
-        for maze_name in maze_names:
-            _dir = model_set_dir / maze_name
-            if not _dir.exists():
-                raise FileNotFoundError(f"Model set directory does not exist: {_dir}")
-            _dfs = _get_result_dfs(_dir, all_completed=all_completed, permutation=p)
-            dfs.extend(_dfs)
-    return pd.concat(dfs, ignore_index=True)
+    model_set_dir = RESULTS_DIR / model_set
+    cv_dfs, ridge_dfs, perm_dfs = [], [], []
+    for maze_name in maze_names:
+        _dir = model_set_dir / maze_name
+        if not _dir.exists():
+            raise FileNotFoundError(f"Model set directory does not exist: {_dir}")
+        cv_dfs.extend(_get_result_dfs(_dir, all_completed=all_completed, filename="cv_scores.csv"))
+        ridge_dfs.extend(_get_result_dfs(_dir, all_completed=all_completed, filename="ridge_cv_scores.csv"))
+        perm_dfs.extend(_get_result_dfs(_dir, all_completed=all_completed, filename="perm_cv_scores.csv"))
+    return (
+        pd.concat(cv_dfs, ignore_index=True),
+        pd.concat(ridge_dfs, ignore_index=True),
+        pd.concat(perm_dfs, ignore_index=True),
+    )
 
 
 def _get_result_dfs(_dir, all_completed=True, permutation=None, filename="cv_scores.csv"):
