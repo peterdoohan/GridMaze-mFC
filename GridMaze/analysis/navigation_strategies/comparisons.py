@@ -35,14 +35,16 @@ def plot_pairwise_disagree(
     strategy_pairs=(("vector", "structure"), ("vector", "habit"), ("structure", "habit")),
     maze_names=DEFAULT_MAZE_NAMES,
     last_n_days_on_maze=5,
-    decision_points_only=True,
+    decision_point_filter="only",
     print_stats=True,
     axes=None,
 ):
     """For each pair (A, B), restrict to decision points where A and B disagree on the
     top action, then plot per-subject P(match A) and P(match B) with chance lines.
+
+    `decision_point_filter`: "only" (>2 available actions), "exclude" (≤2), or "all".
     """
-    df = _filter_df(navigation_strategies_df, maze_names, last_n_days_on_maze, decision_points_only)
+    df = _filter_df(navigation_strategies_df, maze_names, last_n_days_on_maze, decision_point_filter)
 
     if axes is None:
         fig, axes = plt.subplots(1, len(strategy_pairs), figsize=(2.5 * len(strategy_pairs), 3), sharey=True)
@@ -84,13 +86,16 @@ def plot_scenario_cell(
     target_strategies=DEFAULT_STRATEGIES,
     maze_names=DEFAULT_MAZE_NAMES,
     last_n_days_on_maze=5,
-    decision_points_only=True,
+    decision_point_filter="only",
     print_stats=True,
     ax=None,
 ):
     """Restrict to a scenario subset (AND of constraints like 'vector == habit'),
-    then plot per-subject P(match target) for each target in target_strategies."""
-    df = _filter_df(navigation_strategies_df, maze_names, last_n_days_on_maze, decision_points_only)
+    then plot per-subject P(match target) for each target in target_strategies.
+
+    `decision_point_filter`: "only" (>2 available actions), "exclude" (≤2), or "all".
+    """
+    df = _filter_df(navigation_strategies_df, maze_names, last_n_days_on_maze, decision_point_filter)
     keep = _scenario_keep_mask(df, list(constraints))
     sub = df.loc[keep]
     per_subj = _per_subject_means(sub, target_strategies=list(target_strategies))
@@ -121,30 +126,39 @@ def plot_scenario_cell(
 
 def plot_optimal_across_scenarios(
     navigation_strategies_df,
-    scenarios,
+    scenarios={
+        "H≠S": ("habit != structure",),
+        "V≠S": ("vector != structure",),
+        "V≠S & H≠S": ("vector != structure", "habit != structure"),
+    },
     optimal_strategy="structure",
     maze_names=DEFAULT_MAZE_NAMES,
-    last_n_days_on_maze=5,
-    decision_points_only=True,
+    last_n_days_on_maze=7,
+    decision_point_filter="only",
+    colors=[],
     print_stats=True,
     ax=None,
 ):
     """For each scenario (label → tuple of constraints), restrict to that subset and
     plot per-subject P(chose optimal action) on the y-axis. Each bar is a scenario;
     chance ticks, vs-chance asterisks, and pairwise paired t-tests across scenarios
-    come from `_plot_bars_with_chance`."""
-    df = _filter_df(navigation_strategies_df, maze_names, last_n_days_on_maze, decision_points_only)
+    come from `_plot_bars_with_chance`.
+
+    `decision_point_filter`: "only" (>2 available actions), "exclude" (≤2), or "all".
+    `colors`: optional sequence of colors, one per scenario in order. If None, all
+    markers are black.
+    """
+    df = _filter_df(navigation_strategies_df, maze_names, last_n_days_on_maze, decision_point_filter)
 
     scenarios = dict(scenarios)
     order = list(scenarios.keys())
 
     frames = []
+    kept_order = []
     for label, constraints in scenarios.items():
         keep = _scenario_keep_mask(df, list(constraints))
         sub = df.loc[keep]
         per_subj = _per_subject_means(sub, target_strategies=[optimal_strategy])
-        per_subj = per_subj.assign(target_strategy=label)
-        frames.append(per_subj)
 
         if print_stats:
             n_total = len(keep)
@@ -154,13 +168,31 @@ def plot_optimal_across_scenarios(
                 f"\n--- [{label}: {title}]: {n_kept}/{n_total} ({100 * n_kept / max(n_total, 1):.1f}%) decisions kept ---"
             )
 
-    per_subj_all = pd.concat(frames, ignore_index=True)
-    palette = dict(zip(order, sns.color_palette(CMAP, n_colors=len(order))))
+        if len(per_subj) == 0:
+            if print_stats:
+                print(f"  (skipping {label!r}: no rows / no subjects in subset)")
+            continue
+        per_subj = per_subj.assign(target_strategy=label)
+        frames.append(per_subj)
+        kept_order.append(label)
+
+    if colors is not None and len(colors) != len(scenarios):
+        raise ValueError(f"colors length ({len(colors)}) must match scenarios length ({len(scenarios)})")
+
+    order = kept_order
+    per_subj_all = (
+        pd.concat(frames, ignore_index=True)
+        if frames
+        else pd.DataFrame(columns=["subject_ID", "target_strategy", "p_observed", "p_chance", "n_decisions"])
+    )
+    if colors is None:
+        palette = {label: "black" for label in order}
+    else:
+        full_palette = dict(zip(scenarios.keys(), colors))
+        palette = {label: full_palette[label] for label in order}
 
     if ax is None:
         fig, ax = plt.subplots(figsize=(max(3, 1.2 * len(order)), 3))
-    else:
-        fig = ax.figure
 
     _plot_bars_with_chance(
         ax,
@@ -170,13 +202,11 @@ def plot_optimal_across_scenarios(
         print_stats=print_stats,
     )
     ax.set_xlabel("scenario")
-    ax.set_ylabel(f"P(chose {optimal_strategy} top action)")
+    ax.set_ylabel(f"P(chose {optimal_strategy})")
     plt.setp(ax.get_xticklabels(), rotation=20, ha="right")
-    fig.tight_layout()
-    return fig
 
 
-def smoke_test(navigation_strategies_df=None, last_n_days_on_maze=5, decision_points_only=True):
+def smoke_test(navigation_strategies_df=None, last_n_days_on_maze=5, decision_point_filter="only"):
     """Generate the four headline figures with full stats printout."""
     if navigation_strategies_df is None:
         navigation_strategies_df = gid.get_navigation_strategies_df(verbose=True)
@@ -185,7 +215,7 @@ def smoke_test(navigation_strategies_df=None, last_n_days_on_maze=5, decision_po
     plot_pairwise_disagree(
         navigation_strategies_df,
         last_n_days_on_maze=last_n_days_on_maze,
-        decision_points_only=decision_points_only,
+        decision_point_filter=decision_point_filter,
     )
     scenarios = {
         "VHnotS": ("vector == habit", "vector != structure"),
@@ -199,11 +229,11 @@ def smoke_test(navigation_strategies_df=None, last_n_days_on_maze=5, decision_po
             navigation_strategies_df,
             constraints=constraints,
             last_n_days_on_maze=last_n_days_on_maze,
-            decision_points_only=decision_points_only,
+            decision_point_filter=decision_point_filter,
         )
 
 
-def smoke_test_optimal(navigation_strategies_df=None, last_n_days_on_maze=5, decision_points_only=True):
+def smoke_test_optimal(navigation_strategies_df=None, last_n_days_on_maze=5, decision_point_filter="only"):
     """Generate one figure: P(chose optimal/structure action) across scenarios."""
     if navigation_strategies_df is None:
         navigation_strategies_df = gid.get_navigation_strategies_df(verbose=True)
@@ -219,19 +249,19 @@ def smoke_test_optimal(navigation_strategies_df=None, last_n_days_on_maze=5, dec
         "SHnotV": ("structure == habit", "structure != vector"),
         "all_disagree": ("habit != vector", "habit != structure", "structure != vector"),
     }
-    print("\n========== P(optimal) across scenarios ==========")
+    print(f"\n========== P(optimal) across scenarios [decision_point_filter={decision_point_filter}] ==========")
     fig = plot_optimal_across_scenarios(
         navigation_strategies_df,
         scenarios=scenarios,
         last_n_days_on_maze=last_n_days_on_maze,
-        decision_points_only=decision_points_only,
+        decision_point_filter=decision_point_filter,
     )
 
 
 # %% Internals — filtering
 
 
-def _filter_df(navigation_strategies_df, maze_names, last_n_days_on_maze, decision_points_only):
+def _filter_df(navigation_strategies_df, maze_names, last_n_days_on_maze, decision_point_filter):
     df = navigation_strategies_df.copy()
     if maze_names is not None:
         df = df[df.maze_name.isin(maze_names)]
@@ -241,8 +271,13 @@ def _filter_df(navigation_strategies_df, maze_names, last_n_days_on_maze, decisi
         maze = df.maze_name.values
         max_per_maze = pd.Series(day, index=df.index).groupby(maze).transform("max")
         df = df[day > (max_per_maze.values - last_n_days_on_maze)]
-    if decision_points_only:
-        df = df[df.available.sum(axis=1).gt(2)]
+    n_avail = df.available.sum(axis=1)
+    if decision_point_filter == "only":
+        df = df[n_avail.gt(2)]
+    elif decision_point_filter == "exclude":
+        df = df[n_avail.le(2)]
+    elif decision_point_filter != "all":
+        raise ValueError(f"decision_point_filter must be 'only', 'exclude', or 'all'; got {decision_point_filter!r}")
     return df.reset_index(drop=True)
 
 
