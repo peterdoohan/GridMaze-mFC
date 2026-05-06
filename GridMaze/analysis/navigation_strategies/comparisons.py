@@ -37,12 +37,15 @@ def plot_pairwise_disagree(
     last_n_days_on_maze=5,
     decision_point_filter="only",
     print_stats=True,
+    show_corrected_chance=True,
     axes=None,
 ):
     """For each pair (A, B), restrict to decision points where A and B disagree on the
     top action, then plot per-subject P(match A) and P(match B) with chance lines.
 
     `decision_point_filter`: "only" (>2 available actions), "exclude" (≤2), or "all".
+    `show_corrected_chance`: if True, also plot a stricter chance baseline (crimson dashed)
+    that excludes the back direction from the random-sampling pool, with stacked asterisks.
     """
     df = _filter_df(navigation_strategies_df, maze_names, last_n_days_on_maze, decision_point_filter)
 
@@ -67,6 +70,7 @@ def plot_pairwise_disagree(
             order=[a, b],
             palette=_PALETTE,
             print_stats=print_stats,
+            show_corrected_chance=show_corrected_chance,
         )
         ax.set_xlabel(f"{a} ≠ {b}")
 
@@ -88,12 +92,15 @@ def plot_scenario_cell(
     last_n_days_on_maze=5,
     decision_point_filter="only",
     print_stats=True,
+    show_corrected_chance=True,
     ax=None,
 ):
     """Restrict to a scenario subset (AND of constraints like 'vector == habit'),
     then plot per-subject P(match target) for each target in target_strategies.
 
     `decision_point_filter`: "only" (>2 available actions), "exclude" (≤2), or "all".
+    `show_corrected_chance`: if True, also plot a stricter chance baseline (crimson dashed)
+    that excludes the back direction from the random-sampling pool, with stacked asterisks.
     """
     df = _filter_df(navigation_strategies_df, maze_names, last_n_days_on_maze, decision_point_filter)
     keep = _scenario_keep_mask(df, list(constraints))
@@ -117,6 +124,7 @@ def plot_scenario_cell(
         order=list(target_strategies),
         palette=_PALETTE,
         print_stats=print_stats,
+        show_corrected_chance=show_corrected_chance,
     )
     ax.set_xlabel("")
     ax.set_ylabel("P(match target)")
@@ -135,8 +143,9 @@ def plot_optimal_across_scenarios(
     maze_names=DEFAULT_MAZE_NAMES,
     last_n_days_on_maze=7,
     decision_point_filter="only",
-    colors=[],
+    colors=None,
     print_stats=True,
+    show_corrected_chance=True,
     ax=None,
 ):
     """For each scenario (label → tuple of constraints), restrict to that subset and
@@ -147,6 +156,8 @@ def plot_optimal_across_scenarios(
     `decision_point_filter`: "only" (>2 available actions), "exclude" (≤2), or "all".
     `colors`: optional sequence of colors, one per scenario in order. If None, all
     markers are black.
+    `show_corrected_chance`: if True, also plot a stricter chance baseline (crimson dashed)
+    that excludes the back direction from the random-sampling pool, with stacked asterisks.
     """
     df = _filter_df(navigation_strategies_df, maze_names, last_n_days_on_maze, decision_point_filter)
 
@@ -183,7 +194,9 @@ def plot_optimal_across_scenarios(
     per_subj_all = (
         pd.concat(frames, ignore_index=True)
         if frames
-        else pd.DataFrame(columns=["subject_ID", "target_strategy", "p_observed", "p_chance", "n_decisions"])
+        else pd.DataFrame(
+            columns=["subject_ID", "target_strategy", "p_observed", "p_chance", "p_chance_corrected", "n_decisions"]
+        )
     )
     if colors is None:
         palette = {label: "black" for label in order}
@@ -200,6 +213,7 @@ def plot_optimal_across_scenarios(
         order=order,
         palette=palette,
         print_stats=print_stats,
+        show_corrected_chance=show_corrected_chance,
     )
     ax.set_xlabel("scenario")
     ax.set_ylabel(f"P(chose {optimal_strategy})")
@@ -233,7 +247,7 @@ def smoke_test(navigation_strategies_df=None, last_n_days_on_maze=5, decision_po
         )
 
 
-def smoke_test_optimal(navigation_strategies_df=None, last_n_days_on_maze=5, decision_point_filter="only"):
+def smoke_test_optimal(navigation_strategies_df=None, last_n_days_on_maze=3, decision_point_filter="only"):
     """Generate one figure: P(chose optimal/structure action) across scenarios."""
     if navigation_strategies_df is None:
         navigation_strategies_df = gid.get_navigation_strategies_df(verbose=True)
@@ -338,16 +352,36 @@ def _chance_match(df, target_strategy):
     return pd.Series(chance, index=df.index)
 
 
+def _chance_match_corrected(df, target_strategy):
+    """Per-row chance assuming uniform sampling over available actions *excluding* the back
+    direction (where backtracking_penalty == -1). NaN if the corrected available set is empty.
+
+    The strategy's `top` is unchanged — still derived from full `available` — so a row whose top
+    action is the back direction contributes 0 to the corrected n_top, which is the correct
+    behaviour under a no-backtracking model."""
+    top = _tied_argmax_mask(df[target_strategy], df.available)
+    avail = df.available.values.astype(bool)
+    no_back = (df.backtracking_penalty.values == 0)
+    corrected_avail = avail & no_back
+    n_top_corr = (top & corrected_avail).sum(axis=1)
+    n_avail_corr = corrected_avail.sum(axis=1).astype(float)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        chance = np.where(n_avail_corr > 0, n_top_corr / n_avail_corr, np.nan)
+    return pd.Series(chance, index=df.index)
+
+
 def _per_subject_means(df_subset, target_strategies):
     """Tidy long DataFrame: one row per (subject_ID, target_strategy) with p_observed,
-    p_chance, n_decisions. Subjects with zero rows in `df_subset` are dropped."""
+    p_chance, p_chance_corrected, n_decisions. Subjects with zero rows in `df_subset` are dropped."""
+    cols = ["subject_ID", "target_strategy", "p_observed", "p_chance", "p_chance_corrected", "n_decisions"]
     if len(df_subset) == 0:
-        return pd.DataFrame(columns=["subject_ID", "target_strategy", "p_observed", "p_chance", "n_decisions"])
+        return pd.DataFrame(columns=cols)
     subject_ids = df_subset.subject_ID.values
     rows = []
     for target in target_strategies:
         correct = _correct(df_subset, target).values.astype(float)
         chance = _chance_match(df_subset, target).values
+        chance_corr = _chance_match_corrected(df_subset, target).values
         for subj in pd.unique(subject_ids):
             mask = subject_ids == subj
             if not mask.any():
@@ -358,6 +392,7 @@ def _per_subject_means(df_subset, target_strategies):
                     "target_strategy": target,
                     "p_observed": float(np.nanmean(correct[mask])),
                     "p_chance": float(np.nanmean(chance[mask])),
+                    "p_chance_corrected": float(np.nanmean(chance_corr[mask])),
                     "n_decisions": int(mask.sum()),
                 }
             )
@@ -367,10 +402,14 @@ def _per_subject_means(df_subset, target_strategies):
 # %% Internals — plotting
 
 
-def _plot_bars_with_chance(ax, per_subj, order, palette, print_stats=True):
+def _plot_bars_with_chance(ax, per_subj, order, palette, print_stats=True, show_corrected_chance=True):
     """Stripplot of subjects + pointplot of mean ± SE, with per-bar dashed chance ticks
     and one-sample-vs-chance asterisks above each bar. Also runs and prints pairwise
-    paired t-tests between bars when `print_stats`."""
+    paired t-tests between bars when `print_stats`.
+
+    When `show_corrected_chance` and `per_subj` carries `p_chance_corrected`, a second
+    crimson dashed line and a second (stacked) asterisk row are drawn per bar, with a
+    matching one-sample t-test printed to stdout."""
     if len(per_subj) == 0:
         ax.text(0.5, 0.5, "no data", ha="center", va="center", transform=ax.transAxes)
         ax.set_xticks([])
@@ -425,6 +464,25 @@ def _plot_bars_with_chance(ax, per_subj, order, palette, print_stats=True):
                     f"  {target} vs chance ({chance_mean:.3f}): "
                     f"T({len(diff) - 1})={t:.3f}, p={p:.3g}, n={len(diff)}"
                 )
+
+    # corrected-chance (anti-backtracking) tick + stacked asterisk + paired t-test
+    if show_corrected_chance and "p_chance_corrected" in per_subj.columns:
+        pivot_ch_corr = per_subj.pivot(index="subject_ID", columns="target_strategy", values="p_chance_corrected")
+        for j, target in enumerate(order):
+            chance_corr_mean = float(pivot_ch_corr[target].mean())
+            ax.hlines(chance_corr_mean, j - 0.3, j + 0.3, color="crimson", linestyle="--", linewidth=0.8)
+
+            diff_corr = (pivot_obs[target] - pivot_ch_corr[target]).dropna()
+            if len(diff_corr) > 1:
+                t, p = ttest_1samp(diff_corr, popmean=0.0)
+                sig = "***" if p < 0.001 else "**" if p < 0.01 else "*" if p < 0.05 else "ns"
+                y_top = float(pivot_obs[target].dropna().max())
+                ax.text(j, y_top + 0.07, sig, ha="center", va="bottom", fontsize=10, color="crimson")
+                if print_stats:
+                    print(
+                        f"  {target} vs corrected chance ({chance_corr_mean:.3f}): "
+                        f"T({len(diff_corr) - 1})={t:.3f}, p={p:.3g}, n={len(diff_corr)}"
+                    )
 
     # pairwise paired t-tests between bars
     if print_stats and len(order) >= 2:
