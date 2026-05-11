@@ -59,11 +59,9 @@ def load_model_set_rotation_null(
         _dir = model_set_dir / maze_name
         if not _dir.exists():
             raise FileNotFoundError(f"Model set directory does not exist: {_dir}")
-        cv_dfs.extend(_get_result_dfs(_dir, all_completed=all_completed, filename="cv_scores.csv"))
         ridge_dfs.extend(_get_result_dfs(_dir, all_completed=all_completed, filename="ridge_cv_scores.csv"))
         perm_dfs.extend(_get_result_dfs(_dir, all_completed=all_completed, filename="perm_cv_scores.csv"))
     return (
-        pd.concat(cv_dfs, ignore_index=True),
         pd.concat(ridge_dfs, ignore_index=True),
         pd.concat(perm_dfs, ignore_index=True),
     )

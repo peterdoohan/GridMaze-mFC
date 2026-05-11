@@ -24,12 +24,12 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 
 
 def load_null_data():
-    cv_df, ridge_df, perm_df = lms.load_model_set_rotation_null(
+    ridge_df, perm_df = lms.load_model_set_rotation_null(
         "variance_explained_null",
-        maze_names=["maze_1", "maze_2"],
+        maze_names=["maze_1", "maze_2", "rooms_maze"],
         all_completed=True,
     )
-    return cv_df, ridge_df, perm_df
+    return ridge_df, perm_df
 
 
 def load_data():
@@ -37,7 +37,7 @@ def load_data():
     return results_df
 
 
-def get_cpd_df(df, r2_thres=0.05, outlier_thres=90):
+def get_cpd_df(df, r2_thres=0.075, outlier_thres=90):
     """Per-cell unique variance explained by each feature, averaged over folds (in %)."""
     _df = _filter_nan_score_cells(df)
     cell_idx = ["subject_ID", "maze_name", "day_on_maze", "cluster_unique_ID"]
@@ -58,7 +58,7 @@ def _filter_nan_score_cells(df):
         return _df
 
 
-def _cpd_per_fold(df, r2_thres=0.05):
+def _cpd_per_fold(df, r2_thres=0.075):
     """Per-(cell, fold) CPD table: full_model - remove_<feature>, in %.
 
     If r2_thres is set, drops clusters whose full-model R² (averaged over folds) is
@@ -79,7 +79,7 @@ def _cpd_per_fold(df, r2_thres=0.05):
     return cpd
 
 
-def get_feature_tuned_df(df, r2_thres=0.05, alpha=0.01, mc_method=None):
+def get_feature_tuned_df(df, r2_thres=0.075, alpha=0.01, mc_method=None):
     """Per-cell boolean tuning to each feature via one-sided t-test of CPD across folds.
 
     For each (cell, feature) pair, tests H1: mean per-fold CPD > 0. Returns a bool
@@ -111,7 +111,7 @@ def get_feature_tuned_df(df, r2_thres=0.05, alpha=0.01, mc_method=None):
 
 def get_null(
     perm_df,
-    r2_thres=0.1,
+    r2_thres=0.075,
     metric="mean_selectivity",
     n_jobs=-1,
 ):
@@ -176,20 +176,10 @@ def plot_feature_venn(
     )
 
 
-def quick_plot(cpd_df):
-    """ """
-    a = cpd_df.distance_to_goal.values
-    b = cpd_df.place_direction.values
-    r = correlation(a, b)
-    si = mean_selectivity(a, b)
-    plt.scatter(a, b)
-    plt.title(f"r={r:.2f}  SI={si:.2f}")
-
-
 def plot_cpd_2d(
     cpd_df,
     features=("distance_to_goal", "place_direction"),
-    n_bins=25,
+    n_bins=30,
     cmap="rocket_r",
     pthresh=0.02,
     vmax=None,
@@ -254,13 +244,85 @@ def plot_cpd_2d(
     )
 
 
+def plot_variance_explained(
+    cpd_df,
+    features=("distance_to_goal", "place_direction"),
+    print_stats=True,
+    plot_single_subject=True,
+    marker_color=("crimson", "royalblue"),
+    subject_line_color="grey",
+    subject_line_alpha=0.3,
+    ax=None,
+):
+    """Per-subject mean unique variance explained for each feature."""
+    if ax is None:
+        _, ax = plt.subplots(figsize=(2, 3))
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.axhline(0, color="k", linestyle="--", alpha=0.5)
+    ax.set_xlabel("features")
+    ax.set_ylabel("unique variance explained (%)")
+
+    df = cpd_df.copy()
+    if features != "all":
+        df = df[list(features)]
+        order = list(features)
+    else:
+        order = list(df.columns)
+    long_df = df.stack().rename("score").reset_index()
+    long_df = long_df.rename(columns={long_df.columns[-2]: "feature"})
+    subject_av = long_df.groupby(["subject_ID", "feature"])["score"].mean().reset_index()
+    if plot_single_subject:
+        sns.lineplot(
+            data=subject_av,
+            x="feature",
+            y="score",
+            units="subject_ID",
+            estimator=None,
+            sort=False,
+            color=subject_line_color,
+            alpha=subject_line_alpha,
+            linewidth=2,
+            ax=ax,
+        )
+    sns.pointplot(
+        data=subject_av,
+        x="feature",
+        y="score",
+        hue="feature",
+        order=order,
+        hue_order=order,
+        palette=dict(zip(order, marker_color)),
+        errorbar="se",
+        linestyle="none",
+        legend=False,
+        alpha=1,
+        ax=ax,
+    )
+    ax.set_xlim(-0.3, len(order) - 0.7)
+    ax.tick_params(axis="x", rotation=30)
+    if print_stats:
+        print(_variance_explained_stats(cpd_df))
+
+
+def _variance_explained_stats(cpd_df):
+    """Per-feature one-sided t-test (>0) on per-subject mean CPD, FDR-corrected across features."""
+    _df = cpd_df.groupby(level="subject_ID").mean()
+    results = []
+    for feature in _df.columns:
+        t_stat, p_val = stats.ttest_1samp(_df[feature], 0, alternative="greater")
+        results.append({"feature": feature, "t_stat": t_stat, "p_val": p_val})
+    stats_df = pd.DataFrame(results)
+    _, stats_df["p_val_corr"], _, _ = multipletests(stats_df["p_val"], method="fdr_bh")
+    return stats_df
+
+
 def plot_rotation_null(
     cv_df,
     ridge_df,
     perm_df,
     metric="mean_selectivity",
     features=("distance_to_goal", "place_direction"),
-    r2_thres=0.05,
+    r2_thres=0.075,
     n_bins=40,
     poisson_color="C3",
     ridge_color="C0",
