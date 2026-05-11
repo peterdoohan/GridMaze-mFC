@@ -110,6 +110,7 @@ def plot_strategy_weights_over_days(
     results_df,
     strategies=["habit", "vector", "structure"],
     cmap="plasma_r",
+    colors=None,
     moving_avg=2,
     axes=None,
 ):
@@ -122,8 +123,11 @@ def plot_strategy_weights_over_days(
     if axes is None:
         fig, axes = plt.subplots(1, len(MAZE_NAMES), figsize=(4, 2), sharey=True)
 
-    colors = sns.color_palette(cmap, n_colors=len(strategies))
-    palette = dict(zip(strategies, colors))
+    if colors is None:
+        strategy_colors = sns.color_palette(cmap, n_colors=len(strategies))
+    else:
+        strategy_colors = colors
+    palette = dict(zip(strategies, strategy_colors))
     for ax, maze in zip(axes, MAZE_NAMES):
         maze_df = results_df[results_df.maze_name == maze]
         stats = maze_df.groupby("day_on_maze")[strategies].agg(["mean", "std"])
@@ -189,7 +193,12 @@ def get_strategy_weights(
 
 
 def plot_strategy_weights(
-    results_df, strategies=["habit", "vector", "structure"], cmap="plasma_r", print_stats=True, axes=None
+    results_df,
+    strategies=["habit", "vector", "structure"],
+    cmap="plasma_r",
+    colors=None,
+    print_stats=True,
+    axes=None,
 ):
     """
     Plots fitted strategy weights with one panel per maze. X-axis = strategy,
@@ -206,8 +215,11 @@ def plot_strategy_weights(
         value_name="weight",
     )
 
-    colors = sns.color_palette(cmap, n_colors=len(strategies))
-    palette = dict(zip(strategies, colors))
+    if colors is None:
+        strategy_colors = sns.color_palette(cmap, n_colors=len(strategies))
+    else:
+        strategy_colors = colors
+    palette = dict(zip(strategies, strategy_colors))
 
     for ax, maze in zip(axes, MAZE_NAMES):
         maze_df = long_df[long_df.maze_name == maze]

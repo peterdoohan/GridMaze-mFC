@@ -59,6 +59,7 @@ def plot_trial_trajectories(
     trials=[42, 43, 44],
     smooth_SD=5,
     cmap="plasma",
+    colors=None,
     start_color="grey",
     goal_color="deepskyblue",
     linewidth=4,
@@ -103,10 +104,13 @@ def plot_trial_trajectories(
         node_size=150,
         edge_size=6,
     )
-    traj_colors = sns.color_palette(cmap, n_colors=len(trajectories))
+    if colors is None:
+        traj_colors = sns.color_palette(cmap, n_colors=len(trajectories))
+    else:
+        traj_colors = colors
     for i, traj in enumerate(trajectories):
         x_traj, y_traj = traj
-        ax.plot(x_traj, y_traj, color=traj_colors[i], linewidth=linewidth, alpha=0.7, zorder=3)
+        ax.plot(x_traj, y_traj, color=traj_colors[i], linewidth=linewidth, alpha=0.9, zorder=3)
 
 
 # %%

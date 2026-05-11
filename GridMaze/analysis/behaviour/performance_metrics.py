@@ -66,25 +66,26 @@ def get_basic_behaviour_df():
         return combined_results
 
 
-def plot_performance_metrics(basic_behaviour_df, cmap="plasma"):
+def plot_performance_metrics(basic_behaviour_df, cmap="plasma", colors=None):
     """ """
     f, axes = plt.subplots(1, 3, figsize=(6, 3), clear=True)
-    _plot_trials(basic_behaviour_df, ax=axes[0], cmap=cmap)
-    _plot_durations(basic_behaviour_df, ax=axes[1], cmap=cmap)
-    _plot_n_excess_steps(basic_behaviour_df, ax=axes[2], cmap=cmap)
+    _plot_trials(basic_behaviour_df, ax=axes[0], cmap=cmap, colors=colors)
+    _plot_durations(basic_behaviour_df, ax=axes[1], cmap=cmap, colors=colors)
+    _plot_n_excess_steps(basic_behaviour_df, ax=axes[2], cmap=cmap, colors=colors)
     f.tight_layout()
 
 
 # %% subplots
 
 
-def _plot_n_excess_steps(basic_behaviour_df, ax=None, legend=False, cmap="plasma", print_stats=True):
+def _plot_n_excess_steps(basic_behaviour_df, ax=None, legend=False, cmap="plasma", colors=None, print_stats=True):
     """ """
     if ax is None:
         f, ax = plt.subplots(1, 1, figsize=(1, 2), clear=True)
     ax.spines[["top", "right"]].set_visible(False)
     grouped_df = basic_behaviour_df.groupby(["maze_name", "subject_ID", "day_on_maze"])
     n_excess_steps_df = grouped_df["n_excess_steps"].median().reset_index()
+    palette = cmap if colors is None else colors
     sns.lineplot(
         x="day_on_maze",
         y="n_excess_steps",
@@ -92,7 +93,7 @@ def _plot_n_excess_steps(basic_behaviour_df, ax=None, legend=False, cmap="plasma
         data=n_excess_steps_df,
         errorbar="se",
         err_style="band",
-        palette=cmap,
+        palette=palette,
         ax=ax,
         legend=legend,
     )
@@ -110,13 +111,14 @@ def _plot_n_excess_steps(basic_behaviour_df, ax=None, legend=False, cmap="plasma
         print(m.summary())
 
 
-def _plot_errors(basic_behaviour_df, ax=None, legend=False, cmap="plasma"):
+def _plot_errors(basic_behaviour_df, ax=None, legend=False, cmap="plasma", colors=None):
     """ """
     if ax is None:
         f, ax = plt.subplots(1, 1, figsize=(1, 2), clear=True)
     ax.spines[["top", "right"]].set_visible(False)
     grouped_df = basic_behaviour_df.groupby(["maze_name", "subject_ID", "day_on_maze"])
     errors_df = grouped_df["errors"].mean().reset_index()
+    palette = cmap if colors is None else colors
     sns.lineplot(
         x="day_on_maze",
         y="errors",
@@ -124,7 +126,7 @@ def _plot_errors(basic_behaviour_df, ax=None, legend=False, cmap="plasma"):
         data=errors_df,
         errorbar="se",
         err_style="band",
-        palette=cmap,
+        palette=palette,
         ax=ax,
         legend=legend,
     )
@@ -132,13 +134,14 @@ def _plot_errors(basic_behaviour_df, ax=None, legend=False, cmap="plasma"):
     ax.set_ylabel("Errors")
 
 
-def _plot_durations(basic_behaviour_df, ax=None, legend=False, cmap="plasma"):
+def _plot_durations(basic_behaviour_df, ax=None, legend=False, cmap="plasma", colors=None):
     """ """
     if ax is None:
         f, ax = plt.subplots(1, 1, figsize=(1, 2), clear=True)
     ax.spines[["top", "right"]].set_visible(False)
     grouped_df = basic_behaviour_df.groupby(["maze_name", "subject_ID", "day_on_maze"])
     duration_df = grouped_df["duration"].median().reset_index()
+    palette = cmap if colors is None else colors
     sns.lineplot(
         x="day_on_maze",
         y="duration",
@@ -146,7 +149,7 @@ def _plot_durations(basic_behaviour_df, ax=None, legend=False, cmap="plasma"):
         data=duration_df,
         errorbar="se",
         err_style="band",
-        palette=cmap,
+        palette=palette,
         ax=ax,
         legend=legend,
     )
@@ -154,13 +157,14 @@ def _plot_durations(basic_behaviour_df, ax=None, legend=False, cmap="plasma"):
     ax.set_ylabel("Duration (s)")
 
 
-def _plot_trials(basic_behaviour_df, ax=None, legend=False, cmap="plasma", print_stats=True):
+def _plot_trials(basic_behaviour_df, ax=None, legend=False, cmap="plasma", colors=None, print_stats=True):
     """ """
     if ax is None:
         f, ax = plt.subplots(1, 1, figsize=(1, 2), clear=True)
     ax.spines[["top", "right"]].set_visible(False)
     grouped_df = basic_behaviour_df.groupby(["maze_name", "subject_ID", "day_on_maze"])
     trial_counts_df = grouped_df["trial"].max().reset_index()
+    palette = cmap if colors is None else colors
     sns.lineplot(
         x="day_on_maze",
         y="trial",
@@ -168,7 +172,7 @@ def _plot_trials(basic_behaviour_df, ax=None, legend=False, cmap="plasma", print
         data=trial_counts_df,
         errorbar="se",
         err_style="band",
-        palette=cmap,
+        palette=palette,
         ax=ax,
         legend=legend,
     )
