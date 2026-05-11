@@ -112,8 +112,9 @@ def plot_event_aligned_decoding(
     maze_names=["maze_1", "maze_2"],
     goal_subsets=["subset_1", "subset_2"],
     chance=1 / 12,
-    color="deepskyblue",
+    color="k",
     y_max=0.65,
+    cue_aligned_nav_only=True,
     axes=None,
 ):
     """ """
@@ -134,8 +135,9 @@ def plot_event_aligned_decoding(
     for event, ax in zip(["cue", "reward"], axes):
         event_df = df[df.event == event]
         if event == "cue":
-            # we don't want to non nav times after the cue (eg, consuming reward)
-            event_df = event_df[~(event_df.timepoint.gt(0) & (event_df.trial_phase != "navigation"))]
+            if cue_aligned_nav_only:
+                # we don't want to non nav times after the cue (eg, consuming reward)
+                event_df = event_df[~(event_df.timepoint.gt(0) & (event_df.trial_phase != "navigation"))]
         subject_means = event_df.groupby(["timepoint", "subject_ID"]).accuracy.mean().unstack(level=0)
         _subject_means_df = subject_means.copy()
         _subject_means_df.columns = pd.MultiIndex.from_product([[event], _subject_means_df.columns])
