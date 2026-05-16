@@ -65,28 +65,63 @@ def plot_decoding_bias(
         test_theta_modulation(df)
 
 
-def test_theta_offset(mod_df1, mod_df2, subject_IDs=None, phases=None):
-    """ """
+def test_theta_offset(mod_df1, mod_df2, subject_IDs=None, phases=None, bootstrap_CI=True, n_bootstraps=1_000, seed=0):
+    """Paired test for an offset between sinusoid fits to two phase-modulation curves.
+
+    Reports the Rayleigh test on per-subject offsets, and (if `bootstrap_CI`)
+    paired-bootstrap 95% CIs for each variable's circular-mean phase plus a
+    bootstrap p-value from the overlap of the two distributions (= fraction of
+    bootstrap draws where the sign of the offset flips relative to the observed).
+    """
     if subject_IDs is None:
         subject_IDs = mod_df1.index.values
     if phases is None:
         phases = mod_df1.columns.values.astype(float)
 
-    offsets = []
+    phi_1s, phi_2s, offsets = [], [], []
     for subject in subject_IDs:
         curve_1 = mod_df1.loc[subject].values
         fit_1 = fit_sinusoid(phases, curve_1, fit_constant=True, return_as="params")
         curve_2 = mod_df2.loc[subject].values
         fit_2 = fit_sinusoid(phases, curve_2, fit_constant=True, return_as="params")
-        # get phase offset
+        phi_1s.append(fit_1["phi"])
+        phi_2s.append(fit_2["phi"])
         off = fit_2["phi"] - fit_1["phi"]
-        # wrap to [-pi, pi]
         w_off = (off + np.pi) % (2 * np.pi) - np.pi
         offsets.append(w_off)
     z, p = circ_rayleigh(offsets, d=np.pi / 6)
     mean_offset = circmean(offsets, high=np.pi, low=-np.pi)
     sem_offset = circstd(offsets, high=np.pi, low=-np.pi) / np.sqrt(len(offsets))
     print(f"offset: {mean_offset:.3f} ± {sem_offset:.3f}. Rayleigh test: z={z:.3f}, p={p:.3f}")
+
+    if bootstrap_CI:
+        phi_1s = np.asarray(phi_1s)
+        phi_2s = np.asarray(phi_2s)
+        n = len(subject_IDs)
+        rng = np.random.default_rng(seed)
+        idx = rng.integers(0, n, size=(n_bootstraps, n))
+        boot_mean_1 = circmean(phi_1s[idx], high=np.pi, low=-np.pi, axis=1)
+        boot_mean_2 = circmean(phi_2s[idx], high=np.pi, low=-np.pi, axis=1)
+        boot_offset = (boot_mean_2 - boot_mean_1 + np.pi) % (2 * np.pi) - np.pi
+
+        def _circ_ci(samples, point):
+            # unwrap samples around the point estimate, then percentile
+            unwrapped = (samples - point + np.pi) % (2 * np.pi) - np.pi + point
+            return np.percentile(unwrapped, [2.5, 97.5])
+
+        mean_1 = circmean(phi_1s, high=np.pi, low=-np.pi)
+        mean_2 = circmean(phi_2s, high=np.pi, low=-np.pi)
+        ci_1 = _circ_ci(boot_mean_1, mean_1)
+        ci_2 = _circ_ci(boot_mean_2, mean_2)
+        ci_offset = _circ_ci(boot_offset, mean_offset)
+        # p-value from overlap: fraction of bootstrap offsets that flip sign vs observed
+        sign = np.sign(mean_offset) if mean_offset != 0 else 1.0
+        p_boot = 2 * min((np.sign(boot_offset) != sign).mean(), (np.sign(boot_offset) == sign).mean())
+        print(
+            f"  var1 mean: {mean_1:.3f} (95% CI [{ci_1[0]:.3f}, {ci_1[1]:.3f}]); "
+            f"var2 mean: {mean_2:.3f} (95% CI [{ci_2[0]:.3f}, {ci_2[1]:.3f}])"
+        )
+        print(f"  bootstrap offset 95% CI: [{ci_offset[0]:.3f}, {ci_offset[1]:.3f}], p={p_boot:.4f}")
 
 
 def fit_sinusoid(x, y, fit_constant=True, return_as="params"):

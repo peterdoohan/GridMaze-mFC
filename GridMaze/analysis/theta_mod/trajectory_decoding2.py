@@ -324,10 +324,19 @@ def plot_trough_phases(
     decision_points=False,
     all_envelope_defined=True,
     min_chance_ratio=2.0,
-    colors=("darkblue", "darkred"),
+    colors=("darkred", "darkblue"),
+    orientation="horizontal",
+    print_stats=True,
     ax=None,
 ):
-    """Per-subject trough phase of sinusoid fit to decoding bias, distance vs place."""
+    """Per-subject trough phase of sinusoid fit to decoding bias, place vs distance.
+
+    orientation: "horizontal" (phase on x-axis) or "vertical" (phase on y-axis).
+    colors: (place_color, distance_color).
+    """
+    if orientation not in ("horizontal", "vertical"):
+        raise ValueError(f"orientation must be 'horizontal' or 'vertical'. Got {orientation!r}.")
+
     df = _filter_summary_df(
         summary_df,
         distance_to_goal=distance_to_goal,
@@ -362,39 +371,57 @@ def plot_trough_phases(
         ]
     )
 
+    if print_stats:
+
+        tmu.test_theta_offset(dist_bias, place_bias)
+
+    horizontal = orientation == "horizontal"
+
     if ax is None:
-        f, ax = plt.subplots(1, 1, figsize=(2, 0.5))
+        figsize = (2, 0.5) if horizontal else (0.5, 2)
+        _, ax = plt.subplots(1, 1, figsize=figsize)
     ax.spines[["top", "right"]].set_visible(False)
     for s in subjects:
-        ax.plot(
-            [dist_troughs[s], place_troughs[s]],
-            [0, 1],
-            color="grey",
-            alpha=0.3,
-            linewidth=1,
-            zorder=1,
-        )
-    for cond, color in zip(["distance", "place"], colors):
+        if horizontal:
+            xs, ys = [place_troughs[s], dist_troughs[s]], [0, 1]
+        else:
+            xs, ys = [0, 1], [place_troughs[s], dist_troughs[s]]
+        ax.plot(xs, ys, color="grey", alpha=0.3, linewidth=1, zorder=1)
+    for cond, color in zip(["place", "distance"], colors):
+        if horizontal:
+            x_kw, y_kw, orient_kw = "trough", "condition", "h"
+        else:
+            x_kw, y_kw, orient_kw = "condition", "trough", "v"
         sns.pointplot(
             data=trough_df[trough_df.condition == cond],
-            x="trough",
-            y="condition",
-            order=["distance", "place"],
+            x=x_kw,
+            y=y_kw,
+            order=["place", "distance"],
             ax=ax,
             errorbar="se",
             markers="o",
             linestyles="",
             capsize=0,
             color=color,
-            orient="h",
+            orient=orient_kw,
             zorder=3,
         )
-    ax.set_xlabel("theta phase (trough)")
-    ax.set_ylabel("")
-    ax.set_xticks(np.arange(0, np.pi + 0.1, np.pi / 2))
-    ax.set_xticklabels(["0", "π/2", "π"])
-    ax.set_xlim(0, np.pi)
-    ax.set_ylim(1.3, -0.3)
+    phase_ticks = np.arange(0, np.pi + 0.1, np.pi / 2)
+    phase_labels = ["0", "π/2", "π"]
+    if horizontal:
+        ax.set_xlabel("theta phase (trough)")
+        ax.set_ylabel("")
+        ax.set_xticks(phase_ticks)
+        ax.set_xticklabels(phase_labels)
+        ax.set_xlim(0, np.pi)
+        ax.set_ylim(1.3, -0.3)
+    else:
+        ax.set_ylabel("theta phase (trough)")
+        ax.set_xlabel("")
+        ax.set_yticks(phase_ticks)
+        ax.set_yticklabels(phase_labels)
+        ax.set_ylim(0, np.pi)
+        ax.set_xlim(-0.3, 1.3)
 
 
 # %% --- filter helpers ---
