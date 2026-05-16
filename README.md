@@ -53,6 +53,28 @@ parent_folder/
 
 Instructions for downloading the accompanying data and/or results can be found in the 📦 [data repo]().
 
+## 💻 Code organisation
+
+```
+code/
+├── GridMaze/                <- core package: preprocessing + analysis for GridMaze
+│   ├── preprocessing/       <- maps raw data → standardised processed_data
+│   ├── analysis/            <- generates all analyses presented in the paper
+│   ├── maze/                <- networkx-based maze representations + plotting
+│   └── paths.py             <- central registry of data + results paths
+├── Notebooks/               <- main entry point — analyses by paper section
+├── jobs/                    <- SLURM job submission for compute-heavy analyses
+├── neGLM/                   <- Neural Embedding GLM tool (standalone)
+├── SpikeSorting/            <- spikesorting pipeline (Kilosort 4 + UnitMatch via SpikeInterface)
+└── TaskFiles/               <- pyControl task files for the maze hardware
+```
+
+Per-folder READMEs cover each section in more detail: [`Notebooks/`](neGLM/README.md) · [`GridMaze/`](GridMaze/README.md) · [`GridMaze/preprocessing/`](GridMaze/preprocessing/README.md) · [`GridMaze/analysis/`](GridMaze/analysis/README.md) · [`GridMaze/maze`](GridMaze/maze/README.md).
+
+If you are interested in specific analyses from the paper we would recommend finding it `Notebooks/` and then investigating the relevant GridMaze code. 
+
+---
+
 ### 📦 Data organisation
 
 ```
@@ -69,6 +91,8 @@ data/
 ├── analysis_data/           <- compressed, project-specific data optimised for analysis
 └── experiment_info/         <- subject IDs, dates, maze configurations, etc.
 ```
+
+
 
 ### 📥 Data availability
 
@@ -95,25 +119,6 @@ pad.populate_analysis_data()
 
 ---
 
-## 💻 Code organisation
-
-```
-code/
-├── GridMaze/                <- core package: preprocessing + analysis for GridMaze
-│   ├── preprocessing/       <- maps raw data → standardised processed_data
-│   ├── analysis/            <- generates all analyses presented in the paper
-│   ├── maze/                <- networkx-based maze representations + plotting
-│   └── paths.py             <- central registry of data + results paths
-├── Notebooks/               <- main entry point — analyses by paper section
-├── jobs/                    <- SLURM job submission for compute-heavy analyses
-├── neGLM/                   <- Neural Embedding GLM tool (standalone)
-├── SpikeSorting/            <- spikesorting pipeline (Kilosort 4 + UnitMatch via SpikeInterface)
-└── TaskFiles/               <- pyControl task files for the maze hardware
-```
-
-Per-folder READMEs cover each section in more detail: [`GridMaze/`](GridMaze/README.md) · [`GridMaze/preprocessing/`](GridMaze/preprocessing/README.md) · [`GridMaze/analysis/`](GridMaze/analysis/README.md) · [`jobs/`](jobs/README.md) · [`neGLM/`](neGLM/README.md).
-
----
 
 ## 🔗 Related repos
 
