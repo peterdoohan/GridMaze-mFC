@@ -18,7 +18,7 @@ from GridMaze.analysis.lfp import lfp_utils as lu
 # %% Global Variables
 FS_LFP = 1500
 
-THETA_RANGE = (7, 11)
+THETA_RANGE = (7, 10)
 
 FRAME_RATE = 60  # Hz
 # %% Functions

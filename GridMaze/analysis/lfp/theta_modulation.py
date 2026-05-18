@@ -42,7 +42,7 @@ with open(EXPERIMENT_INFO_PATH / "maze_day2date.json", "r") as input_file:
 
 RESULTS_DIR = RESULTS_PATH / "lfp"
 
-THETA_RANGE = (7, 11)
+THETA_RANGE = (7, 10)
 
 
 # %% Theta-aligned LFP (what theta looks like in the raw signal)

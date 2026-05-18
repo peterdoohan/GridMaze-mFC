@@ -20,7 +20,7 @@ from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.distance_to_goal import bases as db
 from GridMaze.analysis.distance_to_goal import distributions as dd
 
-from GridMaze.analysis.lfp import extract_lfp_phase as elp
+from GridMaze.analysis.lfp import lfp_utils as lu
 
 
 # %% Global Variables
@@ -186,7 +186,7 @@ def init_navigation_spikes_df(session, input_features, include_multiunit=False):
         df = _conditional_ffill(df, [("action", "basic"), ("action", "choice_degree")], ("maze_position", "simple"))
     # add theta phase
     if "theta_phase" in input_features:
-        df[("theta_phase", "")] = elp.get_nearest_theta_phase(
+        df[("theta_phase", "")] = lu.get_nearest_theta_phase(
             session, df.time.values, signal_type="LFP", return_binned=False
         )
     return df
