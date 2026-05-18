@@ -5,7 +5,6 @@ Come up with some way of visualising velocity tuning across the population
 
 # %% Imports
 import json
-from turtle import speed
 import pandas as pd
 import numpy as np
 from scipy.ndimage import gaussian_filter
@@ -13,7 +12,6 @@ from sklearn.cluster import KMeans
 from matplotlib import pyplot as plt
 from matplotlib.gridspec import GridSpec
 import seaborn as sns
-from sympy import ordered
 
 from GridMaze.analysis.cluster_tuning import movement as mv
 from GridMaze.analysis.core import get_sessions as gs
