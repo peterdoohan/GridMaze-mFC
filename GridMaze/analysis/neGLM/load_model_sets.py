@@ -10,9 +10,9 @@ import pandas as pd
 
 # %% Global Variables
 
-from GridMaze.paths import RESULTS_PATH
+from GridMaze.paths import RESULTS2_PATH
 
-RESULTS_DIR = RESULTS_PATH / "neGLM"
+RESULTS_DIR = RESULTS2_PATH / "neGLM"
 
 # %% Functions
 
