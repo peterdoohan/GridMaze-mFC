@@ -23,9 +23,9 @@ from GridMaze.analysis.goal_coding import simple_decoding as sd
 
 # %% Global Variables
 
-from GridMaze.paths import RESULTS_PATH
+from GridMaze.paths import RESULTS2_PATH
 
-RESULTS_DIR = RESULTS_PATH / "goal_coding" / "place_decoding_control"
+RESULTS_DIR = RESULTS2_PATH / "goal_coding"
 if not RESULTS_DIR.exists():
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 

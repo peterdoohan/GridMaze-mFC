@@ -19,12 +19,12 @@ from GridMaze.analysis.core import get_clusters as gc
 from GridMaze.analysis.goal_coding import decoding_utils as du
 
 # %% Global Variables
-from GridMaze.paths import ANALYSIS_INFO_PATH, RESULTS_PATH
+from GridMaze.paths import ANALYSIS_INFO_PATH, RESULTS2_PATH
 
 with open(ANALYSIS_INFO_PATH / "intra_trial_interval_times.json", "r") as f:
     INTRA_TRIAL_INTERVAL_TIMES = json.load(f)
 
-RESULTS_DIR = RESULTS_PATH / "simple_decoding"
+RESULTS_DIR = RESULTS2_PATH / "goal_coding" / "simple_decoding"
 
 MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
 GOAL_SUBSETS = ["subset_1", "subset_2", "all"]
