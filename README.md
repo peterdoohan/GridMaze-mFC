@@ -130,7 +130,7 @@ from GridMaze.analysis.processing import populate_analysis_data as pad
 pad.populate_analysis_data()
 ```
 
-> ⚠️ `analysis_data/` is ~200 GB and slow to generate without multiprocessing.
+> ⚠️ `analysis_data/` is ~50 GB and slow to generate without multiprocessing.
 
 ---
 
