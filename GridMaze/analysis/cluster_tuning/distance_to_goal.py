@@ -143,7 +143,7 @@ def plot_session_theta_mod_distance_to_goal_tuning(
 ):
     """
     Note: theta_peak_ind work with the 12 theta bins used in navigation_theta_spike_counts_df.
-    and from GridMaze.analysis.lfp.theta_mod we know the peak of theta is in the middle of the theta cycle,
+    and from GridMaze.analysis.lfp.theta_modulation we know the peak of theta is in the middle of the theta cycle,
     and the trough of theta is at the start and end of the theta cycle.
 
     Would be good to have a more full proof way to define this in the function inputs
