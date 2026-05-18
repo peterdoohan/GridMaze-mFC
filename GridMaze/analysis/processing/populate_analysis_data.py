@@ -5,18 +5,23 @@ import json
 import pandas as pd
 from joblib import Parallel, delayed
 
-from .get_navigation_df import get_navigation_df
-from .get_navigation_spike_dfs import get_navigation_spike_rates_df, get_navigation_spike_counts_df
-from .get_time_aligned_rates_dfs import get_trial_aligned_rates_df, get_event_aligned_rates_df
-from .get_navigation_strategies_dfs import get_navigation_strategies_df
-from .get_trajectory_decisions_dfs import get_trajectory_decisions_df
+from GridMaze.analysis.processing.get_navigation_df import get_navigation_df
+from GridMaze.analysis.processing.get_navigation_spike_dfs import (
+    get_navigation_spike_rates_df,
+    get_navigation_spike_counts_df,
+)
+from GridMaze.analysis.processing.get_time_aligned_rates_dfs import (
+    get_trial_aligned_rates_df,
+    get_event_aligned_rates_df,
+)
+from GridMaze.analysis.processing.get_trajectory_decisions_dfs import get_trajectory_decisions_df
 
-from .get_distance_tuning_metrics_df import get_distance_tuning_metrics_df
-from .get_place_direction_metrics_df import get_place_direcion_tuning_metrics_df
-from .get_action_tuning_metrics_df import get_egocentric_action_tuning_metrics_df
-from .get_movement_metrics_df import get_movement_metrics_df
-from .get_lfp_aligned_spike_counts import get_navigation_theta_spike_counts_df, get_navigation_4Hz_spike_counts_df
-from .get_theta_mod_metrics_df import get_theta_mod_metrics_df
+from GridMaze.analysis.processing.get_distance_tuning_metrics_df import get_distance_tuning_metrics_df
+from GridMaze.analysis.processing.get_place_direction_metrics_df import get_place_direcion_tuning_metrics_df
+from GridMaze.analysis.processing.get_action_tuning_metrics_df import get_egocentric_action_tuning_metrics_df
+from GridMaze.analysis.processing.get_movement_metrics_df import get_movement_metrics_df
+from GridMaze.analysis.processing.get_lfp_aligned_spike_counts import get_navigation_theta_spike_counts_df
+from GridMaze.analysis.processing.get_theta_mod_metrics_df import get_theta_mod_metrics_df
 
 # %% Global variables
 
@@ -54,11 +59,6 @@ ANALYSIS_DATA_STRUCTURES_DF = pd.DataFrame(
             "session_types": ["maze"],
         },
         {
-            "filename": "navigation_strategies.parquet",
-            "function": get_navigation_strategies_df,
-            "session_types": ["maze"],
-        },
-        {
             "filename": "trajectory_decisions.parquet",
             "function": get_trajectory_decisions_df,
             "session_types": ["maze"],
@@ -81,11 +81,6 @@ ANALYSIS_DATA_STRUCTURES_DF = pd.DataFrame(
         {
             "filename": "frames.thetaSpikeCounts.parquet",
             "function": get_navigation_theta_spike_counts_df,
-            "session_types": ["maze"],
-        },
-        {
-            "filename": "frames.4HzSpikeCounts.parquet",
-            "function": get_navigation_4Hz_spike_counts_df,
             "session_types": ["maze"],
         },
         {
@@ -194,20 +189,23 @@ def save_analysis_data(filename, function, session_types, processed_data_path, a
 # %% Hacking
 
 
-def fix():
-    """ """
-    from GridMaze.analysis.core import load_data
+def delete_old_analysis_data(filename="frames.4HzSpikeCounts.parquet", subject_IDs="all"):
+    """Deletes deprecated analysis data files from all session-level folders under ANALYSIS_DATA_PATH.
 
-    for subject in SUBJECT_IDS:
-        sub_path = ANALYSIS_DATA_PATH / subject
-        session_paths = [f for f in sub_path.iterdir() if f.is_dir()]
-        for path in session_paths:
-            print(path)
-            file = path / "event_aligned_rates.parquet"
-            if file.exists():
-                df = load_data.load(file)
-                df = df.rename(columns={"cluster_id": "cluster_ID"})
-                # resave
-                df.columns = df.columns.map(lambda x: str(x))
-                df.to_parquet(file, compression="gzip")
+    `filename` may be a single filename or an iterable of filenames.
+    """
+    subject_IDs = SUBJECT_IDS if subject_IDs == "all" else subject_IDs
+    filenames = [filename] if isinstance(filename, str) else list(filename)
+    for subject in subject_IDs:
+        subject_path = ANALYSIS_DATA_PATH / subject
+        if not subject_path.exists():
+            continue
+        for session_path in subject_path.iterdir():
+            if not session_path.is_dir():
+                continue
+            for fname in filenames:
+                file_path = session_path / fname
+                if file_path.exists():
+                    print(f"Deleting {file_path}")
+                    file_path.unlink(missing_ok=True)
     return
