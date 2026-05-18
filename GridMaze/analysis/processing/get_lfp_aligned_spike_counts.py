@@ -13,7 +13,7 @@ from scipy.signal import butter, filtfilt, hilbert
 from GridMaze.analysis.core import load_data
 from GridMaze.analysis.core import convert
 from GridMaze.analysis.core import get_clusters as gc
-from GridMaze.analysis.event_aligned import lfp_utils as lu
+from GridMaze.analysis.lfp import lfp_utils as lu
 
 # %% Global Variables
 FS_LFP = 1500

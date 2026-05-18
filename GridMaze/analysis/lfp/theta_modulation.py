@@ -22,7 +22,7 @@ from matplotlib.patches import Rectangle
 from GridMaze.analysis.core import convert
 from GridMaze.analysis.core import filter as filt
 from GridMaze.analysis.core import get_sessions as gs
-from GridMaze.analysis.event_aligned import lfp_utils as lu
+from GridMaze.analysis.lfp import lfp_utils as lu
 from GridMaze.analysis.neGLM import load_model_sets as lms
 from GridMaze.analysis.neGLM import variance_explained as ve
 from GridMaze.analysis.processing import get_lfp_aligned_spike_counts as la

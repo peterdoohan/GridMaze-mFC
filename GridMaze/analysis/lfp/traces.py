@@ -6,7 +6,7 @@ Script for visualising example LFP traces
 # %% Imports
 import matplotlib.pyplot as plt
 from scipy.signal import butter, filtfilt
-from GridMaze.analysis.event_aligned import lfp_utils as lu
+from GridMaze.analysis.lfp import lfp_utils as lu
 
 # %% Global Variables
 

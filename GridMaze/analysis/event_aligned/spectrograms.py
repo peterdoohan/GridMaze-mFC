@@ -16,7 +16,7 @@ from itertools import combinations
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.core import load_data
 from GridMaze.analysis.event_aligned import delta_distance_to_goal as ddtg
-from GridMaze.analysis.event_aligned import lfp_utils as lu
+from GridMaze.analysis.lfp import lfp_utils as lu
 
 # %% Global Variables
 from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH

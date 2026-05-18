@@ -7,14 +7,13 @@ import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 from scipy.signal import butter, filtfilt, hilbert, sosfiltfilt
-from GridMaze.analysis.event_aligned import lfp_utils as lu
+from GridMaze.analysis.lfp import lfp_utils as lu
 
 # %% Global Variables
 FS = 1500  # lfp sampling frequency
 
-THETA_RANGE = (7, 11)
+THETA_RANGE = (7, 10)
 
-_4HZ_RANGE = (2, 5)  # 4Hz oscillation range
 # %% Convience Function
 
 
@@ -64,7 +63,7 @@ def get_nearest_theta_phase(
 def get_osc_phase(
     session,
     signal_type="LFP",
-    freq_range=(7, 11),
+    freq_range=(7, 10),
     N=4,
 ):
     """ """
