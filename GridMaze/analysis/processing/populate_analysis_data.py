@@ -184,28 +184,3 @@ def save_analysis_data(filename, function, session_types, processed_data_path, a
                 with open(analysis_data_path / filename, "w") as outfile:
                     json.dump(data, outfile, indent=4)
     return
-
-
-# %% Hacking
-
-
-def delete_old_analysis_data(filename="frames.4HzSpikeCounts.parquet", subject_IDs="all"):
-    """Deletes deprecated analysis data files from all session-level folders under ANALYSIS_DATA_PATH.
-
-    `filename` may be a single filename or an iterable of filenames.
-    """
-    subject_IDs = SUBJECT_IDS if subject_IDs == "all" else subject_IDs
-    filenames = [filename] if isinstance(filename, str) else list(filename)
-    for subject in subject_IDs:
-        subject_path = ANALYSIS_DATA_PATH / subject
-        if not subject_path.exists():
-            continue
-        for session_path in subject_path.iterdir():
-            if not session_path.is_dir():
-                continue
-            for fname in filenames:
-                file_path = session_path / fname
-                if file_path.exists():
-                    print(f"Deleting {file_path}")
-                    file_path.unlink(missing_ok=True)
-    return
