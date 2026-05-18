@@ -20,12 +20,12 @@ from GridMaze.analysis.place_direction import dimensionality_reduction as pdr
 from GridMaze.analysis.place_direction import efficient_coding as ec
 
 # %% Global Variables
-from GridMaze.paths import RESULTS_PATH, EXPERIMENT_INFO_PATH
+from GridMaze.paths import RESULTS2_PATH, EXPERIMENT_INFO_PATH
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as f:
     SUBJECT_IDS = json.load(f)
 
-RESULTS_DIR = RESULTS_PATH / "place_direction" / "permuted_heatmaps"
+RESULTS_DIR = RESULTS2_PATH / "place_direction" / "permuted_heatmaps"
 
 MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
 

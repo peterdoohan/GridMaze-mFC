@@ -19,14 +19,14 @@ from GridMaze.analysis.unit_match import get_across_maze_matches as mm
 from GridMaze.analysis.place_direction import dimensionality_reduction as pdr
 
 # %% Global Variables
-from GridMaze.paths import RESULTS_PATH, EXPERIMENT_INFO_PATH
+from GridMaze.paths import RESULTS2_PATH, EXPERIMENT_INFO_PATH
 
 from GridMaze.analysis.unit_match.get_across_maze_matches import MAZE_PAIR2VALID_DAYS
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as f:
     SUBJECT_IDS = json.load(f)
 
-RESULTS_DIR = RESULTS_PATH / "unit_match" / "place_direction"
+RESULTS_DIR = RESULTS2_PATH / "unit_match" / "place_direction"
 
 MAZE_PAIRS = [("maze_1", "maze_2"), ("maze_2", "rooms_maze")]
 

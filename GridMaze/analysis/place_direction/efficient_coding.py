@@ -29,9 +29,9 @@ import seaborn as sns
 
 # %% Global Variables
 
-from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
+from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS2_PATH
 
-RESULTS_DIR = RESULTS_PATH / "place_direction" / "efficient_coding"
+RESULTS_DIR = RESULTS2_PATH / "place_direction" / "efficient_coding"
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)

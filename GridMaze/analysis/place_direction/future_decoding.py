@@ -28,12 +28,12 @@ from GridMaze.maze import plotting as mp
 
 # %% Global Variables
 
-from GridMaze.paths import RESULTS_PATH, EXPERIMENT_INFO_PATH
+from GridMaze.paths import RESULTS2_PATH, EXPERIMENT_INFO_PATH
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as f:
     SUBJECT_IDS = json.load(f)
 
-RESULTS_DIR = RESULTS_PATH / "place_direction" / "future_decoding"
+RESULTS_DIR = RESULTS2_PATH / "place_direction"
 
 # %% Functions
 

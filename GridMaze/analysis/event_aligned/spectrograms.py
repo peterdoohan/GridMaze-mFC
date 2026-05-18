@@ -19,9 +19,9 @@ from GridMaze.analysis.event_aligned import delta_distance_to_goal as ddtg
 from GridMaze.analysis.lfp import lfp_utils as lu
 
 # %% Global Variables
-from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
+from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS2_PATH
 
-LFP_RESULTS = RESULTS_PATH / "event_aligned" / "lfp"
+LFP_RESULTS = RESULTS2_PATH / "event_aligned" / "lfp"
 if not LFP_RESULTS.exists():
     LFP_RESULTS.mkdir(parents=True)
 

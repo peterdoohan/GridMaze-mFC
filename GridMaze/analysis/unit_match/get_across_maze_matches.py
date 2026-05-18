@@ -16,12 +16,12 @@ from GridMaze.analysis.core import convert
 
 # %% Global Variables
 
-from GridMaze.paths import RESULTS_PATH, EXPERIMENT_INFO_PATH
+from GridMaze.paths import RESULTS2_PATH, EXPERIMENT_INFO_PATH
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as f:
     SUBJECT_IDS = json.load(f)
 
-RESULTS_DIR = RESULTS_PATH / "unit_match" / "across_maze_matches"
+RESULTS_DIR = RESULTS2_PATH / "unit_match"
 
 # valid days where cells can be matched between probe advancements
 # see experiment_info/probe_depths.htsv

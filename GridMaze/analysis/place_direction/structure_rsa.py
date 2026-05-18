@@ -27,12 +27,12 @@ from GridMaze.analysis.unit_match import get_across_maze_matches as umm
 
 
 # %% Global variables
-from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
+from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS2_PATH
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
 
-RESULTS_DIR = RESULTS_PATH / "place_direction" / "structure_rsa"
+RESULTS_DIR = RESULTS2_PATH / "place_direction" / "structure_rsa"
 
 # %% Functions
 
