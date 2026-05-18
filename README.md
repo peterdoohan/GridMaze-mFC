@@ -2,7 +2,7 @@
 
 ### Code repository for  *Doohan et al., 2026* [electrophysiology experiment]
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![Python](https://img.shields.io/badge/python-3.12-blue)
 ![Platform](https://img.shields.io/badge/platform-linux-lightgrey)
 ![Status](https://img.shields.io/badge/status-research-orange)
 ![License](https://img.shields.io/badge/license-BSD--style-green)
@@ -39,7 +39,7 @@
 > 📦 **Note:** this repository does **not** contain experiment data, you can find that [here]()
 
 ---
-## Code, data, and results organisation
+## 📁 Code, data, and results organisation
 
 This code repo is designed to live inside a parent folder alongside its `data/` and
 `results/` directories:
@@ -52,6 +52,21 @@ parent_folder/
 ```
 
 Instructions for downloading the accompanying data and/or results can be found in the 📦 [data repo]().
+---
+## ⚙️ Environment installation
+
+The Python environment is managed with [miniconda](https://docs.conda.io/projects/miniconda/). Once miniconda is installed, recreate the environment from the provided spec:
+
+```bash
+git clone <repo-url> code
+cd code
+conda env create -f environment.yml
+conda activate GridMaze_mFC
+```
+
+This installs Python 3.12 and pins all dependencies used across preprocessing, analysis, and notebooks. Tested on Linux; should also resolve on macOS / Windows (CPU-only PyTorch by default — install a CUDA build separately if you need GPU).
+
+> 🧠 **Optional:** `GridMaze/preprocessing/probe_fit.py` requires [`allensdk`](https://allensdk.readthedocs.io/), which is excluded from `environment.yml` due to its heavy and version-sensitive dependencies. Install it into a separate env (`pip install allensdk`) if you want to play around with this code.
 
 ## 💻 Code organisation
 
