@@ -18,9 +18,9 @@ from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.navigation_strategies import habits as sh
 
 # %% Global variables
-from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
+from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS2_PATH
 
-RESULTS_DIR = RESULTS_PATH / "navigation_strategies"
+RESULTS_DIR = RESULTS2_PATH / "navigation_strategies"
 
 with (EXPERIMENT_INFO_PATH / "subject_IDs.json").open("r") as infile:
     SUBJECT_IDS = json.load(infile)

@@ -21,6 +21,8 @@ ANALYSIS_INFO_PATH = ANALYSIS_DATA_PATH / "analysis_info"
 
 RESULTS_PATH = Path("/ceph/behrens/peter_doohan/goalNav_mFC/experiment/results")
 
+RESULTS2_PATH = Path("/ceph/behrens/peter_doohan/goalNav_mFC/experiment/results2")
+
 # %% Subpaths
 
 PYCONTROL_PATH = RAW_DATA_PATH / "pycontrol"

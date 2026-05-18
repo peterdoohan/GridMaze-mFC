@@ -15,13 +15,13 @@ from GridMaze.analysis.navigation_strategies import get_input_data as gid
 from GridMaze.analysis.navigation_strategies import models
 
 # %% Global Variables
-from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
+from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS2_PATH
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
 
 MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
-RESULTS_DIR = RESULTS_PATH / "navigation_strategies"
+RESULTS_DIR = RESULTS2_PATH / "navigation_strategies"
 
 # %% strategy weights over days (learning curve)
 
