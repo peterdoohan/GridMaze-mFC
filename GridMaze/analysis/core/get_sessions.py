@@ -13,7 +13,6 @@ from GridMaze.maze import representations as mr
 # %% Global variables
 from GridMaze.paths import EXPERIMENT_INFO_PATH, PROCESSED_DATA_PATH, ANALYSIS_DATA_PATH
 
-
 MAZE_PROCESSED_DATA_STRUCTURE2FILENAME = {
     "events_df": "events.htsv",
     "trials_df": "trials.htsv",
@@ -34,14 +33,12 @@ MAZE_ANALYSIS_DATA_STRUCTURE2FILENAME = {
     "navigation_spike_counts_df": "frames.spikeCounts.parquet",
     "trial_aligned_rates_df": "trial_aligned_rates.parquet",
     "event_aligned_rates_df": "event_aligned_rates.parquet",
-    "navigation_strategies_df": "navigation_strategies.parquet",
     "trajectory_decisions_df": "trajectory_decisions.parquet",
     "cluster_distance_tuning_metrics": "clusters.distanceTuningMetrics.parquet",
     "cluster_place_direction_tuning_metrics": "clusters.placeDirectionTuningMetrics.parquet",
     "cluster_egocentric_action_tuning_metrics": "clusters.egocentricActionTuningMetrics.parquet",
     "cluster_movement_metrics": "clusters.movementMetrics.parquet",
     "navigation_theta_spike_counts_df": "frames.thetaSpikeCounts.parquet",
-    "navigation_4Hz_spike_counts_df": "frames.4HzSpikeCounts.parquet",
     "cluster_theta_modulation_metrics": "clusters.thetaModulationMetrics.parquet",
 }
 
