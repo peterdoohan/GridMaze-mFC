@@ -5,7 +5,7 @@ Same question as decoding_error_corr.py: are the place and distance decoders'
 per-sample biases coordinated? Differs from v1 in three ways:
   - bias metric is the probability-weighted center-of-mass over the full
     ±envelope of past/future trajectory steps (mirrors
-    trajectory_decoding2._get_trajectory_error), not the prev-vs-next triplet
+    place_direction_decoding._get_trajectory_error), not the prev-vs-next triplet
     contrast.
   - distance label is steps_to_goal.future (integer node-to-adjacent-node steps
     along the trajectory), so place and distance bias share trajectory-step

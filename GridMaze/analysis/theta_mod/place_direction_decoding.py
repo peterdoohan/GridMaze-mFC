@@ -1,5 +1,5 @@
 """
-theta modulation of the place-direction representation (v2).
+theta modulation of the place-direction representation.
 @peterdoohan
 """
 
