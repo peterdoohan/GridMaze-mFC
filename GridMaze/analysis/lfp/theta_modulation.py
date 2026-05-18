@@ -26,7 +26,7 @@ from GridMaze.analysis.lfp import lfp_utils as lu
 from GridMaze.analysis.neGLM import load_model_sets as lms
 from GridMaze.analysis.neGLM import variance_explained as ve
 from GridMaze.analysis.processing import get_lfp_aligned_spike_counts as la
-from GridMaze.analysis.theta_mod import double_decoding as tdd
+from GridMaze.analysis.theta_mod import theta_utils as tu
 
 # %% Global Variables
 from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
@@ -360,7 +360,7 @@ def plot_subpopulation_theta_mod(
             capsize=None,
             elinewidth=1.5,
         )
-        _x, _y = tdd.fit_sinusoid(phases, _mean, fit_constant=True, return_as="curve")
+        _x, _y = tu.fit_sinusoid(phases, _mean, fit_constant=True, return_as="curve")
         ax.plot(_x, _y, color=color, linewidth=1.5, label=label)
         mod_dfs[pop_id] = subj_avg
     ax.legend(fontsize=6)
@@ -373,7 +373,7 @@ def plot_subpopulation_theta_mod(
         }
         for pop_id in populations:
             print(pop_print_labels[pop_id])
-            tdd._get_decoding_bias_stats(mod_dfs[pop_id])
+            tu.test_theta_modulation(mod_dfs[pop_id])
 
         pair_print_labels = {
             ("all", "place_direction"): "all vs. place-direction",
@@ -383,7 +383,7 @@ def plot_subpopulation_theta_mod(
         for (a, b), label in pair_print_labels.items():
             if a in populations and b in populations:
                 print(label)
-                tdd.test_theta_offset(mod_dfs[a], mod_dfs[b])
+                tu.test_theta_offset(mod_dfs[a], mod_dfs[b])
 
 
 def get_population_theta_mod_tuning(late_sessions=True, include_multi_units=True, save=False):
