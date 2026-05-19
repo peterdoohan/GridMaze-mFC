@@ -108,9 +108,21 @@ By default `code/GridMaze/paths.py` resolves `data/` and `results/` relative to 
 
 #### Option 3 — `download_data.sh` helper script
 
-A helper script in the repo root handles download, unzip, optional exclusion of large files (e.g. LFP traces), and the choice of whether to pull `results/`.
+A helper script in the repo root handles the curl + unzip dance and lands the data and results in the correct sibling folders, so the default `paths.py` resolution works without further configuration. Run from inside `code/`:
 
-> 🚧 **Coming in next commit** — usage will be documented here once `download_data.sh` lands. It will accept flags like `--no-results`, `--no-lfp`, and `--data-dir <path>`.
+```bash
+# defaults: download both data.zip + results.zip, verify, unzip into ../data and ../results
+bash download_data.sh
+
+# data only, skip the (large) saved results
+bash download_data.sh --no-results
+
+# skip extracting LFP files — saves ~270 MB per session on disk
+bash download_data.sh --no-lfp
+
+# custom destinations
+bash download_data.sh --data-dir /scratch/gridmaze/data --results-dir /scratch/gridmaze/results
+```
 
 ---
 
