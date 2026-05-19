@@ -23,9 +23,9 @@ from GridMaze.analysis.theta_mod import distance_to_goal_decoder as tdd
 from GridMaze.maze import representations as mr
 
 # %% Global Variables
-from GridMaze.paths import RESULTS_PATH, EXPERIMENT_INFO_PATH
+from GridMaze.paths import RESULTS2_PATH, EXPERIMENT_INFO_PATH
 
-RESULTS_DIR = RESULTS_PATH / "theta_mod" / "trajectory_decoding_v2"
+RESULTS_DIR = RESULTS2_PATH / "theta_mod"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as f:

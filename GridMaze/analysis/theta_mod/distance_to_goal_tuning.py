@@ -23,9 +23,9 @@ from GridMaze.analysis.theta_mod import distance_to_goal_decoder as tdd
 
 # %% Global Variables
 
-from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
+from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS2_PATH
 
-RESULTS_DIR = RESULTS_PATH / "distance_to_goal" / "theta_mod_tuning"
+RESULTS_DIR = RESULTS2_PATH / "theta_mod" / "distance_tuning"
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)

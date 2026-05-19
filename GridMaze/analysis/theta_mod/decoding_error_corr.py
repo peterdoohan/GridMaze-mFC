@@ -28,9 +28,9 @@ from GridMaze.analysis.neGLM import load_model_sets as lms
 from GridMaze.analysis.neGLM import variance_explained as ve
 
 # %% Global Variables
-from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
+from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS2_PATH
 
-RESULTS_DIR = RESULTS_PATH / "theta_mod" / "decoding_error_corr"
+RESULTS_DIR = RESULTS2_PATH / "theta_mod"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
