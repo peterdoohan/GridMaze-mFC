@@ -5,7 +5,7 @@ from pathlib import Path
 
 # %% Define paths
 
-DATA_PATH = Path("/ceph/behrens/peter_doohan/goalNav_mFC/experiment/data")
+DATA_PATH = Path("../data")
 
 RAW_DATA_PATH = DATA_PATH / "raw_data"
 
@@ -19,7 +19,7 @@ ANALYSIS_DATA_PATH = DATA_PATH / "analysis_data"
 
 ANALYSIS_INFO_PATH = ANALYSIS_DATA_PATH / "analysis_info"
 
-RESULTS_PATH = Path("/ceph/behrens/peter_doohan/goalNav_mFC/experiment/results")
+RESULTS_PATH = Path("../results")
 
 # %% Subpaths
 
