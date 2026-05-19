@@ -72,12 +72,6 @@ def get_maze_sessions(
 - **Exactly one match** → a single `MazeSession` (not wrapped in a list).
 - **No matches** → `FileNotFoundError`.
 
-> ⚠️ **Footgun.** Because of the dual single/list return, downstream code that always iterates can break on a one-session query. Use this idiom if your filter could match either count:
-> ```python
-> result = gs.get_maze_sessions(...)
-> sessions = result if isinstance(result, list) else [result]
-> ```
-
 ### `MazeSession` — metadata attributes
 
 Always populated, regardless of `with_data`:
@@ -139,36 +133,6 @@ Always populated, regardless of `with_data`:
 - `skeleton_maze()` — networkx graph of just the connectivity skeleton.
 - `get_navigation_activity_df(type="rates", with_routes=False, cluster_kwargs={})` — joins `navigation_df` with per-frame neural activity (rates or counts), filtered to single units by default.
 
-### Examples
-
-**Single session, everything loaded:**
-
-```python
-session = gs.get_maze_sessions(
-    subject_IDs=["m6"], maze_names=["maze_1"], days_on_maze=[12], with_data="all"
-)
-print(session.has_data)
-```
-
-**Every late-stage session on `maze_1`, navigation + trials only:**
-
-```python
-sessions = gs.get_maze_sessions(
-    maze_names=["maze_1"],
-    days_on_maze="late",
-    with_data=["navigation_df", "trials_df"],
-)
-```
-
-**All sessions for a behavioural analysis (no spike data needed):**
-
-```python
-sessions = gs.get_maze_sessions(
-    days_on_maze="all",
-    with_data=["trials_df", "trajectories_df"],
-)
-```
-
 ---
 
 ## `analysis/`
@@ -182,18 +146,17 @@ The paper analyses, split into themed subpackages. Each is roughly one analysis 
 | `behaviour/` | Performance metrics, trajectory plotting, dimensionality reduction | Fig 1 |
 | `navigation_strategies/` | Mixture-of-strategies behavioural model fits | Fig 1 |
 | `event_aligned/` | Trial/event-locked population activity, reward representations | Fig 3 |
-| `anatomy/` | Brain region distribution, anatomical coverage | Methods |
+| `anatomy/` | Brain region distribution, anatomical coverage | Fig 3 |
 | `cluster_tuning/` | Per-neuron tuning curves (spatial, HD, distance, movement, ego-action) | Figs 3–5 |
 | `place_direction/` | Place × head-direction tuning, decoding, RSA, efficient coding | Figs 3–4 |
-| `goal_coding/` | Goal-location decoders + controls (place, pseudo-trial) | Fig 3 |
-| `distance_to_goal/` | Distance-to-goal tuning + decoding, theta modulation | Figs 4, 7 |
-| `ego_angle/` | Egocentric angle-to-goal population tuning + decoding | Fig 6 |
-| `egocentric_action/` | Left / forward / right action coding dynamics | Fig 5 |
+| `goal_coding/` | Goal-location decoders + controls (place, pseudo-trial) | Fig 5 |
+| `distance_to_goal/` | Distance-to-goal tuning + decoding, theta modulation | Figs 5, 7 |
+| `ego_angle/` | Egocentric angle-to-goal population tuning + decoding | Supp |
+| `egocentric_action/` | Left / forward / right action coding dynamics | Supp |
 | `velocity/` | Speed / 2D velocity tuning | Supp |
-| `unit_match/` | UnitMatch cross-session cell tracking | Methods |
+| `unit_match/` | UnitMatch cross-session cell tracking | Supp |
 | `neGLM/` | Neural-embedding GLM encoding models | Fig 6 |
-| `lfp/` | Raw LFP + theta-phase neuron-level analyses | Fig 7 |
-| `theta_HD/` | Theta-phase-dependent head-direction dynamics | Fig 7 |
+| `lfp/` | Raw LFP + theta-phase neuron-level analyses | Fig 3, 7 |
 | `theta_mod/` | Theta-phase-stratified decoding | Fig 7 |
 
 ---
@@ -205,7 +168,6 @@ Maze representations and plotting helpers — networkx-based graph models of the
 - `representations.py` — build `simple_maze` and `skeleton_maze` networkx graphs from session maze structure
 - `plotting.py` — render maze graphs with overlaid activity heatmaps and trajectory traces
 - `metrics.py` — graph-derived metrics (shortest paths, RSA-style dissimilarity matrices)
-- `partitions.py` — partition the maze into sub-regions for generalisation tests
 
 Typical use is via a `MazeSession` (which calls the same functions internally):
 
@@ -220,9 +182,7 @@ G = session.simple_maze()        # networkx graph
 
 ## `preprocessing/`
 
-Raw-data ingestion: pyControl logs, top-down video, raw ephys, DeepLabCut tracking, and Kilosort outputs → standardised per-session `processed_data/`. **Most users won't run this** — `processed_data/` ships on Zenodo (see [Downloading data and results](../README.md#-downloading-data-and-results)). The code is here so the full preprocessing chain is inspectable.
-
-Entry point (only if you have raw + preprocessed data):
+The code is here so the full preprocessing chain is inspectable, but the raw data to generate it is not provided.
 
 ```python
 from GridMaze.preprocessing import populate_processed_data as ppd
@@ -250,5 +210,4 @@ Per-session folder named `<YYYY-MM-DD>.<type>` where `<type>` is `maze` or `rest
 
 - Reproducing a paper figure → [`Notebooks/README.md`](../Notebooks/README.md)
 - Generating `analysis_data/` → [`analysis/processing/README.md`](analysis/processing/README.md)
-- Running compute-heavy analyses on SLURM → [`jobs/README.md`](../jobs/README.md)
 - Downloading data, env setup, repo layout → [main README](../README.md)
