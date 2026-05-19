@@ -24,9 +24,9 @@ from GridMaze.maze import representations as mr
 
 # %% Global Variables
 
-from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS2_PATH
+from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
 
-RESULTS_DIR = RESULTS2_PATH / "distance_to_goal"
+RESULTS_DIR = RESULTS_PATH / "distance_to_goal"
 
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:

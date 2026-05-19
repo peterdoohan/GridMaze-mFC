@@ -17,7 +17,7 @@ from matplotlib import pyplot as plt
 from GridMaze.analysis.core import get_sessions as gs
 
 # %% Global Variables
-from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS2_PATH
+from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
 
 with open(EXPERIMENT_INFO_PATH / "maze_configs.json", "r") as input_file:
     MAZE_CONFIGS = json.load(input_file)
@@ -35,7 +35,7 @@ FRAME_RATE = 60
 
 def get_all_sessions_ddtg_at_cue(window=(1, 3), overwrite=False, multi_index=False):
     """ """
-    save_path = RESULTS2_PATH / "event_aligned" / "delta_distance_to_goal" / f"cue_aligned_ddtg.htsv"
+    save_path = RESULTS_PATH / "event_aligned" / "delta_distance_to_goal" / f"cue_aligned_ddtg.htsv"
     if not overwrite and save_path.exists():
         cue_ddtg_df = pd.read_csv(save_path, sep="\t")
     else:
@@ -118,7 +118,7 @@ def get_subject_detla_dtg(subject, window_length):
 
 def get_delta_dtg_df(window_length=5, smooth_SD=5):
     """ """
-    save_path = RESULTS2_PATH / "event_aligned" / "delta_distance_to_goal" / "rate_of_change_of_distance_to_goal_df.htsv"
+    save_path = RESULTS_PATH / "event_aligned" / "delta_distance_to_goal" / "rate_of_change_of_distance_to_goal_df.htsv"
     if save_path.exists():
         ddtg_df = pd.read_csv(save_path, sep="\t", index_col=0)
     else:

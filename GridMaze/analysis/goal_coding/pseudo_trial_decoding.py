@@ -22,7 +22,7 @@ from GridMaze.analysis.core import get_clusters as gc
 
 RATES_SAMPLE_RATE = 0.04
 
-from GridMaze.paths import EXPERIMENT_INFO_PATH, ANALYSIS_INFO_PATH, RESULTS2_PATH
+from GridMaze.paths import EXPERIMENT_INFO_PATH, ANALYSIS_INFO_PATH, RESULTS_PATH
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)
@@ -30,7 +30,7 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 with open(ANALYSIS_INFO_PATH / "intra_trial_interval_times.json", "r") as f:
     INTRA_TRIAL_INTERVAL_TIMES = json.load(f)
 
-RESULTS_DIR = RESULTS2_PATH / "goal_coding"
+RESULTS_DIR = RESULTS_PATH / "goal_coding"
 
 MAZE_NAMES = ["maze_1", "maze_2", "rooms_maze"]
 

@@ -27,11 +27,11 @@ from GridMaze.analysis.distance_to_goal import distributions as dd
 
 # %% Global Variables
 
-from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS2_PATH
+from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
 
 FRAME_RATE = 60
 
-RESULTS_DIR = RESULTS2_PATH / "distance_to_goal" / "logreg_decoding"
+RESULTS_DIR = RESULTS_PATH / "distance_to_goal" / "logreg_decoding"
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)

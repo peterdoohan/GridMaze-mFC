@@ -13,7 +13,7 @@ from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.processing import get_trajectory_decisions_dfs as td
 
 # %% Global Variables
-from GridMaze.paths import RESULTS2_PATH, EXPERIMENT_INFO_PATH
+from GridMaze.paths import RESULTS_PATH, EXPERIMENT_INFO_PATH
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as f:
     SUBJECT_IDS = json.load(f)
@@ -115,7 +115,7 @@ def get_subject_decisions_df(
     save=False,
 ):
     """ """
-    save_path = RESULTS2_PATH / "navigation_strategies" / "subject_decisions_dfs" / f"{subject_ID}.parquet"
+    save_path = RESULTS_PATH / "navigation_strategies" / "subject_decisions_dfs" / f"{subject_ID}.parquet"
     if not save and save_path.exists():
         return pd.read_parquet(save_path)
 

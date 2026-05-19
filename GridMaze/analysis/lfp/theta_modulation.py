@@ -29,7 +29,7 @@ from GridMaze.analysis.processing import get_lfp_aligned_spike_counts as la
 from GridMaze.analysis.theta_mod import theta_utils as tu
 
 # %% Global Variables
-from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS2_PATH
+from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
 
 with open(EXPERIMENT_INFO_PATH / "maze_configs.json", "r") as input_file:
     MAZE_CONFIGS = json.load(input_file)
@@ -40,7 +40,7 @@ with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
 with open(EXPERIMENT_INFO_PATH / "maze_day2date.json", "r") as input_file:
     MAZE_DAY2DATE = json.load(input_file)
 
-RESULTS_DIR = RESULTS2_PATH / "theta_mod"
+RESULTS_DIR = RESULTS_PATH / "theta_mod"
 
 THETA_RANGE = (7, 10)
 

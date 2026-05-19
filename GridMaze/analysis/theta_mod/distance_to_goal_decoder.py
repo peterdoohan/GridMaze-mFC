@@ -27,9 +27,9 @@ from GridMaze.analysis.theta_mod import theta_utils as tu
 
 # %% Global Variables
 
-from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS2_PATH
+from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
 
-RESULTS_DIR = RESULTS2_PATH / "theta_mod" / "distance_decoding"
+RESULTS_DIR = RESULTS_PATH / "theta_mod" / "distance_decoding"
 
 with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as input_file:
     SUBJECT_IDS = json.load(input_file)

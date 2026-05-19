@@ -20,7 +20,7 @@ from statsmodels.stats.anova import anova_lm
 from statsmodels.stats.anova import AnovaRM
 
 # %% Global variables
-from GridMaze.paths import RESULTS2_PATH, EXPERIMENT_INFO_PATH
+from GridMaze.paths import RESULTS_PATH, EXPERIMENT_INFO_PATH
 
 with open(EXPERIMENT_INFO_PATH / "maze_configs.json", "r") as input_file:
     MAZE_CONFIGS = json.load(input_file)
@@ -36,7 +36,7 @@ def get_analysis_sessions():
 
 
 def get_basic_behaviour_df():
-    save_path = RESULTS2_PATH / "behaviour" / "basic_behaviour_df.htsv"
+    save_path = RESULTS_PATH / "behaviour" / "basic_behaviour_df.htsv"
     if save_path.exists():
         return pd.read_csv(save_path, sep="\t")
     else:
