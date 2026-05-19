@@ -21,7 +21,7 @@ from GridMaze.analysis.core.get_clusters import get_cluster
 
 from GridMaze.paths import RESULTS_PATH
 
-RESULTS_DIR = RESULTS_PATH / "ego_angle_tuning"
+RESULTS_DIR = RESULTS_PATH / "ego_angle"
 RESULTS_DIR.mkdir(exist_ok=True, parents=True)
 
 
