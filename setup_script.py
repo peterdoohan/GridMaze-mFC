@@ -1,3 +1,7 @@
+"""
+Import modules and test data quicky for development, ignore.
+"""
+
 # %% set up development workspace
 from importlib import reload
 import matplotlib.pyplot as plt
@@ -24,20 +28,3 @@ cluster_unique_ID = "m2.2022-07-17.maze_cluster141"
 
 # srun --nodes=1 --ntasks-per-node=1 --cpus-per-task=8 -p gpu --gres=gpu:1 --time=48:00:00 --mem=64G --pty bash -i
 # srun --nodes=1 --ntasks-per-node=1 --cpus-per-task=8  --time=48:00:00 --mem=64G --pty bash -i
-
-# might have to load modules first
-# source /etc/profile.d/modules.sh
-# module load miniconda
-# conda activate maze_ephys
-# (## or source activate maze_ephys )
-
-# cd /ceph/behrens/peter_doohan/goalNav_mFC/experiment/code
-
-# open an environment with jupyter installed
-
-# conda activate maze_ephys
-# jupyter-notebook --no-browser --ip=0.0.0.0 --port 8888
-
-# Copy the url starting with your node name and insert it under existing jupyter servers when selecting your kernel.
-
-# %%

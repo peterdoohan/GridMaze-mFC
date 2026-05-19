@@ -14,7 +14,7 @@ GridMaze/
 └── analysis/
     ├── core/             <- session-loading API (get_maze_sessions)
     ├── processing/       <- generates analysis_data/ (deep reference: ./analysis/processing/README.md)
-    └── <16 themed subpackages>   <- the paper analyses
+    └── <themed sublibraries>   <- the paper analyses
 ```
 
 ---
@@ -132,6 +132,97 @@ Always populated, regardless of `with_data`:
 - `simple_maze()` — networkx graph of the maze with simplified topology.
 - `skeleton_maze()` — networkx graph of just the connectivity skeleton.
 - `get_navigation_activity_df(type="rates", with_routes=False, cluster_kwargs={})` — joins `navigation_df` with per-frame neural activity (rates or counts), filtered to single units by default.
+
+---
+
+## Inspecting single units: `Cluster`
+
+A `Cluster` is the per-neuron counterpart to `MazeSession`. It holds the cluster's session context (subject, date, maze, unique ID) and exposes a uniform API across the tuning features computed in `analysis_data/`:
+
+- `cluster.get_default_feature_kwargs(feature)` — dict of defaults for one feature
+- `cluster.load_tuning_data(feature, feature_kwargs={})` — raw tuning arrays / DataFrames (the inputs to the plotter); useful for custom plotting or population aggregation
+- `cluster.plot_tuning(feature, feature_kwargs={}, ax=None)` — draws tuning for one feature onto a supplied axis
+
+Defined in [`analysis/core/get_clusters.py`](analysis/core/get_clusters.py). `MazeCluster` is the maze-session subclass used in every figure; `RestCluster` exists for rest sessions.
+
+### Getting clusters
+
+```python
+# Via a loaded MazeSession (the common path):
+session = gs.get_maze_sessions(subject_IDs=["m6"], maze_names=["maze_1"], days_on_maze=[12])
+clusters = session.get_clusters(single_units=True)        # list[MazeCluster]
+
+# Direct query (skips loading session data):
+from GridMaze.analysis.core import get_clusters as gc
+clusters = gc.get_maze_clusters(
+    subject_IDs=["m6"], maze_names=["maze_1"], days_on_maze=[12],
+    single_units=True, multi_units=False, noise_units=False,
+)
+
+# A specific cluster by unique ID:
+cluster = gc.get_cluster("m6.2022-07-12.maze_cluster42")
+```
+
+### `MazeCluster` — metadata attributes
+
+| Attribute | Type | Description |
+|---|---|---|
+| `cluster_ID` | `int` | session-local Kilosort cluster ID |
+| `cluster_unique_ID` | `str` | globally unique, e.g. `"m6.2022-07-12.maze_cluster42"` |
+| `name` | `str` | session name, e.g. `"m6.2022-07-12.maze"` |
+| `date` | `datetime.date` | session date |
+| `processed_data_path` / `analysis_data_path` | `Path` | resolved paths into `processed_data/` and `analysis_data/` for this session |
+| `subject_ID`, `maze_name`, `day_on_maze`, `goal_subset`, … | — | every key in `session_info.json` (except `date`) is copied onto the cluster as an attribute |
+| `tuning_features` | `list[str]` | the eight features included in the default summary layout |
+
+### Supported tuning features
+
+Each row corresponds to a valid `feature` string passed to `load_tuning_data` / `plot_tuning`. See `_get_tuning_feature_kwargs` in `get_clusters.py` for the full list of `feature_kwargs` per feature.
+
+| `feature` | What it plots | Required `analysis_data/` files |
+|---|---|---|
+| `"actions"` | Spike rate around left / forward / right turns | `frames.navigation.parquet`, `frames.spikeRates.parquet` |
+| `"angle_to_goal"` | Allo / egocentric goal-angle tuning curve (polar) | `frames.navigation.parquet`, `frames.spikeRates.parquet` |
+| `"distance_to_goal"` | Distance-to-goal tuning curve | `frames.navigation.parquet`, `frames.spikeRates.parquet` |
+| `"distance_to_goal_theta"` | Distance tuning split by theta peak vs. trough | `frames.navigation.parquet`, `frames.thetaSpikeCounts.parquet` |
+| `"trial_events"` | Trial-aligned firing-rate trace | `trial_aligned_rates.parquet` |
+| `"event_aligned"` | Event-aligned firing-rate traces | `event_aligned_rates.parquet` |
+| `"spatial"` | Spatial firing heatmap | `frames.navigation.parquet`, `frames.spikeCounts.parquet` |
+| `"place"` | Place tuning (one rate per maze node) | `frames.navigation.parquet`, `frames.spikeRates.parquet` |
+| `"place_direction"` | Place × head-direction polar plot | `frames.navigation.parquet`, `frames.spikeRates.parquet` |
+| `"head_direction"` | Head-direction tuning curve | `frames.navigation.parquet`, `frames.spikeRates.parquet` |
+| `"movement"` | 2D speed × acceleration tuning | `frames.navigation.parquet`, `frames.spikeRates.parquet` |
+| `"velocity"` | 2D velocity tuning heatmap | `frames.navigation.parquet`, `frames.spikeRates.parquet` |
+
+> If the required files don't yet exist under `analysis_data/`, `load_tuning_data` returns `None` and `plot_tuning` raises `FileNotFoundError`. Generate the missing parquets via the [`analysis/processing/` pipeline](analysis/processing/README.md).
+
+### Plotting one feature
+
+```python
+import matplotlib.pyplot as plt
+
+cluster = clusters[0]
+fig, ax = plt.subplots()
+cluster.plot_tuning("distance_to_goal", feature_kwargs={"smooth_SD": 1}, ax=ax)
+```
+
+### Session tuning-summary PDFs
+
+[`analysis/cluster_tuning/summary.py`](analysis/cluster_tuning/summary.py) wraps the `Cluster` API into a one-PDF-per-session report. Each page is a 5-panel layout (place × direction heatmap, distance-to-goal, trial-aligned events, polar angle-to-goal, action tuning) for one single-unit cluster.
+
+```python
+from GridMaze.analysis.cluster_tuning import summary
+
+summary.save_session_tuning_summaries(
+    subject_ID="m6",
+    maze_name="maze_1",
+    day_on_maze=12,
+    type="concise",
+)
+# → <RESULTS_PATH>/tuning_summaries/m6_maze_1_12_concise.pdf
+```
+
+The per-page figure is built by `summary.plot_tuning_summary_concise(cluster)` — call it directly to render a single cluster's summary into your own figure, or copy/modify it to swap in a different set of `cluster.plot_tuning(...)` features. A 7-panel `plot_tuning_summary_full(cluster)` variant (adds `spatial` + `movement` panels) is also provided, though it isn't wired into `save_session_tuning_summaries` yet — invoke it directly if you want the full layout.
 
 ---
 
