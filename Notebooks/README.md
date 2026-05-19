@@ -41,29 +41,31 @@ Figures are saved to `../results/figures/<notebook_name>/`.
 | [`6.neGLM.ipynb`](6.neGLM.ipynb) | Fig. 6 | neGLM model comparisons, variance explained, mixed vs. factorised comparisons|
 | [`7.theta_mod.ipynb`](7.theta_mod.ipynb) | Fig. 7 | Theta-band LFP, theta modulation of distance-to-goal rep, theta-modulation of place-direction rep |
 
-> Figure 2 relates to the opto experiment which can be found in this [repo]()
+> Figure 2 relates to the opto experiment, which lives in a separate repo — *(link TBD)*.
 
 ---
 ## ⚙️ Running notebooks yourself
 
 Make sure you have:
-1. Set up this repo next to `data` and `results` folders (see [here](../README.md))
-2. Downloaded `data` (and optionally `results` to save rerunning intensive analyses) from the companion 📦 [data repo]()
-3. Populate `analysis data`
->```python
->from GridMaze.analysis.processing import populate_analysis_data as pad
->pad.populate_analysis_data()
->```
-4. Ensure `GridMaze/paths.py` is pointing to the correct folders
-5. Try running the notebooks, rise a GitHub issue if things go wrong!
+1. Set up this repo next to `data` and `results` folders (see [main README](../README.md)).
+2. Downloaded `data` (and optionally `results` to save rerunning intensive analyses) — from Zenodo or via the [companion data repo](https://github.com/peterdoohan/GridMaze-mFC-ephys-DATA).
+3. Populated `analysis_data`:
+   ```python
+   from GridMaze.analysis.processing import populate_analysis_data as pad
+   pad.populate_analysis_data()
+   ```
+   See [`GridMaze/analysis/processing/README.md`](../GridMaze/analysis/processing/README.md) for the full recipe.
+4. By default `GridMaze/paths.py` resolves `data/` and `results/` relative to `code/` — no edits needed. Only edit it if you placed data somewhere else.
+5. Try running the notebooks — [raise a GitHub issue](https://github.com/peterdoohan/GridMaze-mFC/issues) if things go wrong!
 
-> ⚠️ `analysis_data/` is ~200 GB and slow to generate without multiprocessing.
+> ⚠️ `analysis_data/` is ~50 GB and slow to generate without multiprocessing.
 ---
 
 ## 💻 Related code
 
-- [`GridMaze/analysis/`](../GridMaze/analysis/README.md) — the analysis codebase called by the notebooks
-- [`GridMaze/maze/`](../GridMaze/maze/README.md) — maze representations & plotting helpers
+- [`GridMaze/`](../GridMaze/README.md) — `get_maze_sessions` API, subpackage map, processed-data format spec
+- [`GridMaze/analysis/processing/`](../GridMaze/analysis/processing/README.md) — `analysis_data/` generation recipes
+- [`jobs/`](../jobs/README.md) — SLURM submission scripts for compute-heavy analyses
 
 ---
 

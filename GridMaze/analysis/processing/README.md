@@ -23,7 +23,7 @@ There are two streams:
 
 ## 🚀 Quick start — generate everything from scratch
 
-After downloading `processed_data/` (see [parent README](../../../README.md) and sibiling [data repo]()), run this once from inside the `GridMaze_mFC` conda env, directed to your `/code` folder:
+After downloading `processed_data/` (see [parent README](../../../README.md) and sibling [companion data repo](https://github.com/peterdoohan/GridMaze-mFC-ephys-DATA)), run this once from inside the `GridMaze_mFC` conda env, with CWD set to your `code/` folder:
 
 ```python
 from GridMaze.analysis.processing import populate_analysis_data as pad

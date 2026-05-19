@@ -30,6 +30,12 @@
 
 ---
 
+> 🚧 **Work in progress** 🛠️ — code in this repository is actively maintained and subject to change ahead of final publication of the accompanying manuscript. If you encounter any issues, please [open a GitHub issue](https://github.com/peterdoohan/GridMaze-mFC/issues) and I'll get back to you as soon as I can.
+
+> 📊 **Just want the data, not these analyses?** A lightweight companion repo at [github.com/peterdoohan/GridMaze-mFC-ephys-DATA](https://github.com/peterdoohan/GridMaze-mFC-ephys-DATA) hosts the same Zenodo data and results without this codebase — recommended starting point if you're interested in the dataset but not the specific analyses in our paper.
+
+---
+
 **This repo contains code for:**
 - **Preprocessing** raw data into the GridMaze standard format
 - **Analysis** codebase implementing all ephys analyses presented in the parent paper
@@ -37,13 +43,11 @@
 - **Ephys spike sorting pipeline** (built with [SpikeInterface](https://spikeinterface.readthedocs.io/))
 - **pyControl task files** for running experiments on GridMaze hardware
 
-> 📦 **Note:** this repository does **not** contain experiment data or saved results — both are archived on Zenodo: [doi.org/10.5281/zenodo.7863716](https://doi.org/10.5281/zenodo.7863716). See [📥 Downloading data and results](#-downloading-data-and-results) below.
-
 ---
-## 📁 Code, data, and results organisation
 
-This code repo is designed to live inside a parent folder alongside its `data/` and
-`results/` directories:
+## 📁 Project organisation
+
+This code repo is designed to live inside a parent folder alongside its `data/` and `results/` directories:
 
 ```
 parent_folder/
@@ -52,65 +56,11 @@ parent_folder/
 └── 📈 results/   <- figures and saved analysis outputs
 ```
 
-Instructions for downloading the accompanying `data/` and `results/` from Zenodo are in [📥 Downloading data and results](#-downloading-data-and-results) below.
----
-## ⚙️ Environment installation
-
-The Python environment is managed with [miniconda](https://docs.conda.io/projects/miniconda/). Once miniconda is installed, recreate the environment from the provided spec:
-
-```bash
-git clone <repo-url> code
-cd code
-conda env create -f environment.yml
-conda activate GridMaze_mFC
-```
-
-This installs Python 3.12 and pins all dependencies used across preprocessing, analysis, and notebooks. Tested on Linux; should also resolve on macOS / Windows (CPU-only PyTorch by default — install a CUDA build separately if you need GPU).
-
-> 🧠 **Optional:** `GridMaze/preprocessing/probe_fit.py` requires [`allensdk`](https://allensdk.readthedocs.io/), which is excluded from `environment.yml` due to its heavy and version-sensitive dependencies. Install it into a separate env (`pip install allensdk`) if you want to play around with this code.
-
-## 💻 Code organisation
-
-```
-code/
-├── GridMaze/                <- core package: preprocessing + analysis for GridMaze
-│   ├── preprocessing/       <- maps raw data → standardised processed_data
-│   ├── analysis/            <- generates all analyses presented in the paper
-│   ├── maze/                <- networkx-based maze representations + plotting
-│   └── paths.py             <- central registry of data + results paths
-├── Notebooks/               <- main entry point — analyses by paper section
-├── jobs/                    <- SLURM job submission for compute-heavy analyses
-├── neGLM/                   <- Neural Embedding GLM tool (standalone)
-├── SpikeSorting/            <- spikesorting pipeline (Kilosort 4 + UnitMatch via SpikeInterface)
-└── TaskFiles/               <- pyControl task files for the maze hardware
-```
-
-Per-folder READMEs cover each section in more detail: [`Notebooks/`](neGLM/README.md) · [`GridMaze/`](GridMaze/README.md) · [`GridMaze/preprocessing/`](GridMaze/preprocessing/README.md) · [`GridMaze/analysis/`](GridMaze/analysis/README.md) · [`GridMaze/maze`](GridMaze/maze/README.md).
-
-If you are interested in specific analyses from the paper we would recommend finding it `Notebooks/` and then investigating the relevant GridMaze code. 
+The sections below walk through downloading the data, setting up the environment, and running the code in that order.
 
 ---
 
-### 📦 Data organisation
-
-```
-data/
-├── raw_data/                <- data as it comes off the rig
-│   ├── pycontrol/           <- behavioural task readout
-│   ├── video/               <- top-down video of animals on the maze
-│   └── ephys/               <- raw electrophysiology recordings
-├── preprocessed_data/       <- outputs from raw-data preprocessing pipelines
-│   ├── DeepLabCut/          <- video tracking
-│   ├── spikesorting/        <- SpikeInterface + Kilosort 4 output
-│   └── HERBS/               <- histology registered to the Allen Atlas
-├── processed_data/          <- standardised, human-readable data (subject_ID/session_ID/)
-├── analysis_data/           <- compressed, project-specific data optimised for analysis
-└── experiment_info/         <- subject IDs, dates, maze configurations, etc.
-```
-
-
-
-### 📥 Downloading data and results
+## 📥 Downloading data and results
 
 Both `data/` and `results/` are archived on Zenodo:
 
@@ -138,7 +88,7 @@ Pick whichever of the three options below suits you.
    ├── data/      <- from data.zip
    └── results/   <- from results.zip
    ```
-4. If you placed `data/` and `results/` somewhere other than next to `code/`, edit `code/GridMaze/paths.py` to point at your local copies (see [Configuring paths](#configuring-paths) below). Otherwise no further setup is needed.
+4. If you placed `data/` and `results/` somewhere other than next to `code/`, edit `code/GridMaze/paths.py` to point at your local copies (see [Configuring paths](#configuring-paths-only-if-needed) below). 
 
 #### Option 2 — curl
 
@@ -154,7 +104,7 @@ curl -L -o results.zip https://zenodo.org/records/20267467/files/results.zip
 unzip results.zip && rm results.zip
 ```
 
-By default `code/GridMaze/paths.py` resolves `data/` and `results/` relative to the `code/` directory, so this layout works out of the box. If you placed the data elsewhere, see [Configuring paths](#configuring-paths).
+By default `code/GridMaze/paths.py` resolves `data/` and `results/` relative to the `code/` directory, so this layout works out of the box. If you placed the data elsewhere, see [Configuring paths](#configuring-paths-only-if-needed).
 
 #### Option 3 — `download_data.sh` helper script
 
@@ -162,19 +112,92 @@ A helper script in the repo root handles download, unzip, optional exclusion of 
 
 > 🚧 **Coming in next commit** — usage will be documented here once `download_data.sh` lands. It will accept flags like `--no-results`, `--no-lfp`, and `--data-dir <path>`.
 
-#### Configuring paths
+---
 
-By default, `GridMaze/paths.py` resolves `data/` and `results/` relative to the `code/` directory:
+## ⚙️ Environment installation
 
-```python
-# code/GridMaze/paths.py
-DATA_PATH    = Path("../data")
-RESULTS_PATH = Path("../results")
+The Python environment is managed with [miniconda](https://docs.conda.io/projects/miniconda/). Once miniconda is installed, recreate the environment from the provided spec:
+
+```bash
+git clone <repo-url> code
+cd code
+conda env create -f environment.yml
+conda activate GridMaze_mFC
 ```
 
-If you unzipped `data.zip` and `results.zip` inside the same `parent_folder/` that contains `code/`, **no edits are needed**.
+This installs Python 3.12 and pins all dependencies used across preprocessing, analysis, and notebooks. Tested on Linux; should also resolve on macOS / Windows (CPU-only PyTorch by default — install a CUDA build separately if you need GPU).
 
-If you downloaded data or results somewhere else, edit these two lines to point at your local copies:
+> 🧠 **Optional:** `GridMaze/preprocessing/probe_fit.py` requires [`allensdk`](https://allensdk.readthedocs.io/), which is excluded from `environment.yml` due to its heavy and version-sensitive dependencies. Install it into a separate env (`pip install allensdk`) if you want to play around with this code.
+
+---
+
+## 📦 Data organisation
+
+The Zenodo bundle ships `processed_data/` (standardised per-session data ready for analysis) and `experiment_info/` (subject IDs, dates, maze configs). Just enough to give you the gist:
+
+```
+data/
+├── raw_data/                <- data as it comes off the rig (not shipped)
+│   ├── pycontrol/           <- behavioural task readout
+│   ├── video/               <- top-down video of animals on the maze
+│   └── ephys/               <- raw electrophysiology recordings
+├── preprocessed_data/       <- outputs from raw-data preprocessing (not shipped)
+│   ├── DeepLabCut/          <- video tracking
+│   ├── spikesorting/        <- SpikeInterface + Kilosort 4 output
+│   └── HERBS/               <- histology registered to the Allen Atlas
+├── processed_data/          <- standardised, human-readable data (subject_ID/session_ID/)
+├── analysis_data/           <- compressed, analysis-optimised cache (generated locally)
+└── experiment_info/         <- subject IDs, dates, maze configurations, etc.
+```
+
+For the full processed-data format spec — file types, naming conventions, units — see [`GridMaze/README.md`](GridMaze/README.md). If you only want the dataset without this codebase, the [companion data repo](https://github.com/peterdoohan/GridMaze-mFC-ephys-DATA) is a friendlier starting point.
+
+---
+
+## 💻 Code organisation
+
+```
+code/
+├── GridMaze/                <- core package: preprocessing + analysis for GridMaze
+│   ├── preprocessing/       <- maps raw data → standardised processed_data
+│   ├── analysis/            <- generates all analyses presented in the paper
+│   ├── maze/                <- networkx-based maze representations + plotting
+│   └── paths.py             <- central registry of data + results paths
+├── Notebooks/               <- main entry point — analyses by paper section
+├── jobs/                    <- SLURM job submission for compute-heavy analyses
+├── neGLM/                   <- Neural Embedding GLM tool (standalone)
+├── SpikeSorting/            <- spikesorting pipeline (Kilosort 4 + UnitMatch via SpikeInterface)
+└── TaskFiles/               <- pyControl task files for the maze hardware
+```
+
+Per-folder READMEs cover specific subsystems in more detail:
+[`Notebooks/`](Notebooks/README.md) · [`GridMaze/`](GridMaze/README.md) · [`GridMaze/analysis/processing/`](GridMaze/analysis/processing/README.md) · [`jobs/`](jobs/README.md).
+
+---
+
+## ▶️ Running code locally
+
+After downloading `data.zip`, you'll need to generate `analysis_data/` from downloaded `processed_data/` – this is handled by [`GridMaze/analysis/processing`](./GridMaze/analysis/processing/README.md). `analysis_data` mirrors `processed_data` in structure but contains derivate data tables that are convient starting points for different analyses and are required to run most of the analyses in the Notebook summaries below (~50 GB).
+
+**Build `analysis_data/`** from `processed_data/`:
+
+```python
+from GridMaze.analysis.processing import populate_analysis_data as pad
+pad.populate_analysis_data()
+```
+
+> ⚠️ Slow to generate without multiprocessing. See [`GridMaze/analysis/processing/README.md`](GridMaze/analysis/processing/README.md) for the full recipe, table specs, partial builds, and gotchas.
+
+**If you're interested in how `processed_data/` was generated from raw recordings**: see the `preprocessing/` section of [`GridMaze/README.md`](GridMaze/README.md).
+
+```python
+from GridMaze.preprocessing import populate_processed_data as ppd
+ppd.populate_processed_data()
+```
+
+### Configuring paths (only if needed)
+
+By default `GridMaze/paths.py` resolves `data/` and `results/` relative to `code/`, so the layout above just works. If you placed data elsewhere, edit:
 
 ```python
 # code/GridMaze/paths.py
@@ -182,40 +205,28 @@ DATA_PATH    = Path("/absolute/path/to/your/data")
 RESULTS_PATH = Path("/absolute/path/to/your/results")
 ```
 
-> ℹ️ All scripts and notebooks assume CWD = `code/` (notebooks `os.chdir` to it automatically). If you run a script from a different working directory, prefer absolute paths in `paths.py`.
+> ℹ️ Scripts and notebooks assume CWD = `code/` (notebooks `os.chdir` to it automatically). If you run a script from a different working directory, prefer absolute paths in `paths.py`.
 
 ---
 
-### Regenerating from source
+## 📓 Jumping into the analyses
 
-The Zenodo bundle ships only `processed_data/` + `experiment_info/` (in `data.zip`) and saved results (in `results.zip`). Raw and preprocessed data are not redistributed because the files are large and non-standardised. Both upstream and downstream artefacts can be rebuilt locally:
+The `Notebooks/` folder is the main entry point for reproducing each figure of the paper. Notebooks are organised by paper section and walk through the analysis from data loading to figure generation.
 
-**`processed_data/`** is built from `raw_data/` + `preprocessed_data/` via:
+See [`Notebooks/README.md`](Notebooks/README.md) for the figure-by-figure index and recommended reading order.
 
-```python
-from GridMaze.preprocessing import populate_processed_data as ppd
-ppd.populate_processed_data()
-```
+> ‼️ if `results` was not downloaded from Zenodo, some analyses will start running compute heavy processing that takes a while. Consider downloaded cached results if you want to run things faster. 
 
-**`analysis_data/`** is built from `processed_data/` via:
-
-```python
-from GridMaze.analysis.processing import populate_analysis_data as pad
-pad.populate_analysis_data()
-```
-
-> ⚠️ `analysis_data/` is ~50 GB and slow to generate without multiprocessing.
-
-**`results/`** is regenerated by re-running the analysis notebooks in `Notebooks/` against `processed_data/` + `analysis_data/`. The saved `results.zip` from Zenodo simply skips the compute-heavy steps (permutation tests, etc.).
+> 💡 New to the dataset? The [companion data repo](https://github.com/peterdoohan/GridMaze-mFC-ephys-DATA) hosts simpler walked-through notebooks aimed at general data exploration, not paper-specific analyses.
 
 ---
-
 
 ## 🔗 Related repos
 
-- ⚡ **Opto experiment code and results** — *(link TBD)*
-- 🌈 **Neural Embedding GLM** — *(link TBD)*
-
+- ⚡ **Opto experiment code and results** — [github.com/peterdoohan/GridMaze-mFC-opto](https://github.com/peterdoohan/GridMaze-mFC-opto)
+- 📊 **Companion data repo** — [github.com/peterdoohan/GridMaze-mFC-ephys-DATA](https://github.com/peterdoohan/GridMaze-mFC-ephys-DATA)
+- 🌈 **Neural Embedding GLM** — *TODO:* see [`neGLM`](./neGLM/) for code, docs and separate repo to come.
+ 
 ---
 
 ## 📜 Citation
@@ -226,14 +237,14 @@ Please cite both the paper and the dataset:
 @article{placeholder,
   title  = {Structured and flexible representations in medial-frontal cortex
             support goal-directed navigation},
-  author = {Doohan, Peter T. and colleagues},
+  author = {Doohan, Peter T. Jensen, Jensen, Kristopher, T. Chen, Yaqing. Godinho, Beatriz. Burns, Charles D.G. Qin, Chongyu (Xiao). Emery, Josie. Cini, Ryan. Walton, Mark E. T. Behrens, Timothy E.J. Akam, Thomas E.},
   year   = {2026}
 }
 
 @dataset{doohan_2026_dataset,
   title     = {Data and results for: Structured and flexible representations in
                medial-frontal cortex support goal-directed navigation},
-  author    = {Doohan, Peter T. and colleagues},
+  author    = {Doohan, Peter T. Behrens, Timothy E.J. Akam, Thomas E.},
   year      = {2026},
   publisher = {Zenodo},
   doi       = {10.5281/zenodo.7863716},
