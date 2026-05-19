@@ -4,3 +4,7 @@
 **/out/
 **/slurm/
 .claude/
+.DS_Store
+**/.DS_Store
+._*
+**/._*
