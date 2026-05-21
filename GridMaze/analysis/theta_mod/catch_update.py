@@ -33,20 +33,32 @@ def get_session_df(
     place_trough_bins=[1, 2, 3],
     distance_peak_bins=[4, 5, 6],
     distance_trough_bins=[10, 11, 0],
+    place_tuned_cells=None,
     **input_data_kwargs,
 ):
     """Placeholder for the per-session analysis pipeline.
 
     Leave-one-trial-out CV over navigation trials: each iteration holds out one
-    trial as `test_df`, with all remaining trials as `train_df`. Decoder training
-    / evaluation will be added inside the loop.
+    trial as `test_df`, with all remaining trials as `train_df`. Inside the loop
+    a per-cycle place-tuned population "update" score (cosine similarity between
+    cycle c and cycle c+1's firing-rate vectors in place_trough_bins, stored on
+    cycle c) is added to both dataframes, respecting trial boundaries.
+
+    `place_tuned_cells`: None → load via `get_place_direction_tuned_neurons()`;
+    otherwise an array of cluster_unique_ID strings.
     """
     input_data = get_input_data(session, **input_data_kwargs)
+    if place_tuned_cells is None:
+        place_tuned_cells = get_place_direction_tuned_neurons()
+    session_cells = input_data.spike_count.columns
+    place_cells_in_session = [c for c in np.unique(place_tuned_cells) if c in session_cells]
+
     trials = input_data.trial.dropna().unique()
     for held_out_trial in trials:
         test_mask = input_data.trial == held_out_trial
-        test_df = input_data[test_mask]
-        train_df = input_data[~test_mask]
+        test_df = _add_place_update_column(input_data[test_mask], place_cells_in_session, place_trough_bins)
+        train_df = _add_place_update_column(input_data[~test_mask], place_cells_in_session, place_trough_bins)
+        # TODO: decoder fit on train_df, evaluate on test_df, append per-trial result
     return
 
 
@@ -139,6 +151,99 @@ def get_input_data(session, n_bins=12, shank=3, navigation_only=True, max_steps_
     if exclude_at_goal:
         input_data = input_data[input_data.goal != input_data.maze_position.simple]
     return input_data
+
+
+# %% Per-trial place-tuned population update
+
+
+def _add_place_update_column(df, place_cells, place_trough_bins):
+    """Add ('place_update', 'cos_sim') and ('place_update', 'cycle_complete') columns.
+
+    cos_sim: within-trial cosine similarity between the place-tuned population
+        firing-rate vectors of cycle c and cycle c+1, computed over place_trough_bins
+        (using whatever trough bins survived row-filters in each cycle), stored on
+        cycle c. NaN at the last cycle of every trial (no successor) and where the
+        raw-LFP adjacency check fails or either vector is all-zero.
+    cycle_complete: True if the cycle still has all n_bins phase bins after row
+        filters; False otherwise. Use this downstream to subset only-complete cycles.
+
+    Raises ValueError loudly if:
+      - any cycle in a trial has ALL of its place_trough_bins missing (can't form
+        the rate vector), or
+      - any non-last cycle of a trial has no immediate cycle_idx successor (c+1
+        missing from the trial — implies non-consecutive cycle_idx, which the
+        diagnostic shows never happens normally).
+    """
+    n_bins = int(df.index.get_level_values("phase_bin").max()) + 1
+    update = pd.Series(np.nan, index=df.index, dtype=float)
+    complete_flag = pd.Series(False, index=df.index, dtype=bool)
+
+    for trial, trial_df in df.groupby(df.trial):
+        if trial_df.empty or not place_cells:
+            continue
+
+        # completeness tracking (not a filter — just a flag downstream code can use)
+        cycle_sizes = trial_df.groupby(level="cycle_idx").size()
+        complete_cycles = set(cycle_sizes[cycle_sizes == n_bins].index)
+        if complete_cycles:
+            mask = trial_df.index.get_level_values("cycle_idx").isin(complete_cycles)
+            complete_flag.loc[trial_df.index[mask]] = True
+
+        # raw-LFP adjacency lookup (entries only present where that bin survived filtering)
+        try:
+            cycle_starts = trial_df.xs(0, level="phase_bin").phase_window.start_time
+        except KeyError:
+            cycle_starts = pd.Series(dtype=float)
+        try:
+            cycle_ends = trial_df.xs(n_bins - 1, level="phase_bin").phase_window.end_time
+        except KeyError:
+            cycle_ends = pd.Series(dtype=float)
+
+        # per-cycle rates over place_trough_bins (NO completeness filter)
+        trough = trial_df[trial_df.index.get_level_values("phase_bin").isin(place_trough_bins)]
+        spikes_by_cycle = trough.spike_count[place_cells].groupby(level="cycle_idx").sum()
+        dur_by_cycle = trough.phase_window.duration.groupby(level="cycle_idx").sum()
+        rates_by_cycle = spikes_by_cycle.div(dur_by_cycle, axis=0)
+
+        # loud fail #1: every cycle in the trial must have at least one trough bin present
+        present = set(rates_by_cycle.index)
+        all_cycles_in_trial = set(trial_df.index.get_level_values("cycle_idx").unique())
+        missing_all_trough = all_cycles_in_trial - present
+        if missing_all_trough:
+            raise ValueError(
+                f"trial {trial}: cycles {sorted(missing_all_trough)} have ALL "
+                f"place_trough_bins {place_trough_bins} missing after row filters — "
+                f"cannot form firing-rate vector."
+            )
+
+        trial_max_cycle = max(present)
+        for c in sorted(present):
+            if c == trial_max_cycle:
+                continue  # last cycle of trial, no successor in this trial
+            # loud fail #2: c+1 absent within the trial → non-consecutive cycle_idx
+            if (c + 1) not in present:
+                raise ValueError(
+                    f"trial {trial}: cycle {c} has no successor cycle {c + 1} in trial "
+                    f"(non-consecutive cycle_idx — should not happen)."
+                )
+            # raw-LFP adjacency check, only when both endpoint bins survived
+            if c in cycle_ends.index and (c + 1) in cycle_starts.index:
+                if not np.isclose(cycle_ends.loc[c], cycle_starts.loc[c + 1]):
+                    continue
+            v_curr = rates_by_cycle.loc[c].values
+            v_next = rates_by_cycle.loc[c + 1].values
+            n_curr = np.linalg.norm(v_curr)
+            n_next = np.linalg.norm(v_next)
+            if n_curr == 0 or n_next == 0:
+                continue
+            val = float(np.dot(v_curr, v_next) / (n_curr * n_next))
+            in_cycle = trial_df.index.get_level_values("cycle_idx") == c
+            update.loc[trial_df.index[in_cycle]] = val
+
+    df = df.copy()
+    df[("place_update", "cos_sim")] = update.values
+    df[("place_update", "cycle_complete")] = complete_flag.values
+    return df
 
 
 # %% Cycle / phase-bin window detection

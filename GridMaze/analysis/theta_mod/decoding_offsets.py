@@ -322,7 +322,7 @@ def plot_decoder_vs_lfp(
             linewidth=0,
         )
 
-    # distance peak + trough bands: cycle i (2nd cycle) only
+    # distance peak + trough bands: cycle i (1st / left cycle) only
     dist_phases = dec_fits["distance"]["phases"]
     dist_fit = dec_fits["distance"]["fit"]
     dist_fitted = np.sin(dist_phases + dist_fit["phi"])
@@ -334,7 +334,7 @@ def plot_decoder_vs_lfp(
     d_low, d_high = _band_bin_offsets(distance_k)
     dist_left = (d_low + 0.5) * dphi_d
     dist_right = (d_high + 0.5) * dphi_d
-    cycle_i_off = 2 * np.pi * (n_cycles - 1)
+    cycle_i_off = 0.0
     for phase, _color in [(dist_peak_phase, distance_peak_color), (dist_trough_phase, distance_trough_color)]:
         ax.axvspan(
             phase + cycle_i_off - dist_left,
@@ -406,10 +406,9 @@ def plot_decoder_vs_lfp(
     for k in range(1, n_cycles):
         ax.axvline(-np.pi + 2 * np.pi * k, color="k", ls="--", alpha=0.5)
 
-    # per-cycle labels ("cycle i-(n-1)", ..., "cycle i-1", "cycle i") at top of axes
+    # per-cycle labels ("cycle i", "cycle i+1", ...) at top of axes
     for k in range(n_cycles):
-        offset_from_last = n_cycles - 1 - k
-        label = "cycle i" if offset_from_last == 0 else f"cycle i-{offset_from_last}"
+        label = "cycle i" if k == 0 else f"cycle i+{k}"
         ax.text(2 * np.pi * k, 1.02, label, transform=ax.get_xaxis_transform(), ha="center", va="bottom", fontsize=8)
 
     # π-spaced ticks, labelled per-cycle (-π → π each cycle; inner boundaries = "π/-π")
