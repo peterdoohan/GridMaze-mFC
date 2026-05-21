@@ -18,7 +18,6 @@ from GridMaze.analysis.core import get_clusters as gc
 from GridMaze.analysis.core import filter as filt
 from GridMaze.analysis.core import folds
 from GridMaze.analysis.theta_mod import theta_utils as tmu
-from GridMaze.analysis.theta_mod import distance_to_goal_decoder as tdd  # noqa: F401  (kept for ref)
 from GridMaze.analysis.theta_mod import distance_to_goal_decoder2 as ddv2
 from GridMaze.maze import representations as mr
 
@@ -280,7 +279,7 @@ def plot_theta_mod_trajectory_error(
 ):
     """Per-subject sinusoid of place-decoding bias along theta phase, in cm.
 
-    Sign convention matches `distance_to_goal_decoder`:
+    Sign convention matches `distance_to_goal_decoder2`:
       +ve bias = decoder predicts a location further from the goal (past).
       -ve bias = decoder predicts a location closer to the goal (future).
     """
@@ -479,7 +478,7 @@ def _get_trajectory_error(Yprob, test_df, decoder_classes):
       - signed_error         (m)    center of mass along trajectory steps
                                     (+ve = past / further from goal,
                                      -ve = future / closer to goal — matches the
-                                     sign convention of distance_to_goal_decoder)
+                                     sign convention of distance_to_goal_decoder2)
       - all_envelope_defined (bool) every envelope location appeared in training classes
     """
     # Build (n_samples × (2k+1)) envelope label matrix with step coords [+k, ..., 0, ..., -k]

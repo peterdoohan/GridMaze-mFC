@@ -19,7 +19,6 @@ from GridMaze.analysis.core import convert
 from GridMaze.analysis.distance_to_goal import distributions as dd
 from GridMaze.analysis.processing import get_distance_tuning_metrics_df as dtm
 from GridMaze.analysis.theta_mod import theta_utils as tmu
-from GridMaze.analysis.theta_mod import distance_to_goal_decoder as tdd  # noqa: F401  (kept for ref)
 from GridMaze.analysis.theta_mod import distance_to_goal_decoder2 as ddv2
 
 # %% Global Variables
