@@ -261,7 +261,7 @@ def get_session_theta_mod_distance_error(
 # %% Cross-session runner
 
 
-def get_theta_mod_distance_error_df(verbose=True, C=1, days_on_maze="all", save=False):
+def get_theta_mod_distance_error_df(verbose=True, C=1, save=False):
     """Run the session-level decoder across all subjects × mazes and concat results.
 
     Cached to parquet. Pass `save=True` to force rerun and overwrite the cache.
@@ -278,6 +278,7 @@ def get_theta_mod_distance_error_df(verbose=True, C=1, days_on_maze="all", save=
             res["subject_ID"] = session.subject_ID
             res["maze_name"] = session.maze_name
             res["day_on_maze"] = session.day_on_maze
+            res["late_session"] = session.late_session
             return res
         except Exception as e:
             if verbose:
@@ -290,7 +291,7 @@ def get_theta_mod_distance_error_df(verbose=True, C=1, days_on_maze="all", save=
             sessions = gs.get_maze_sessions(
                 subject_IDs=[subject],
                 maze_names=[maze_name],
-                days_on_maze=days_on_maze,
+                days_on_maze="all",
                 with_data=["navigation_df", "navigation_theta_spike_counts_df", "cluster_metrics", "trials_df"],
                 must_have_data=True,
             )
@@ -311,6 +312,7 @@ def get_theta_mod_distance_error_df(verbose=True, C=1, days_on_maze="all", save=
 
 def plot_theta_mod_distance_error(
     summary_df,
+    late_sessions=False,
     distance_to_goal=None,
     speed_range=None,
     maze_names=None,
@@ -330,6 +332,7 @@ def plot_theta_mod_distance_error(
         speed_range=speed_range,
         maze_names=maze_names,
         max_baseline_mae=max_baseline_mae,
+        late_sessions=late_sessions,
     )
     bias = df.groupby(["subject_ID", "theta_phase"])["signed_error"].mean().unstack(0).T
     bias = bias.sub(bias.mean(axis=1), axis=0)
@@ -356,6 +359,7 @@ def _filter_summary_df(
     speed_range=None,
     maze_names=None,
     max_baseline_mae=None,
+    late_sessions=False,
 ):
     """Apply plot-time filters to the cross-session decoding summary.
 
@@ -368,6 +372,8 @@ def _filter_summary_df(
     df = summary_df
     if maze_names is not None:
         df = df[df.maze_name.isin(maze_names)]
+    if late_sessions:
+        df = df[df.late_session]
     if distance_to_goal is not None:
         lo, hi = distance_to_goal
         df = df[df.distance_to_goal.between(lo, hi)]

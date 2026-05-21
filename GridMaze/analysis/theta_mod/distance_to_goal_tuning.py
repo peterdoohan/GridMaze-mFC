@@ -19,7 +19,8 @@ from GridMaze.analysis.core import convert
 from GridMaze.analysis.distance_to_goal import distributions as dd
 from GridMaze.analysis.processing import get_distance_tuning_metrics_df as dtm
 from GridMaze.analysis.theta_mod import theta_utils as tmu
-from GridMaze.analysis.theta_mod import distance_to_goal_decoder as tdd
+from GridMaze.analysis.theta_mod import distance_to_goal_decoder as tdd  # noqa: F401  (kept for ref)
+from GridMaze.analysis.theta_mod import distance_to_goal_decoder2 as ddv2
 
 # %% Global Variables
 
@@ -320,6 +321,7 @@ def get_opt_heatmap_x_shift(
 def get_population_theta_split_distance_tuning(
     subject_ID="all",
     method="peak_trough",
+    days_on_maze="all",
     peak_trough_inds=([4, 5, 6], [9, 10, 11]),
     verbose=True,
     min_split_half_corr=0.7,
@@ -335,7 +337,7 @@ def get_population_theta_split_distance_tuning(
         sessions = gs.get_maze_sessions(
             subject_IDs=[subject_ID],
             maze_names="all",
-            days_on_maze="all",
+            days_on_maze=days_on_maze,
             with_data=[
                 "navigation_df",
                 "navigation_theta_spike_counts_df",
@@ -559,6 +561,7 @@ def get_opt_heatmap_x_shift_all_phases(
 
 
 def get_population_distance_tuning_theta_x_shifts_all_phases(
+    days_on_maze="late",
     min_split_half_corr=0.7,
     shift=0.08,
     bin_spacing=0.04,
@@ -575,11 +578,14 @@ def get_population_distance_tuning_theta_x_shifts_all_phases(
             print(f"Loading existing results from {save_path}")
         results_df = pd.read_csv(save_path, index_col=0)
         return results_df
+
     subject_opt_x_shifts = []
     for subject in SUBJECT_IDS:
         tuning_df, _ = get_population_theta_split_distance_tuning(
             subject_ID=subject,
+            method="mean_all_phases",
             verbose=verbose,
+            days_on_maze=days_on_maze,
             min_split_half_corr=min_split_half_corr,
         )
         opt_x_shifts, phases = get_opt_heatmap_x_shift_all_phases(
@@ -600,7 +606,13 @@ def get_population_distance_tuning_theta_x_shifts_all_phases(
 
 
 def plot_theta_mod_x_shifts(
-    results_df, color="teal", ref_color="darkblue", plot_decoding_ref=True, print_stats=True, ax=None
+    results_df,
+    late_sessions=False,
+    color="dodgerblue",
+    ref_color="darkblue",
+    plot_decoding_ref=True,
+    print_stats=True,
+    ax=None,
 ):
     # set up fig
     if ax is None:
@@ -615,8 +627,9 @@ def plot_theta_mod_x_shifts(
     )
     if plot_decoding_ref:
         # load decoding results and det analagous modulation bias df
-        decoding_mod_df = tdd.load_decoding_results(lfp_type="theta_mid")
-        decoding_bias = decoding_mod_df.groupby(["subject_ID"]).lfp_phase.mean().lfp_phase
+        decoding_mod_df = ddv2.get_theta_mod_distance_error_df()
+        _decoding_mod_df = ddv2._filter_summary_df(decoding_mod_df, late_sessions=late_sessions)
+        decoding_bias = _decoding_mod_df.groupby(["subject_ID", "theta_phase"])["signed_error"].mean().unstack(0).T
         decoding_bias_norm = decoding_bias.sub(decoding_bias.mean(axis=1), axis=0)
         decoding_bias_cm = decoding_bias_norm.mul(100)  # m -> cm
         # fit sinusoid to subject-averaged decoding results, rescale amplitude to match tuning fit

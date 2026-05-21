@@ -18,7 +18,8 @@ from GridMaze.analysis.core import get_clusters as gc
 from GridMaze.analysis.core import filter as filt
 from GridMaze.analysis.core import folds
 from GridMaze.analysis.theta_mod import theta_utils as tmu
-from GridMaze.analysis.theta_mod import distance_to_goal_decoder as tdd
+from GridMaze.analysis.theta_mod import distance_to_goal_decoder as tdd  # noqa: F401  (kept for ref)
+from GridMaze.analysis.theta_mod import distance_to_goal_decoder2 as ddv2
 from GridMaze.maze import representations as mr
 
 # %% Global Variables
@@ -218,7 +219,7 @@ def get_session_theta_mod_trajectory_error(
 # %% Cross-session runner
 
 
-def get_theta_mod_trajectory_error_df(verbose=True, C="opt", save=False):
+def get_theta_mod_trajectory_error_df(verbose=True, C=1, save=False):
     """Run the session-level decoder across all subjects × mazes and concat results.
 
     Cached to parquet. Pass `save=True` to force rerun and overwrite the cache.
@@ -234,6 +235,7 @@ def get_theta_mod_trajectory_error_df(verbose=True, C="opt", save=False):
         res["subject_ID"] = session.subject_ID
         res["maze_name"] = session.maze_name
         res["day_on_maze"] = session.day_on_maze
+        res["late_session"] = session.late_session
         return res
 
     dfs = []
@@ -242,7 +244,7 @@ def get_theta_mod_trajectory_error_df(verbose=True, C="opt", save=False):
             sessions = gs.get_maze_sessions(
                 subject_IDs=[subject],
                 maze_names=[maze_name],
-                days_on_maze="late",
+                days_on_maze="all",
                 with_data=["navigation_df", "navigation_theta_spike_counts_df", "cluster_metrics", "trials_df"],
                 must_have_data=True,
             )
@@ -262,8 +264,10 @@ def get_theta_mod_trajectory_error_df(verbose=True, C="opt", save=False):
 
 def plot_theta_mod_trajectory_error(
     summary_df,
+    late_sessions=False,
     distance_to_goal=None,
     decision_points=False,
+    maze_names=None,
     all_envelope_defined=True,
     min_chance_ratio=2,
     normalise=True,
@@ -286,6 +290,8 @@ def plot_theta_mod_trajectory_error(
         decision_points=decision_points,
         all_envelope_defined=all_envelope_defined,
         min_chance_ratio=min_chance_ratio,
+        maze_names=maze_names,
+        late_sessions=late_sessions,
     )
     place_bias = df.groupby(["subject_ID", "theta_phase"])["signed_error"].mean().unstack(0).T
     if normalise:
@@ -304,8 +310,15 @@ def plot_theta_mod_trajectory_error(
     if plot_distance_ref:
         if ax is None:
             ax = plt.gca()
-        distance_mod_df = tdd.load_decoding_results(lfp_type="theta_mid")
-        dist_bias = distance_mod_df.groupby(["subject_ID"]).lfp_phase.mean().lfp_phase
+        distance_mod_df = ddv2.get_theta_mod_distance_error_df()
+        # apply same late, maze_names, etc. fitlering for reference
+        _distance_mod_df = ddv2._filter_summary_df(
+            distance_mod_df,
+            distance_to_goal=distance_to_goal,
+            maze_names=maze_names,
+            late_sessions=late_sessions,
+        )
+        dist_bias = _distance_mod_df.groupby(["subject_ID", "theta_phase"])["signed_error"].mean().unstack(0).T
         dist_bias = dist_bias.sub(dist_bias.mean(axis=1), axis=0)
         phases = dist_bias.columns.values.astype(float)
         dist_fit = tmu.fit_sinusoid(phases, dist_bias.mean().values, fit_constant=True, return_as="params")
@@ -331,6 +344,8 @@ def _filter_summary_df(
     decision_points=False,
     all_envelope_defined=True,
     min_chance_ratio=2.0,
+    maze_names=None,
+    late_sessions=False,
 ):
     """Apply plot-time filters to the cross-session decoding summary.
 
@@ -340,8 +355,14 @@ def _filter_summary_df(
     - all_envelope_defined: keep only samples where the full ±envelope was in the training set.
     - min_chance_ratio: drop sessions whose mean fold accuracy is below
       min_chance_ratio × chance, where chance = 1 / fold_n_classes (per fold).
+    - maze_names: iterable of maze names to keep (e.g. ["maze_1", "maze_2"]); None = keep all.
+    - late_sessions: whether to keep only late sessions.
     """
     df = summary_df
+    if maze_names is not None:
+        df = df[df.maze_name.isin(maze_names)]
+    if late_sessions:
+        df = df[df.late_session]
     if all_envelope_defined:
         df = df[df.all_envelope_defined]
     if distance_to_goal is not None:
@@ -493,5 +514,3 @@ def _get_trajectory_error(Yprob, test_df, decoder_classes):
         "signed_error": signed_error,
         "all_envelope_defined": all_envelope_defined,
     }
-
-

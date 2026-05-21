@@ -229,7 +229,7 @@ def _make_inner_fold_df(train_trials, n_inner=4, seed=0):
 # %% Cross-session runner
 
 
-def get_theta_mod_double_decoding_df(verbose=True, C=1, days_on_maze="all", save=False):
+def get_theta_mod_double_decoding_df(verbose=True, C=1, save=False):
     """Run the matched-sample decoder across all subjects × mazes and concat results.
 
     Cached to parquet. Pass `save=True` to force rerun and overwrite the cache.
@@ -246,6 +246,7 @@ def get_theta_mod_double_decoding_df(verbose=True, C=1, days_on_maze="all", save
             res["subject_ID"] = session.subject_ID
             res["maze_name"] = session.maze_name
             res["day_on_maze"] = session.day_on_maze
+            res["late_session"] = session.late_session
             return res
         except Exception as e:
             if verbose:
@@ -258,7 +259,7 @@ def get_theta_mod_double_decoding_df(verbose=True, C=1, days_on_maze="all", save
             sessions = gs.get_maze_sessions(
                 subject_IDs=[subject],
                 maze_names=[maze_name],
-                days_on_maze=days_on_maze,
+                days_on_maze="all",
                 with_data=["navigation_df", "navigation_theta_spike_counts_df", "cluster_metrics", "trials_df"],
                 must_have_data=True,
             )
@@ -277,8 +278,20 @@ def get_theta_mod_double_decoding_df(verbose=True, C=1, days_on_maze="all", save
 # %% Plotting
 
 
+def _filter_summary_df(summary_df, late_sessions=False, maze_names=None):
+    """ """
+    _df = summary_df.copy()
+    if maze_names is not None:
+        _df = _df[_df.maze_name.isin(maze_names)]
+    if late_sessions:
+        _df = _df[_df.late_session]
+    return _df
+
+
 def plot_double_decoding_bias(
     summary_df,
+    late_sessions=False,
+    maze_names=None,
     place_color="darkred",
     dist_color="darkblue",
     normalise=True,
@@ -286,11 +299,6 @@ def plot_double_decoding_bias(
     axes=None,
 ):
     """Quick readout of the matched-sample double-decoding results.
-
-    Single 6x3 figure with two panels (width ratio 2:1): left is the place and
-    distance bias overlay; right is the per-subject Δφ polar plot via
-    `decoding_offsets.plot_phase_offset_polar`.
-
     `normalise=True` divides each pipeline's per-subject bias df by the
     amplitude `A` of a sinusoid fit to its cross-subject mean curve, so both
     pipelines plot at the same vertical scale. Useful for visualising phase
@@ -299,7 +307,7 @@ def plot_double_decoding_bias(
 
     Sign convention: +ve bias = decoder predicts location further from goal (past).
     """
-    df = summary_df
+    df = _filter_summary_df(summary_df, late_sessions=late_sessions, maze_names=maze_names)
 
     # Split combined df into per-pipeline bias dfs (subjects × phases, in metres)
     biases_m = {}

@@ -5,20 +5,21 @@ Cross-pipeline phase-offset comparison between place and distance theta-mod deco
 
 # %% Imports
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
-from scipy.stats import circmean, wilcoxon
+from scipy.stats import circmean
 from pingouin import circ_rayleigh
 
 from GridMaze.analysis.theta_mod import theta_utils as tmu
 from GridMaze.analysis.theta_mod import place_direction_decoding as pdd
 from GridMaze.analysis.theta_mod import distance_to_goal_decoder2 as ddv2
+from GridMaze.analysis.theta_mod import distance_to_goal_tuning as dgt
 
 # %% Data loaders
 
 
 def get_place_bias(
+    late_sessions=False,
+    maze_names=None,
     distance_to_goal=None,
     decision_points=False,
     all_envelope_defined=True,
@@ -35,15 +36,18 @@ def get_place_bias(
         decision_points=decision_points,
         all_envelope_defined=all_envelope_defined,
         min_chance_ratio=min_chance_ratio,
+        late_sessions=late_sessions,
+        maze_names=maze_names,
     )
     bias = df.groupby(["subject_ID", "theta_phase"])["signed_error"].mean().unstack(0).T
     return bias.sub(bias.mean(axis=1), axis=0)
 
 
 def get_distance_bias(
+    late_sessions=False,
+    maze_names=None,
     distance_to_goal=None,
     speed_range=None,
-    maze_names=None,
     max_baseline_mae=None,
 ):
     """Per-subject distance-decoding bias along theta phase (m), per-subject mean-subtracted.
@@ -57,8 +61,25 @@ def get_distance_bias(
         speed_range=speed_range,
         maze_names=maze_names,
         max_baseline_mae=max_baseline_mae,
+        late_sessions=late_sessions,
     )
     bias = df.groupby(["subject_ID", "theta_phase"])["signed_error"].mean().unstack(0).T
+    return bias.sub(bias.mean(axis=1), axis=0)
+
+
+def get_distance_tuning_bias():
+    """Per-subject distance-tuning bias along theta phase (m), per-subject mean-subtracted.
+
+    Loads from `distance_to_goal_tuning.get_population_distance_tuning_theta_x_shifts_all_phases`
+    and reshapes to the subjects × phases format used by the other bias loaders, so it can
+    be passed straight into `plot_phase_offset_polar`.
+
+    Returns subjects × phases df.
+    """
+    results_df = dgt.get_population_distance_tuning_theta_x_shifts_all_phases(
+        save=False, verbose=False
+    )  # late sessions
+    bias = results_df.T  # subjects × phases, in metres
     return bias.sub(bias.mean(axis=1), axis=0)
 
 
@@ -165,113 +186,3 @@ def plot_phase_offset_polar(
         print(f"  mean Δt:       {dt_ms:+.1f} ms     95% CI [{ci_low_ms:+.1f}, {ci_high_ms:+.1f}]   ")
         print(f"  Rayleigh p:    {p_ray:.4g}")
         print(f"  bootstrap p:   {p_boot:.4g}")
-
-
-# %% Lagged paired regression (sample-level alternative to the polar Δφ)
-
-
-def get_lagged_regression_betas(
-    double_df,
-    lags=None,
-    center_per_sample=True,
-):
-    """Per-subject β(δ) from regressing within-sample signed_error_place on
-    signed_error_distance shifted by δ phase bins.
-
-    Sign convention: δ > 0 rolls distance into the future relative to place, so
-    β(+δ) > 0 means distance at phase k−δ predicts place at phase k (i.e.
-    distance leads place by δ phase bins).
-
-    Returns
-    -------
-    betas_df : pd.DataFrame
-        index = subject_ID, columns = lag δ (int), values = β(δ).
-    """
-    if lags is None:
-        lags = list(range(-5, 6))
-
-    df = double_df.dropna(subset=["signed_error_place", "signed_error_distance"])
-
-    out = {}
-    for subject, sdf in df.groupby("subject_ID"):
-        # Pivot each sample's 12 theta_phase rows into 12 columns per pipeline.
-        # (trial_unique_ID, time) uniquely identifies a sample within a subject.
-        wide = sdf.pivot_table(
-            index=["trial_unique_ID", "time"],
-            columns="theta_phase",
-            values=["signed_error_place", "signed_error_distance"],
-        )
-        wide = wide.sort_index(axis=1, level=1)  # sort phase ascending → consistent np.roll
-        P = wide["signed_error_place"].to_numpy()
-        D = wide["signed_error_distance"].to_numpy()
-        # Drop samples with any NaN cell (rare, but pivot may introduce them)
-        mask = ~np.isnan(P).any(axis=1) & ~np.isnan(D).any(axis=1)
-        P, D = P[mask], D[mask]
-        if center_per_sample:
-            P = P - P.mean(axis=1, keepdims=True)
-            D = D - D.mean(axis=1, keepdims=True)
-
-        betas = []
-        for delta in lags:
-            D_rolled = np.roll(D, -delta, axis=1)
-            x = D_rolled.ravel()
-            y = P.ravel()
-            var_x = np.var(x, ddof=1)
-            beta = np.cov(x, y, ddof=1)[0, 1] / var_x if var_x > 0 else np.nan
-            betas.append(beta)
-        out[subject] = betas
-
-    betas_df = pd.DataFrame(out, index=lags).T
-    betas_df.index.name = "subject_ID"
-    betas_df.columns.name = "lag"
-    return betas_df
-
-
-def plot_lagged_regression_betas(
-    betas_df,
-    subject_color="grey",
-    mean_color="purple",
-    print_stats=True,
-    ax=None,
-):
-    """Per-subject β(δ) curves + cross-subject mean ± SEM.
-
-    Prints (if `print_stats=True`):
-      - per-|δ| asymmetry `mean(β(+δ) − β(−δ))` across subjects + Wilcoxon p.
-      - per-subject peak-lag distribution + Wilcoxon vs δ=0.
-    """
-    lags = betas_df.columns.to_numpy()
-    if ax is None:
-        _, ax = plt.subplots(figsize=(3, 3))
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.axhline(0, color="k", lw=0.5, alpha=0.5)
-    ax.axvline(0, color="k", lw=0.5, alpha=0.5)
-    for _, row in betas_df.iterrows():
-        ax.plot(lags, row.values, color=subject_color, alpha=0.4, lw=1)
-    mean = betas_df.mean(axis=0).values
-    sem = betas_df.sem(axis=0).values
-    ax.fill_between(lags, mean - sem, mean + sem, color=mean_color, alpha=0.25, lw=0)
-    ax.plot(lags, mean, color=mean_color, lw=2)
-    ax.set_xlabel("phase lag δ (bins)")
-    ax.set_ylabel("β (place ~ distance shifted)")
-
-    if print_stats:
-        print("asymmetry  (mean β(+δ) − β(−δ),  Wilcoxon p across subjects):")
-        for d in sorted({abs(int(L)) for L in lags if L > 0}):
-            if (d in betas_df.columns) and (-d in betas_df.columns):
-                asym = betas_df[d] - betas_df[-d]
-                try:
-                    _, p = wilcoxon(asym)
-                except ValueError:
-                    p = np.nan
-                print(f"  |δ|={d}:  mean={asym.mean():+.3f}   p={p:.4g}")
-        peak_lags = betas_df.idxmax(axis=1).astype(int)
-        print(f"\nper-subject peak lags: {peak_lags.to_dict()}")
-        try:
-            _, p = wilcoxon(peak_lags.values)
-            print(f"peak-lag distribution: mean={peak_lags.mean():+.2f} bins   " f"Wilcoxon vs 0 p={p:.4g}")
-        except ValueError:
-            pass
-
-
-# %%
