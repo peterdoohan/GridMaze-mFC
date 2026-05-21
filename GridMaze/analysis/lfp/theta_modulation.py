@@ -80,12 +80,12 @@ def plot_theta_aligned_lfp(theta_aligned_df, ax=None, color="crimson"):
     ax.set_xticklabels(["-π", "-π/2", "0", "π/2", "π"])
 
 
-def get_theta_aligned_lfp_df(save=False, verbose=False):
+def get_theta_aligned_lfp_df(n_bins=32, save=False, verbose=False):
     """
     Note get sessions one-by-one to avoid memory issues
     with massive LFP arrays.
     """
-    save_path = RESULTS_DIR / "theta_aligned_lfp.csv"
+    save_path = RESULTS_DIR / f"theta_aligned_lfp_nbins_{n_bins}.csv"
     if save_path.exists() and not save:
         if verbose:
             print(f"Loading theta aligned lfp from {save_path}")
@@ -107,7 +107,7 @@ def get_theta_aligned_lfp_df(save=False, verbose=False):
                     )
                     if verbose:
                         print(session.name)
-                    theta_aligned_lfp = get_session_theta_aligned_lfp(session)
+                    theta_aligned_lfp = get_session_theta_aligned_lfp(session, n_bins=n_bins)
                     aligned_lfps.append(theta_aligned_lfp)
                 except FileNotFoundError:
                     pass  # minority of sessions missing data
