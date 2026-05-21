@@ -11,7 +11,7 @@ from pingouin import circ_rayleigh
 
 from GridMaze.analysis.theta_mod import theta_utils as tmu
 from GridMaze.analysis.theta_mod import place_direction_decoding as pdd
-from GridMaze.analysis.theta_mod import distance_to_goal_decoder2 as ddv2
+from GridMaze.analysis.theta_mod import distance_to_goal_decoder as tdd
 from GridMaze.analysis.theta_mod import distance_to_goal_tuning as dgt
 
 # %% Data loaders
@@ -54,8 +54,8 @@ def get_distance_bias(
 
     Returns subjects × phases df.
     """
-    summary_df = ddv2.get_theta_mod_distance_error_df()
-    df = ddv2._filter_summary_df(
+    summary_df = tdd.get_theta_mod_distance_error_df()
+    df = tdd._filter_summary_df(
         summary_df,
         distance_to_goal=distance_to_goal,
         speed_range=speed_range,

@@ -19,7 +19,7 @@ from GridMaze.analysis.core import convert
 from GridMaze.analysis.distance_to_goal import distributions as dd
 from GridMaze.analysis.processing import get_distance_tuning_metrics_df as dtm
 from GridMaze.analysis.theta_mod import theta_utils as tmu
-from GridMaze.analysis.theta_mod import distance_to_goal_decoder2 as ddv2
+from GridMaze.analysis.theta_mod import distance_to_goal_decoder as tdd
 
 # %% Global Variables
 
@@ -626,8 +626,8 @@ def plot_theta_mod_x_shifts(
     )
     if plot_decoding_ref:
         # load decoding results and det analagous modulation bias df
-        decoding_mod_df = ddv2.get_theta_mod_distance_error_df()
-        _decoding_mod_df = ddv2._filter_summary_df(decoding_mod_df, late_sessions=late_sessions)
+        decoding_mod_df = tdd.get_theta_mod_distance_error_df()
+        _decoding_mod_df = tdd._filter_summary_df(decoding_mod_df, late_sessions=late_sessions)
         decoding_bias = _decoding_mod_df.groupby(["subject_ID", "theta_phase"])["signed_error"].mean().unstack(0).T
         decoding_bias_norm = decoding_bias.sub(decoding_bias.mean(axis=1), axis=0)
         decoding_bias_cm = decoding_bias_norm.mul(100)  # m -> cm

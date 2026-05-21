@@ -3,7 +3,7 @@ Sanity-check decoder that runs place-direction and distance-to-goal theta-mod
 decoding on the SAME train/test rows per fold (leave-one-trial-out). Output is
 a wide long-df with `signed_error_place` and `signed_error_distance` on every
 row. Single source of truth for the underlying decoders: this module composes
-the existing `place_direction_decoding` and `distance_to_goal_decoder2`
+the existing `place_direction_decoding` and `distance_to_goal_decoder`
 subfunctions; no decoder logic is duplicated.
 @peterdoohan
 """
@@ -21,7 +21,7 @@ from GridMaze.analysis.core import convert
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.theta_mod import theta_utils as tmu
 from GridMaze.analysis.theta_mod import place_direction_decoding as pdd
-from GridMaze.analysis.theta_mod import distance_to_goal_decoder2 as ddv2
+from GridMaze.analysis.theta_mod import distance_to_goal_decoder as tdd
 from GridMaze.analysis.theta_mod import decoding_offsets as dox
 
 # %% Global Variables
@@ -138,9 +138,9 @@ def get_session_double_decoding(
         fold_accuracy = place_decoder.score(Xte_mean_p, test_df.maze_position.simple.values)
         fold_n_classes = len(place_decoder.classes_)
 
-        # --- DISTANCE (reuses ddv2 helpers) ---
+        # --- DISTANCE (reuses tdd helpers) ---
         dist_C = (
-            ddv2._get_opt_C(
+            tdd._get_opt_C(
                 train_df,
                 inner_fold_df,
                 output=output,
@@ -152,20 +152,20 @@ def get_session_double_decoding(
             if C == "opt"
             else C
         )
-        Xtr_d = ddv2._prepare_X(train_df, phase=None, sqrt=sqrt_spikes)
+        Xtr_d = tdd._prepare_X(train_df, phase=None, sqrt=sqrt_spikes)
         scaler_d = StandardScaler().fit(Xtr_d) if normalise_X else None
         if scaler_d is not None:
             Xtr_d = scaler_d.transform(Xtr_d)
         dist_decoder = LogisticRegression(C=dist_C, max_iter=10_000, random_state=0, class_weight="balanced").fit(
             Xtr_d, train_df.distance_bin_id.values
         )
-        Xte_mean_d = ddv2._prepare_X(test_df, phase=None, sqrt=sqrt_spikes)
+        Xte_mean_d = tdd._prepare_X(test_df, phase=None, sqrt=sqrt_spikes)
         if scaler_d is not None:
             Xte_mean_d = scaler_d.transform(Xte_mean_d)
         # bin mids corresponding to the bin_ids actually seen in training (LOO may drop bins from train)
         trained_bin_mids = distance_bin_mids[dist_decoder.classes_]
         true_dist = distance_bin_mids[test_df.distance_bin_id.values]
-        baseline_pred = ddv2._decode_distance(dist_decoder, Xte_mean_d, trained_bin_mids, output=output)
+        baseline_pred = tdd._decode_distance(dist_decoder, Xte_mean_d, trained_bin_mids, output=output)
         fold_baseline_mae = float(np.mean(np.abs(baseline_pred - true_dist)))
 
         # --- Per-test-sample metadata (shared across phases) ---
@@ -193,10 +193,10 @@ def get_session_double_decoding(
             Yprob = place_decoder.predict_proba(X_p)
             place_errs = pdd._get_trajectory_error(Yprob, test_df, place_decoder.classes_)
 
-            X_d = ddv2._prepare_X(test_df, phase=phase, sqrt=sqrt_spikes)
+            X_d = tdd._prepare_X(test_df, phase=phase, sqrt=sqrt_spikes)
             if scaler_d is not None:
                 X_d = scaler_d.transform(X_d)
-            y_pred_dist = ddv2._decode_distance(dist_decoder, X_d, trained_bin_mids, output=output)
+            y_pred_dist = tdd._decode_distance(dist_decoder, X_d, trained_bin_mids, output=output)
             dist_err = y_pred_dist - true_dist  # +ve = further than truth
 
             res = base.copy()
@@ -211,7 +211,7 @@ def get_session_double_decoding(
 
 def _make_inner_fold_df(train_trials, n_inner=4, seed=0):
     """Train-side-only fold_df for inner C-search CV (compatible with
-    pdd._get_opt_C and ddv2._get_opt_C).
+    pdd._get_opt_C and tdd._get_opt_C).
 
     Columns: ("train", 0), ..., ("train", n_inner-1). Rows: trial IDs
     (NaN-padded if not evenly divisible). Trials shuffled with `seed`.
