@@ -24,7 +24,6 @@ from GridMaze.analysis.distance_to_goal import logreg_decoder as ld
 from GridMaze.analysis.place_direction.future_decoding import get_decision_points
 from GridMaze.analysis.theta_mod import theta_utils as tu
 
-
 # %% Global Variables
 
 from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
@@ -185,11 +184,7 @@ def populate_decoding_results(lfp_type="theta", subfolder=None, max_distance=0.8
             if verbose:  # not enough trials in some early sessions
                 print(f"Error processing session {session.name}: {e}")
 
-    with_data = [
-        "navigation_df",
-        "cluster_metrics",
-        "trials_df",
-    ]
+    with_data = ["navigation_df", "cluster_metrics", "trials_df", "navigation_theta_spike_counts_df"]
     if lfp_type == "theta":
         with_data.append("navigation_theta_spike_counts_df")
     elif lfp_type == "4Hz":

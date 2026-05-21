@@ -41,14 +41,14 @@ _DIR_SHIFT = {"N": (1, 0), "S": (-1, 0), "E": (0, 1), "W": (0, -1)}
 
 def plot_theta_mod_tuning_summary(
     SSE_df,
-    maze_names=["maze_1", "maze_2", "rooms_maze"],
+    maze_names=["maze_1", "maze_2"],
     place_tuned_only=False,
-    min_split_half_corr=0.5,
-    late_sessions_only=False,
+    min_split_half_corr=0.7,
+    late_sessions_only=True,
     demean=True,
     color="grey",
     label=None,
-    norm=False,
+    norm=True,
     print_stats=True,
     ax=None,
 ):

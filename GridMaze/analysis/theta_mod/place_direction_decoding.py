@@ -8,7 +8,6 @@ import json
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
 from joblib import Parallel, delayed
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
@@ -219,7 +218,7 @@ def get_session_theta_mod_trajectory_error(
 # %% Cross-session runner
 
 
-def get_theta_mod_trajectory_error_df(verbose=True, save=False):
+def get_theta_mod_trajectory_error_df(verbose=True, C="opt", save=False):
     """Run the session-level decoder across all subjects × mazes and concat results.
 
     Cached to parquet. Pass `save=True` to force rerun and overwrite the cache.
@@ -231,7 +230,7 @@ def get_theta_mod_trajectory_error_df(verbose=True, save=False):
     def _process_session(session):
         if verbose:
             print(session.name)
-        res = get_session_theta_mod_trajectory_error(session, verbose=False)
+        res = get_session_theta_mod_trajectory_error(session, verbose=False, C=C)
         res["subject_ID"] = session.subject_ID
         res["maze_name"] = session.maze_name
         res["day_on_maze"] = session.day_on_maze
@@ -275,9 +274,11 @@ def plot_theta_mod_trajectory_error(
     plot_distance_ref=True,
     ax=None,
 ):
-    """Per-subject sinusoid of place-decoding bias along theta phase, in mm.
+    """Per-subject sinusoid of place-decoding bias along theta phase, in cm.
 
-    +ve bias = decoder predicts further along the future trajectory.
+    Sign convention matches `distance_to_goal_decoder`:
+      +ve bias = decoder predicts a location further from the goal (past).
+      -ve bias = decoder predicts a location closer to the goal (future).
     """
     df = _filter_summary_df(
         summary_df,
@@ -316,112 +317,6 @@ def plot_theta_mod_trajectory_error(
         if print_stats:
             print("place vs distance offset:")
             tmu.test_theta_offset(dist_bias, place_bias)
-
-
-def plot_trough_phases(
-    summary_df,
-    distance_to_goal=None,
-    decision_points=False,
-    all_envelope_defined=True,
-    min_chance_ratio=2.0,
-    colors=("darkred", "darkblue"),
-    orientation="horizontal",
-    print_stats=True,
-    ax=None,
-):
-    """Per-subject trough phase of sinusoid fit to decoding bias, place vs distance.
-
-    orientation: "horizontal" (phase on x-axis) or "vertical" (phase on y-axis).
-    colors: (place_color, distance_color).
-    """
-    if orientation not in ("horizontal", "vertical"):
-        raise ValueError(f"orientation must be 'horizontal' or 'vertical'. Got {orientation!r}.")
-
-    df = _filter_summary_df(
-        summary_df,
-        distance_to_goal=distance_to_goal,
-        decision_points=decision_points,
-        all_envelope_defined=all_envelope_defined,
-        min_chance_ratio=min_chance_ratio,
-    )
-    place_bias = df.groupby(["subject_ID", "theta_phase"])["signed_error"].mean().unstack(0).T
-    place_bias = place_bias.sub(place_bias.mean(axis=1), axis=0)
-
-    distance_mod_df = tdd.load_decoding_results(lfp_type="theta_mid")
-    dist_bias = distance_mod_df.groupby(["subject_ID"]).lfp_phase.mean().lfp_phase
-    dist_bias = dist_bias.sub(dist_bias.mean(axis=1), axis=0)
-
-    def _troughs(bias_df):
-        phases = bias_df.columns.values.astype(float)
-        out = {}
-        for subject in bias_df.index:
-            fit = tmu.fit_sinusoid(phases, bias_df.loc[subject].values, fit_constant=True, return_as="params")
-            trough = (-np.pi / 2 - fit["phi"] + np.pi) % (2 * np.pi) - np.pi
-            out[subject] = trough
-        return out
-
-    place_troughs = _troughs(place_bias)
-    dist_troughs = _troughs(dist_bias)
-    subjects = sorted(set(place_troughs) & set(dist_troughs))
-    trough_df = pd.DataFrame(
-        [
-            {"subject_ID": s, "condition": c, "trough": t}
-            for s in subjects
-            for c, t in [("distance", dist_troughs[s]), ("place", place_troughs[s])]
-        ]
-    )
-
-    if print_stats:
-
-        tmu.test_theta_offset(dist_bias, place_bias)
-
-    horizontal = orientation == "horizontal"
-
-    if ax is None:
-        figsize = (2, 0.5) if horizontal else (0.5, 2)
-        _, ax = plt.subplots(1, 1, figsize=figsize)
-    ax.spines[["top", "right"]].set_visible(False)
-    for s in subjects:
-        if horizontal:
-            xs, ys = [place_troughs[s], dist_troughs[s]], [0, 1]
-        else:
-            xs, ys = [0, 1], [place_troughs[s], dist_troughs[s]]
-        ax.plot(xs, ys, color="grey", alpha=0.3, linewidth=1, zorder=1)
-    for cond, color in zip(["place", "distance"], colors):
-        if horizontal:
-            x_kw, y_kw, orient_kw = "trough", "condition", "h"
-        else:
-            x_kw, y_kw, orient_kw = "condition", "trough", "v"
-        sns.pointplot(
-            data=trough_df[trough_df.condition == cond],
-            x=x_kw,
-            y=y_kw,
-            order=["place", "distance"],
-            ax=ax,
-            errorbar="se",
-            markers="o",
-            linestyles="",
-            capsize=0,
-            color=color,
-            orient=orient_kw,
-            zorder=3,
-        )
-    phase_ticks = np.arange(0, np.pi + 0.1, np.pi / 2)
-    phase_labels = ["0", "π/2", "π"]
-    if horizontal:
-        ax.set_xlabel("theta phase (trough)")
-        ax.set_ylabel("")
-        ax.set_xticks(phase_ticks)
-        ax.set_xticklabels(phase_labels)
-        ax.set_xlim(0, np.pi)
-        ax.set_ylim(1.3, -0.3)
-    else:
-        ax.set_ylabel("theta phase (trough)")
-        ax.set_xlabel("")
-        ax.set_yticks(phase_ticks)
-        ax.set_yticklabels(phase_labels)
-        ax.set_ylim(0, np.pi)
-        ax.set_xlim(-0.3, 1.3)
 
 
 # %% --- filter helpers ---
@@ -560,14 +455,18 @@ def _get_trajectory_error(Yprob, test_df, decoder_classes):
     probability-weighted step coordinate, converted to meters.
 
     Returns a dict of per-sample arrays:
-      - signed_error         (m)    center of mass along trajectory steps (+ve = future)
+      - signed_error         (m)    center of mass along trajectory steps
+                                    (+ve = past / further from goal,
+                                     -ve = future / closer to goal — matches the
+                                     sign convention of distance_to_goal_decoder)
       - all_envelope_defined (bool) every envelope location appeared in training classes
     """
-    # Build (n_samples × (2k+1)) envelope label matrix with step coords [-k, ..., 0, ..., +k]
+    # Build (n_samples × (2k+1)) envelope label matrix with step coords [+k, ..., 0, ..., -k]
+    # (past = +ve so +ve bias means decoder represents location further from goal)
     past = test_df["past"].droplevel(level=1, axis=1)
     future = test_df["future"].droplevel(level=1, axis=1)
     envelope = int(max(past.columns.max(), future.columns.max()))
-    step_coords = np.arange(-envelope, envelope + 1)
+    step_coords = np.arange(envelope, -envelope - 1, -1)
 
     past_labels = np.stack([past[i].to_numpy() for i in range(envelope, 0, -1)], axis=1)
     center = test_df.maze_position.simple.to_numpy().reshape(-1, 1)
@@ -594,3 +493,5 @@ def _get_trajectory_error(Yprob, test_df, decoder_classes):
         "signed_error": signed_error,
         "all_envelope_defined": all_envelope_defined,
     }
+
+
