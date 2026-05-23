@@ -228,6 +228,9 @@ def plot_decoder_vs_lfp(
     markers=False,
     place_k=3,
     distance_k=3,
+    place_trough=None,
+    distance_trough=None,
+    distance_peak=None,
     print_ranges=True,
     ax=None,
 ):
@@ -247,6 +250,9 @@ def plot_decoder_vs_lfp(
     are drawn at the outer bin edges so the band literally covers k bins. Place
     band marks the place trough (both cycles); distance bands mark the distance
     peak (`distance_peak_color`) and trough (`distance_trough_color`) on cycle i only.
+    `place_trough` / `distance_trough` / `distance_peak`: optional int bin index
+    (modulo n_bins) to override the auto-detected argmin/argmax of the fitted
+    sinusoid. Defaults to None (auto-detect from fit).
     """
 
     def _band_bin_offsets(k):
@@ -305,7 +311,7 @@ def plot_decoder_vs_lfp(
     place_phases = dec_fits["place"]["phases"]
     place_fit = dec_fits["place"]["fit"]
     place_fitted = np.sin(place_phases + place_fit["phi"])  # amplitude-normalised fit at bins
-    place_trough_idx = int(np.argmin(place_fitted))
+    place_trough_idx = int(place_trough) % len(place_phases) if place_trough is not None else int(np.argmin(place_fitted))
     place_trough_phase = float(place_phases[place_trough_idx])
     dphi = 2 * np.pi / len(place_phases)
     p_low, p_high = _band_bin_offsets(place_k)
@@ -326,8 +332,9 @@ def plot_decoder_vs_lfp(
     dist_phases = dec_fits["distance"]["phases"]
     dist_fit = dec_fits["distance"]["fit"]
     dist_fitted = np.sin(dist_phases + dist_fit["phi"])
-    dist_peak_idx = int(np.argmax(dist_fitted))
-    dist_trough_idx = int(np.argmin(dist_fitted))
+    n_dist = len(dist_phases)
+    dist_peak_idx = int(distance_peak) % n_dist if distance_peak is not None else int(np.argmax(dist_fitted))
+    dist_trough_idx = int(distance_trough) % n_dist if distance_trough is not None else int(np.argmin(dist_fitted))
     dist_peak_phase = float(dist_phases[dist_peak_idx])
     dist_trough_phase = float(dist_phases[dist_trough_idx])
     dphi_d = 2 * np.pi / len(dist_phases)
