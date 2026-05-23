@@ -1,10 +1,19 @@
 """
 SLURM submission for hyperparameter sweeps over `get_sweep_update_df`.
 
-Each entry in PARAM_SETS becomes one SLURM job. The `tag` is passed through to
-`get_sweep_update_df(..., tag=...)`, which routes the cached parquet to
-`RESULTS_PATH/theta_mod/sweep_update_tests/sweep_update_df{tag}.parquet`, so
-runs never clobber each other or the canonical (`tag=None`) cache.
+PARAM_SETS is the Cartesian product of four axes:
+
+    C ∈ {0.1, 1, 10}                                    decoder regularisation
+    moving_only ∈ {True, False}                         theta-locked row filter
+    max_steps_to_goal ∈ {8, 12, 16, 20, 24, 28}         on-task row filter
+    phase config ∈ {canonical, shifted}                 peak/trough readout bins
+
+→ 3 × 2 × 6 × 2 = 72 jobs.
+
+Tags follow the existing convention: `_C{val}_msg{N}_{move|nomove}[_shifted]`.
+Each tag is passed through to `get_sweep_update_df(..., tag=...)`, which routes
+the cached parquet to
+`RESULTS_PATH/theta_mod/sweep_update_tests/sweep_update_df{tag}.parquet`.
 
 Usage:
     cd <repo root>
@@ -20,102 +29,50 @@ from pathlib import Path
 
 from GridMaze.analysis.theta_mod.catch_update import RESULTS_DIR
 
-# %% Param sets — edit this list to drive the sweep.
-# Each item is (tag, kwargs_dict) where kwargs are forwarded to
-# `get_sweep_update_df(...)` (which forwards them to
-# `get_session_sweep_update_df(...)` per session).
-PARAM_SETS = [
-    ("_base", {}),
-    ("_C1e-3", {"C": 1e-3}),
-    ("_C1e-2", {"C": 1e-2}),
-    ("_C1e-1", {"C": 1e-1}),
-    ("_C1", {"C": 1.0}),
-    ("_indep_pop", {"exclude_place_cells_from_decoder": True}),
-    ("_C1e-2_indep", {"C": 1e-2, "exclude_place_cells_from_decoder": True}),
-    ("_C1e-1_indep", {"C": 1e-1, "exclude_place_cells_from_decoder": True}),
-    # max_steps_to_goal sweep at C=1e-1 (varies the on-task row filter in get_input_data)
-    ("_C1e-1_msg10", {"C": 1e-1, "max_steps_to_goal": 10}),
-    ("_C1e-1_msg16", {"C": 1e-1, "max_steps_to_goal": 16}),
-    ("_C1e-1_msg24", {"C": 1e-1, "max_steps_to_goal": 24}),
-    # phase-bin sensitivity sweep (place_trough_bins, distance_peak_bins, distance_trough_bins)
-    # all phase-bin configs run with independent populations (exclude_place_cells_from_decoder=True)
-    # so the two correlation axes use disjoint cells; tagged with `_indep` for clarity.
-    # tags use hyphen-separated bin lists for uniform readability: pt<bins>, dp<bins>, dt<bins>
-    # config A — current defaults
-    (
-        "_phases_pt1-2-3_dp3-4-5_dt9-10-11_indep",
-        {
-            "place_trough_bins": [1, 2, 3],
-            "distance_peak_bins": [3, 4, 5],
-            "distance_trough_bins": [9, 10, 11],
-            "exclude_place_cells_from_decoder": True,
-        },
-    ),
-    # config B — shifted +1, distance_trough wraps via the wrap-aware helper
-    (
-        "_phases_pt1-2-3_dp4-5-6_dt10-11-0_indep",
-        {
-            "place_trough_bins": [1, 2, 3],
-            "distance_peak_bins": [4, 5, 6],
-            "distance_trough_bins": [10, 11, 0],
-            "exclude_place_cells_from_decoder": True,
-        },
-    ),
-    # config C — place_trough shifted left by 1
-    (
-        "_phases_pt0-1-2_dp3-4-5_dt9-10-11_indep",
-        {
-            "place_trough_bins": [0, 1, 2],
-            "distance_peak_bins": [3, 4, 5],
-            "distance_trough_bins": [9, 10, 11],
-            "exclude_place_cells_from_decoder": True,
-        },
-    ),
-    # config D — 4-bin variant at n_training_phases=4; distance_trough wraps
-    (
-        "_phases_n4_pt0-1-2-3_dp3-4-5-6_dt9-10-11-0_indep",
-        {
-            "place_trough_bins": [0, 1, 2, 3],
-            "distance_peak_bins": [3, 4, 5, 6],
-            "distance_trough_bins": [9, 10, 11, 0],
-            "n_training_phases": 4,
-            "exclude_place_cells_from_decoder": True,
-        },
-    ),
-    # short-distance × C-regularisation × indep grid:
-    # max_steps_to_goal ∈ {10, 8}, C ∈ {1e-1, None, 1, 10, 100}, both indep + non-indep.
-    # `C=None` forwards to `penalty=None` (unregularised LR).
-    # `_C1e-1_msg10` already covered above; omitted here to avoid clobbering.
-    ("_C1e-1_msg10_indep", {"C": 1e-1, "max_steps_to_goal": 10, "exclude_place_cells_from_decoder": True}),
-    ("_C1_msg10", {"C": 1.0, "max_steps_to_goal": 10}),
-    ("_C1_msg10_indep", {"C": 1.0, "max_steps_to_goal": 10, "exclude_place_cells_from_decoder": True}),
-    ("_C10_msg10", {"C": 10.0, "max_steps_to_goal": 10}),
-    ("_C10_msg10_indep", {"C": 10.0, "max_steps_to_goal": 10, "exclude_place_cells_from_decoder": True}),
-    ("_C100_msg10", {"C": 100.0, "max_steps_to_goal": 10}),
-    ("_C100_msg10_indep", {"C": 100.0, "max_steps_to_goal": 10, "exclude_place_cells_from_decoder": True}),
-    ("_Cnone_msg10", {"C": None, "max_steps_to_goal": 10}),
-    ("_Cnone_msg10_indep", {"C": None, "max_steps_to_goal": 10, "exclude_place_cells_from_decoder": True}),
-    ("_C1e-1_msg8", {"C": 1e-1, "max_steps_to_goal": 8}),
-    ("_C1e-1_msg8_indep", {"C": 1e-1, "max_steps_to_goal": 8, "exclude_place_cells_from_decoder": True}),
-    ("_C1_msg8", {"C": 1.0, "max_steps_to_goal": 8}),
-    ("_C1_msg8_indep", {"C": 1.0, "max_steps_to_goal": 8, "exclude_place_cells_from_decoder": True}),
-    ("_C10_msg8", {"C": 10.0, "max_steps_to_goal": 8}),
-    ("_C10_msg8_indep", {"C": 10.0, "max_steps_to_goal": 8, "exclude_place_cells_from_decoder": True}),
-    ("_C100_msg8", {"C": 100.0, "max_steps_to_goal": 8}),
-    ("_C100_msg8_indep", {"C": 100.0, "max_steps_to_goal": 8, "exclude_place_cells_from_decoder": True}),
-    ("_Cnone_msg8", {"C": None, "max_steps_to_goal": 8}),
-    ("_Cnone_msg8_indep", {"C": None, "max_steps_to_goal": 8, "exclude_place_cells_from_decoder": True}),
-    ("_C1e-1_msg12", {"C": 1e-1, "max_steps_to_goal": 12}),
-    ("_C1e-1_msg12_indep", {"C": 1e-1, "max_steps_to_goal": 12, "exclude_place_cells_from_decoder": True}),
-    ("_C1_msg12", {"C": 1.0, "max_steps_to_goal": 12}),
-    ("_C1_msg12_indep", {"C": 1.0, "max_steps_to_goal": 12, "exclude_place_cells_from_decoder": True}),
-    ("_C10_msg12", {"C": 10.0, "max_steps_to_goal": 12}),
-    ("_C10_msg12_indep", {"C": 10.0, "max_steps_to_goal": 12, "exclude_place_cells_from_decoder": True}),
-    ("_C100_msg12", {"C": 100.0, "max_steps_to_goal": 12}),
-    ("_C100_msg12_indep", {"C": 100.0, "max_steps_to_goal": 12, "exclude_place_cells_from_decoder": True}),
-    ("_Cnone_msg12", {"C": None, "max_steps_to_goal": 12}),
-    ("_Cnone_msg12_indep", {"C": None, "max_steps_to_goal": 12, "exclude_place_cells_from_decoder": True}),
+# %% Sweep axes
+C_VALUES = [1e-1, 1.0, 10.0]
+MOVING_VALUES = [True, False]
+MAX_STEPS_VALUES = [8, 12, 16, 20, 24, 28]
+# (suffix, distance_peak_bins, distance_trough_bins). Empty suffix == canonical.
+PHASE_CONFIGS = [
+    ("", [3, 4, 5], [9, 10, 11]),                # canonical
+    ("shifted", [4, 5, 6], [10, 11, 0]),         # +1 shifted, distance_trough wraps via wrap-aware helper
 ]
+
+
+def _format_C(C):
+    """Format C for tags: 0.1 → 'C1e-1', 1.0 → 'C1', 10.0 → 'C10'."""
+    if C == 1e-1:
+        return "C1e-1"
+    if C == 1.0:
+        return "C1"
+    if C == 10.0:
+        return "C10"
+    raise ValueError(f"unrecognised C={C!r} — extend _format_C")
+
+
+def _build_param_sets():
+    out = []
+    for C in C_VALUES:
+        for moving in MOVING_VALUES:
+            for msg in MAX_STEPS_VALUES:
+                for phase_suffix, dp, dt in PHASE_CONFIGS:
+                    tag_parts = [_format_C(C), f"msg{msg}", "move" if moving else "nomove"]
+                    if phase_suffix:
+                        tag_parts.append(phase_suffix)
+                    tag = "_" + "_".join(tag_parts)
+                    kwargs = {
+                        "C": C,
+                        "moving_only": moving,
+                        "max_steps_to_goal": msg,
+                        "distance_peak_bins": dp,
+                        "distance_trough_bins": dt,
+                    }
+                    out.append((tag, kwargs))
+    return out
+
+
+PARAM_SETS = _build_param_sets()
 
 # joblib-level parallelism inside each SLURM job (sessions processed concurrently).
 # Stay well below the per-job CPU allocation below.
