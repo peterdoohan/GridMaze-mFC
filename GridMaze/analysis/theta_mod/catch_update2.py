@@ -32,6 +32,7 @@ never modified.
 """
 
 # %% Imports
+import hashlib
 import json
 import warnings
 from collections import Counter
@@ -108,6 +109,22 @@ def _select_pools(cells, cpd_scores):
 # %% Stage 1 — per-(cycle, phase_bin) input data
 
 
+def _circular_shift_spike_times(spike_times, spike_clusters, t_lo, t_hi, rng, min_frac=0.05):
+    """Circularly shift the whole spike train in time by one shared random offset,
+    wrapping within [t_lo, t_hi). All clusters are shifted together, so each cluster's
+    spike count and the population's co-firing are preserved while the alignment of
+    spikes to behaviour and to LFP/theta phase is broken. The offset is drawn uniformly
+    from [min_frac, 1-min_frac]·span so it is never trivially small. Re-sorts (times,
+    clusters) jointly by the shifted time so the per-cluster `searchsorted` spike-count
+    downstream stays valid (it assumes ascending times). Returns the shifted,
+    time-sorted (spike_times, spike_clusters)."""
+    span = t_hi - t_lo
+    offset = rng.uniform(min_frac, 1.0 - min_frac) * span
+    shifted = t_lo + np.mod(spike_times - t_lo + offset, span)
+    order = np.argsort(shifted, kind="stable")
+    return shifted[order], spike_clusters[order]
+
+
 def get_input_data(
     session,
     n_bins=12,
@@ -117,6 +134,8 @@ def get_input_data(
     bin_spacing=0.05,
     moving_only=True,
     min_firing_rate=0.5,
+    circular_shift_seed=None,
+    circular_shift_min_frac=0.05,
     cpd_scores=None,
     verbose=False,
 ):
@@ -129,6 +148,17 @@ def get_input_data(
     per-cycle pool spike-count confounds, and subject/maze/session metadata.
     Backbone (cycle/phase-window detection, navigation alignment) reused from
     `catch_update`.
+
+    CONTROL — `circular_shift_seed` (None = off): when set, the whole spike train is
+    circularly shifted in time by one shared random offset (wrapping within the LFP
+    span) BEFORE spikes are counted into windows — see `_circular_shift_spike_times`.
+    This decouples spikes from behaviour and from LFP/theta phase while preserving each
+    cluster's spike count and the population's co-firing, so it tests whether the
+    distance↔place coupling needs spikes aligned to behaviour at all (a complement to
+    the within-cycle phase permutation, which keeps that alignment). The CPD-based pool
+    assignment is unaffected (it reads the precomputed true-data model set), so the
+    shifted run uses essentially the same neurons. `circular_shift_min_frac` bounds the
+    offset to [min_frac, 1-min_frac]·span so the shift is never trivially small.
     """
     # --- LFP → Hilbert theta phase → phase bins ---
     raw_lfp = lu.get_LFP(session, shank=shank)
@@ -148,6 +178,15 @@ def get_input_data(
     # --- spike counts per (cluster, cycle, bin) ---
     spike_times = np.asarray(session.spike_times).reshape(-1)
     spike_clusters = np.asarray(session.spike_clusters).reshape(-1)
+    if circular_shift_seed is not None:
+        spike_times, spike_clusters = _circular_shift_spike_times(
+            spike_times,
+            spike_clusters,
+            float(lfp_times[0]),
+            float(lfp_times[-1]),
+            np.random.default_rng(circular_shift_seed),
+            circular_shift_min_frac,
+        )
     cluster_IDs = np.sort(np.unique(spike_clusters)).astype(np.float64)
     cluster_unique_IDs = convert.cluster_IDs2scluster_unique_IDs(session.session_info, cluster_IDs)
 
@@ -286,6 +325,8 @@ def get_session_catch_update2_df(
     C=1.0,
     n_folds=10,
     cv_seed=0,
+    n_permutations=1,
+    permutation_seed=0,
     cpd_scores=None,
     verbose=False,
     **input_data_kwargs,
@@ -297,9 +338,101 @@ def get_session_catch_update2_df(
     ("distance","update") = JS(peak_posterior, trough_posterior)   within-cycle distance change
     ("place","update")    = JS(place_post(c), place_post(c+1))      across-cycle place change
     ("qc",…)              = decoder MAE, fold, per-pool neuron counts (diagnostics)
+
+    Theta-phase permutation null (`n_permutations`):
+      None (default) → the df above, unchanged.
+      int N          → ONE df = the true run (("qc","permutation")==0) stacked above N
+        phase-permuted runs (1..N). Each permutation independently scrambles which
+        spike/timing sub-window sits at each phase bin *within* every cycle (the whole
+        population vector at a bin moves as a unit), then RE-RUNS training + readout via
+        `_permute_phases_within_cycles` + `_compute_session_metrics`. Behaviour, confounds
+        and the per-cycle `n_spikes` totals are identical across permutations for a given
+        cycle (the permutation only reorders within-cycle phase); only the decoded updates
+        and decoder QC change. Partition by ("qc","permutation") to compare null vs true.
+        Permutations are seeded per (permutation_seed, session, s) so they are uncorrelated
+        across sessions yet reproducible.
     """
     input_data, pools = get_input_data(session, cpd_scores=cpd_scores, verbose=verbose, **input_data_kwargs)
     distance_cells, place_cells = pools["distance"], pools["place"]
+    n_bins = int(input_data.index.get_level_values("phase_bin").max()) + 1
+    params = dict(
+        distance_peak_bins=distance_peak_bins,
+        distance_trough_bins=distance_trough_bins,
+        place_phase_bins=place_phase_bins,
+        n_training_phases=n_training_phases,
+        normalise_X=normalise_X,
+        C=C,
+        n_folds=n_folds,
+        cv_seed=cv_seed,
+    )
+
+    true_df = _compute_session_metrics(input_data, distance_cells, place_cells, session.name, verbose=verbose, **params)
+    if n_permutations is None:
+        return true_df
+
+    true_df[("qc", "permutation")] = 0  # 0 = true run; 1..N = phase-permuted nulls
+    out = [true_df]
+    sess_int = int.from_bytes(hashlib.blake2b(session.name.encode(), digest_size=8).digest(), "big")
+    for s in range(1, n_permutations + 1):
+        rng = np.random.default_rng(np.random.SeedSequence([permutation_seed, sess_int, s]))
+        permuted = _permute_phases_within_cycles(input_data, n_bins, rng)
+        null_df = _compute_session_metrics(permuted, distance_cells, place_cells, session.name, verbose=False, **params)
+        null_df[("qc", "permutation")] = s
+        out.append(null_df)
+    return pd.concat(out)
+
+
+def _permute_phases_within_cycles(input_data, n_bins, rng):
+    """Return a copy of `input_data` with theta phases scrambled WITHIN each cycle.
+
+    For every cycle the `spike_count` and `phase_window` rows (the physical sub-window
+    content — spikes plus their integration timing) are reassigned to a random
+    permutation of the `n_bins` phase-bin slots; navigation, `cycle_metrics`,
+    `distance_bin_*`, `n_spikes` and metadata stay put. The whole population vector at a
+    bin moves as a unit (preserves within-bin co-firing, destroys only the
+    phase→population mapping). Permuting `phase_window` alongside `spike_count` keeps each
+    slot's spikes matched to its own duration, so rate = sum(spikes)/sum(durations) stays
+    physically correct inside the downstream helpers. The two groups are permuted
+    separately (with the SAME per-cycle order) to preserve their dtypes.
+
+    Relies on `input_data` being sorted by (cycle_idx, phase_bin) with exactly `n_bins`
+    rows per surviving cycle (guaranteed by `get_input_data`), so a row-major reshape to
+    (n_cycles, n_bins) groups each cycle's bins in order.
+    """
+    df = input_data.copy()
+    order = np.arange(len(df)).reshape(-1, n_bins)  # (n_cycles, n_bins) positional, bin-sorted
+    perm = np.argsort(rng.random(order.shape), axis=1)  # independent per-cycle permutation
+    new_idx = np.take_along_axis(order, perm, axis=1).ravel()
+    for group in ("spike_count", "phase_window"):
+        gcols = [c for c in df.columns if c[0] == group]
+        df[gcols] = df[gcols].values[new_idx]
+    return df
+
+
+def _compute_session_metrics(
+    input_data,
+    distance_cells,
+    place_cells,
+    session_name,
+    distance_peak_bins,
+    distance_trough_bins,
+    place_phase_bins,
+    n_training_phases,
+    normalise_X,
+    C,
+    n_folds,
+    cv_seed,
+    verbose,
+):
+    """Core per-cycle metric computation for one (possibly phase-permuted) `input_data`.
+
+    Trial CV; per fold a distance decoder and a place decoder are trained on the training
+    trials and applied to the held-out test cycles. Returns the cycle_idx-indexed session
+    df (distance/place updates + qc fold/decoder_mae/n_* diagnostics). Factored out of
+    `get_session_catch_update2_df` so the permutation null can re-run the identical
+    pipeline on scrambled inputs. `distance_bin_mids`/`n_bins` are recomputed here from
+    the passed `input_data` (both invariant to the within-cycle phase permutation).
+    """
     distance_bin_mids = np.array(sorted(input_data.distance_bin_mid.dropna().unique()))
     n_bins = int(input_data.index.get_level_values("phase_bin").max()) + 1
     if n_bins % n_training_phases != 0:
@@ -310,7 +443,7 @@ def get_session_catch_update2_df(
         folds = [np.array([t]) for t in trials]
     elif n_folds > 0:
         if n_folds > len(trials):
-            raise ValueError(f"n_folds={n_folds} > n_trials={len(trials)} for {session.name}")
+            raise ValueError(f"n_folds={n_folds} > n_trials={len(trials)} for {session_name}")
         rng = np.random.default_rng(cv_seed)
         folds = np.array_split(rng.permutation(trials), n_folds)
     else:
@@ -364,13 +497,13 @@ def get_session_catch_update2_df(
         abs_errs.append(np.abs((post_p @ mids_for_classes) - true_d))
 
     if not per_cycle:
-        raise ValueError(f"{session.name}: no usable test cycles")
+        raise ValueError(f"{session_name}: no usable test cycles")
     session_df = pd.concat(per_cycle).sort_index()
     session_df[("qc", "decoder_mae")] = float(np.mean(np.concatenate(abs_errs)))
     session_df[("qc", "n_distance_neurons")] = len(distance_cells)
     session_df[("qc", "n_place_neurons")] = len(place_cells)
     if verbose:
-        print(f"{session.name}: decoder_mae={session_df[('qc','decoder_mae')].iloc[0]:.3f} m")
+        print(f"{session_name}: decoder_mae={session_df[('qc','decoder_mae')].iloc[0]:.3f} m")
     return session_df
 
 
@@ -414,11 +547,17 @@ def _decoded_place_update(train_df, test_df, place_cells, place_phase_bins, norm
 # %% Stage 3 — cross-session runner
 
 
-def get_catch_update2_df(save=False, verbose=True, n_jobs=6, tag=None, **session_kwargs):
+def get_catch_update2_df(save=False, verbose=True, n_jobs=3, tag=None, **session_kwargs):
     """Run `get_session_catch_update2_df` across every subject × maze × late day
     and concatenate to one cross-session dataframe, cached to parquet under
     `RESULTS_DIR/runs/catch_update2_df{tag}.parquet`. Per-session failures are
-    swallowed (printed if verbose)."""
+    swallowed (printed if verbose).
+
+    `**session_kwargs` are forwarded to `get_session_catch_update2_df`, so the
+    theta-phase permutation null runs experiment-wide via e.g.
+    `get_catch_update2_df(save=True, tag="_perm200", n_permutations=200)` — every
+    session is permuted (same `permutation` labels across sessions, independently
+    seeded), and the `("qc","permutation")` column flows through to the parquet."""
     save_path = RESULTS_DIR / "runs" / f"catch_update2_df{tag or ''}.parquet"
     save_path.parent.mkdir(parents=True, exist_ok=True)
     if save_path.exists() and not save:
@@ -662,7 +801,17 @@ def run_link_analysis(df, confounds=CONFOUNDS, alternative="two-sided", save_fig
     `**filters` are forwarded to `_apply_filters` (maze_names, min_amplitude,
     max_decoder_mae, min_n_place_neurons, min_n_distance_neurons, max_distance).
     Auto-maps the older parquet's metric column names so it works on both the
-    current schema and a pre-rename `summary_df`. Returns {"per_subject", "pooled"}.
+    current schema and a pre-rename `summary_df`.
+
+    Phase-permutation null: if `df` carries a `("qc","permutation")` column (from a
+    `n_permutations` run), the true run is `permutation==0` and all reported true stats
+    use only that slice. The per-subject link test is then re-run on every permutation,
+    the per-subject r's are averaged across permutations into a per-subject null, and the
+    true effect is compared to it with a paired across-subject t-test of (true − null) r
+    plus a permutation p-value on the cross-subject mean r (see `_link_permutation_test`).
+
+    Returns {"per_subject", "pooled", "permutation"} (the last is None when no
+    permutations are present).
     """
     # back-compat: map old metric column names → current scheme
     ren = {}
@@ -674,8 +823,20 @@ def run_link_analysis(df, confounds=CONFOUNDS, alternative="two-sided", save_fig
         df = df.copy()
         df.columns = pd.MultiIndex.from_tuples([ren.get(c, c) for c in df.columns])
 
-    ps = link_per_subject(df, confounds=confounds, alternative=alternative, **filters)
-    pooled = link_pooled(df, confounds=confounds, **filters)
+    # split off the phase-permutation null if present (true run = permutation 0)
+    has_perm = ("qc", "permutation") in df.columns
+    perm_col = df[("qc", "permutation")] if has_perm else None
+    true_df = df[perm_col == 0] if has_perm else df
+    null_perm_ids = sorted({int(p) for p in perm_col.unique() if p != 0}) if has_perm else []
+
+    ps = link_per_subject(true_df, confounds=confounds, alternative=alternative, **filters)
+    pooled = link_pooled(true_df, confounds=confounds, **filters)
+    perm = (
+        _link_permutation_test(df, perm_col, null_perm_ids, ps, confounds, alternative, **filters)
+        if null_perm_ids
+        else None
+    )
+
     if verbose:
         print("=== link: distance_update ↔ place_update ===")
         if len(ps["per_subject"]):
@@ -689,9 +850,77 @@ def run_link_analysis(df, confounds=CONFOUNDS, alternative="two-sided", save_fig
             f"CI[{pooled['ci_low']:+.3f}, {pooled['ci_high']:+.3f}]  p={pooled['p']:.4g}  "
             f"(n={pooled['n']} cycles, {pooled['n_subjects']} subjects)"
         )
+        if perm is not None:
+            print(f"\n=== phase-permutation null ({perm['n_permutations']} permutation(s)) ===")
+            print(perm["subject_r"].to_string(float_format=lambda x: f"{x:+.4f}"))
+            print(
+                f"cross-subject mean_r:  true={perm['true_mean_r']:+.4f}  "
+                f"null={perm['null_mean_r']:+.4f}  (Δ={perm['true_mean_r'] - perm['null_mean_r']:+.4f})"
+            )
+            print(
+                f"paired across-subject t-test (true − null, alt={alternative}): "
+                f"t={perm['t']:+.3f}  p={perm['p']:.4g}  (n={perm['n_subjects']} subjects)"
+            )
+            if perm["perm_p"] is not None:
+                print(
+                    f"permutation p (true mean_r vs {perm['n_permutations']} null mean_r, one-sided): "
+                    f"p={perm['perm_p']:.4g}"
+                    + ("   [needs more permutations to be informative]" if perm["n_permutations"] < 20 else "")
+                )
+
     if save_fig:
-        plot_link(df, confounds=confounds, alternative=alternative, save_path=save_fig, **filters)
-    return {"per_subject": ps, "pooled": pooled}
+        plot_link(true_df, confounds=confounds, alternative=alternative, save_path=save_fig, **filters)
+    return {"per_subject": ps, "pooled": pooled, "permutation": perm}
+
+
+def _link_permutation_test(df, perm_col, null_perm_ids, true_ps, confounds, alternative, **filters):
+    """Compare the true per-subject link correlations to a theta-phase-permutation null.
+
+    For each permutation `s`, `link_per_subject` is re-run on that permutation's cycles
+    to get per-subject r's; these are averaged per subject across permutations to form a
+    per-subject null r. The true effect is then compared two ways:
+      * `t`/`p`: paired across-subject one-sample t-test of (r_true − r_null) (respects
+        the per-subject pairing; informative even for a single permutation).
+      * `perm_p`: one-sided permutation p-value of the true cross-subject mean r against
+        the distribution of per-permutation cross-subject mean r's,
+        `(#{perm mean_r ≥ true mean_r} + 1) / (n_permutations + 1)` (only meaningful once
+        many permutations exist).
+    Returns a dict; `subject_r` is a per-subject DataFrame [r_true, r_null, diff].
+    """
+    null_r, perm_mean_r = {}, []
+    for s in null_perm_ids:
+        res_s = link_per_subject(df[perm_col == s], confounds=confounds, alternative=alternative, **filters)
+        perm_mean_r.append(res_s["mean_r"])
+        for _, row in res_s["per_subject"].iterrows():
+            null_r.setdefault(row["subject"], []).append(row["r"])
+
+    true_r = true_ps["per_subject"].set_index("subject")["r"] if len(true_ps["per_subject"]) else pd.Series(dtype=float)
+    tbl = pd.DataFrame(
+        {"r_true": true_r, "r_null": pd.Series({k: np.mean(v) for k, v in null_r.items()})}
+    ).dropna()
+    tbl["diff"] = tbl["r_true"] - tbl["r_null"]
+
+    if len(tbl) >= 2:
+        t, p = ttest_1samp(tbl["diff"].values, 0, alternative=alternative)
+    else:
+        t = p = np.nan
+
+    perm_mean_r = np.asarray(perm_mean_r, dtype=float)
+    perm_mean_r = perm_mean_r[~np.isnan(perm_mean_r)]
+    true_mean_r = float(tbl["r_true"].mean()) if len(tbl) else np.nan
+    perm_p = (np.sum(perm_mean_r >= true_mean_r) + 1) / (len(perm_mean_r) + 1) if len(perm_mean_r) else None
+
+    return {
+        "n_permutations": len(null_perm_ids),
+        "n_subjects": len(tbl),
+        "subject_r": tbl,
+        "true_mean_r": true_mean_r,
+        "null_mean_r": float(tbl["r_null"].mean()) if len(tbl) else np.nan,
+        "t": float(t) if not np.isnan(t) else np.nan,
+        "p": float(p) if not np.isnan(p) else np.nan,
+        "perm_mean_r": perm_mean_r,
+        "perm_p": float(perm_p) if perm_p is not None else None,
+    }
 
 
 # %% Single-session diagnostic helper

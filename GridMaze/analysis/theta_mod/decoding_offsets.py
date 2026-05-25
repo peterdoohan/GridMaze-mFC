@@ -218,42 +218,27 @@ def plot_phase_offset_polar(
 
 
 def plot_decoder_vs_lfp(
-    place_color="darkred",
-    distance_color="darkblue",
-    distance_peak_color="dodgerblue",
-    distance_trough_color="darkblue",
-    late_sessions=True,
-    maze_names=None,
-    double_decoder=False,
+    place_colors=("red", "darkred"),
+    distance_colors=("dodgerblue", "darkblue"),
+    within_code="distance",
+    across_code="place",
+    double_decoder=True,
+    show_lfp=False,
     markers=False,
     place_k=3,
     distance_k=3,
-    place_trough=None,
-    distance_trough=None,
-    distance_peak=None,
     print_ranges=True,
     ax=None,
 ):
-    """Place and distance decoder modulation curves over the black, amplitude-normalised
-    LFP theta cycle, tiled across 2 theta cycles.
-
-    Each curve is normalised by its own fitted sinusoid amplitude so all three sinusoids
-    have amplitude 1; the y-axis is modulation (a.u.). LFP is per-subject mean-subtracted
-    before fitting.
-
-    `double_decoder`: if True, load place + distance from the matched-sample
-    double-decoding pipeline (`get_double_decoding_bias`); else load from the
-    independent pipelines (`get_place_bias` / `get_distance_bias`, default).
-    `place_k` / `distance_k`: total number of phase bins in the highlighted band
-    (any positive int, odd or even). Odd → symmetric about the centre bin; even →
-    asymmetric with the extra bin on the higher-phase (right) side. Band edges
-    are drawn at the outer bin edges so the band literally covers k bins. Place
-    band marks the place trough (both cycles); distance bands mark the distance
-    peak (`distance_peak_color`) and trough (`distance_trough_color`) on cycle i only.
-    `place_trough` / `distance_trough` / `distance_peak`: optional int bin index
-    (modulo n_bins) to override the auto-detected argmin/argmax of the fitted
-    sinusoid. Defaults to None (auto-detect from fit).
+    """Place & distance decoder modulation curves over the amplitude-normalised LFP theta
+    cycle, tiled across cycles. `within_code` gets peak+trough bands, `across_code` a trough
+    band, auto-placed as across-before → within-peak → within-trough → across-after (peak/trough
+    from the fitted sinusoids). Colours are (peak, trough) per decoder; `*_k` = band width in bins.
     """
+    assert {within_code, across_code} <= {
+        "place",
+        "distance",
+    } and within_code != across_code, "within_code and across_code must be distinct, each 'place' or 'distance'"
 
     def _band_bin_offsets(k):
         """(low, high) bin offsets s.t. band covers k bins; extra goes right for even k."""
@@ -261,24 +246,20 @@ def plot_decoder_vs_lfp(
         high = k - 1 - low
         return low, high
 
-    n_cycles = 2
+    def _cycle_label(k):
+        return "cycle i" if k == 0 else f"cycle i{k:+d}"
+
     lfp_mod = get_lfp_theta_mod()
     if double_decoder:
-        place_bias, distance_bias = get_double_decoding_bias(late_sessions=late_sessions, maze_names=maze_names)
+        place_bias, distance_bias = get_double_decoding_bias()
     else:
-        place_bias = get_place_bias(late_sessions=late_sessions, maze_names=maze_names)
-        distance_bias = get_distance_bias(late_sessions=late_sessions, maze_names=maze_names)
+        place_bias = get_place_bias()
+        distance_bias = get_distance_bias()
+    code_colors = {"place": place_colors, "distance": distance_colors}  # each (peak_color, trough_color)
     decoders = {
-        "place": (place_bias, place_color),
-        "distance": (distance_bias, distance_color),
+        "place": (place_bias, place_colors[1]),  # curve uses the trough colour
+        "distance": (distance_bias, distance_colors[1]),
     }
-
-    if ax is None:
-        _, ax = plt.subplots(1, 1, figsize=(3.5, 2))
-    ax.axhline(0, color="k", ls="--", alpha=0.5)
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.set_xlabel("theta phase")
-    ax.set_ylabel("modulation (a.u.)")
 
     # LFP: per-subject mean-subtract, fit sinusoid, normalise by its amplitude
     lfp_phases = lfp_mod.columns.values.astype(float)
@@ -307,87 +288,95 @@ def plot_decoder_vs_lfp(
             "color": _color,
         }
 
-    # place-trough band: k-bin-wide band centred on the binned place sinusoid trough, on every cycle
-    place_phases = dec_fits["place"]["phases"]
-    place_fit = dec_fits["place"]["fit"]
-    place_fitted = np.sin(place_phases + place_fit["phi"])  # amplitude-normalised fit at bins
-    place_trough_idx = int(place_trough) % len(place_phases) if place_trough is not None else int(np.argmin(place_fitted))
-    place_trough_phase = float(place_phases[place_trough_idx])
-    dphi = 2 * np.pi / len(place_phases)
-    p_low, p_high = _band_bin_offsets(place_k)
-    place_left = (p_low + 0.5) * dphi
-    place_right = (p_high + 0.5) * dphi
-    for k in range(n_cycles):
-        off = 2 * np.pi * k
-        ax.axvspan(
-            place_trough_phase + off - place_left,
-            place_trough_phase + off + place_right,
-            color=place_color,
-            alpha=0.15,
-            zorder=0,
-            linewidth=0,
-        )
+    # peak/trough band geometry per code: k-bin-wide bands centred on the binned sinusoid extrema
+    code_k = {"place": place_k, "distance": distance_k}
+    bands = {}
+    for name, d in dec_fits.items():
+        phases = d["phases"]
+        fitted = np.sin(phases + d["fit"]["phi"])  # amplitude-normalised fit at bins
+        n = len(phases)
+        dphi = 2 * np.pi / n
+        low, high = _band_bin_offsets(code_k[name])
+        peak_idx = int(np.argmax(fitted))
+        trough_idx = int(np.argmin(fitted))
+        bands[name] = {
+            "peak_idx": peak_idx,
+            "trough_idx": trough_idx,
+            "peak_phase": float(phases[peak_idx]),
+            "trough_phase": float(phases[trough_idx]),
+            "left": (low + 0.5) * dphi,
+            "right": (high + 0.5) * dphi,
+            "low": low,
+            "high": high,
+            "n": n,
+        }
 
-    # distance peak + trough bands: cycle i (1st / left cycle) only
-    dist_phases = dec_fits["distance"]["phases"]
-    dist_fit = dec_fits["distance"]["fit"]
-    dist_fitted = np.sin(dist_phases + dist_fit["phi"])
-    n_dist = len(dist_phases)
-    dist_peak_idx = int(distance_peak) % n_dist if distance_peak is not None else int(np.argmax(dist_fitted))
-    dist_trough_idx = int(distance_trough) % n_dist if distance_trough is not None else int(np.argmin(dist_fitted))
-    dist_peak_phase = float(dist_phases[dist_peak_idx])
-    dist_trough_phase = float(dist_phases[dist_trough_idx])
-    dphi_d = 2 * np.pi / len(dist_phases)
-    d_low, d_high = _band_bin_offsets(distance_k)
-    dist_left = (d_low + 0.5) * dphi_d
-    dist_right = (d_high + 0.5) * dphi_d
-    cycle_i_off = 0.0
-    for phase, _color in [(dist_peak_phase, distance_peak_color), (dist_trough_phase, distance_trough_color)]:
-        ax.axvspan(
-            phase + cycle_i_off - dist_left,
-            phase + cycle_i_off + dist_right,
-            color=_color,
-            alpha=0.2,
-            zorder=0,
-            linewidth=0,
-        )
+    twopi = 2 * np.pi
+    within_peak_color, within_trough_color = code_colors[within_code]
+    w = bands[within_code]
+    a = bands[across_code]
+    a_color = code_colors[across_code][1]
+
+    # flank the within peak→trough transition with the nearest across-code trough on each
+    # side: across-before → within-peak → within-trough → across-after.
+    peak_x = w["peak_phase"]
+    trough_x = peak_x + (w["trough_phase"] - peak_x) % twopi  # trough following the peak
+    before_x = a["trough_phase"] + twopi * np.floor((peak_x - a["trough_phase"]) / twopi)  # nearest ≤ peak
+    after_x = a["trough_phase"] + twopi * np.ceil((trough_x - a["trough_phase"]) / twopi)  # nearest ≥ trough
+    # shift the pattern by whole cycles so the leftmost band (incl. width) starts in
+    # cycle i = offset 0 (no cycle i-1)
+    k_lo = int(np.floor(((before_x - a["left"]) + np.pi) / twopi))
+    before_x, peak_x, trough_x, after_x = (x - twopi * k_lo for x in (before_x, peak_x, trough_x, after_x))
+    # widen displayed cycles up to fully contain the bands (cycle k spans [2πk-π, 2πk+π])
+    k_hi = int(np.ceil(((after_x + a["right"]) - np.pi) / twopi))
+    cycles = range(0, k_hi + 1)
+
+    # axes width scales with the number of displayed cycles (~1.75 in per cycle)
+    if ax is None:
+        _, ax = plt.subplots(1, 1, figsize=(1.75 * len(cycles), 2))
+    ax.axhline(0, color="k", ls="--", alpha=0.5)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_xlabel("theta phase")
+    ax.set_ylabel("modulation (a.u.)")
+
+    def _draw_band(phase, info, color, alpha):
+        ax.axvspan(phase - info["left"], phase + info["right"], color=color, alpha=alpha, zorder=0, linewidth=0)
+
+    _draw_band(before_x, a, a_color, 0.15)
+    _draw_band(peak_x, w, within_peak_color, 0.2)
+    _draw_band(trough_x, w, within_trough_color, 0.2)
+    _draw_band(after_x, a, a_color, 0.15)
 
     if print_ranges:
-        n_place_bins = len(place_phases)
-        n_dist_bins = len(dist_phases)
-        place_bins = [(place_trough_idx + i) % n_place_bins for i in range(-p_low, p_high + 1)]
-        peak_bins = [(dist_peak_idx + i) % n_dist_bins for i in range(-d_low, d_high + 1)]
-        trough_bins = [(dist_trough_idx + i) % n_dist_bins for i in range(-d_low, d_high + 1)]
+
+        def _bins(info, center_idx):
+            return [(center_idx + i) % info["n"] for i in range(-info["low"], info["high"] + 1)]
+
+        def _rng(info, phase):
+            return f"[{phase - info['left']:+.3f}, {phase + info['right']:+.3f}]"
+
         print("cycle i phase ranges (rad)  |  bin ids (-π=0, +π=n-1):")
-        print(
-            f"  place trough:    [{place_trough_phase - place_left:+.3f}, "
-            f"{place_trough_phase + place_right:+.3f}]  |  {place_bins}"
-        )
-        print(
-            f"  distance peak:   [{dist_peak_phase - dist_left:+.3f}, "
-            f"{dist_peak_phase + dist_right:+.3f}]  |  {peak_bins}"
-        )
-        print(
-            f"  distance trough: [{dist_trough_phase - dist_left:+.3f}, "
-            f"{dist_trough_phase + dist_right:+.3f}]  |  {trough_bins}"
-        )
+        print(f"  {within_code} peak (within):   {_rng(w, w['peak_phase'])}  |  {_bins(w, w['peak_idx'])}")
+        print(f"  {within_code} trough (within): {_rng(w, w['trough_phase'])}  |  {_bins(w, w['trough_idx'])}")
+        print(f"  {across_code} trough (across): {_rng(a, a['trough_phase'])}  |  {_bins(a, a['trough_idx'])}")
 
     # tile across cycles
     x_curve = np.linspace(-np.pi, np.pi, 200)
-    for k in range(n_cycles):
+    for k in cycles:
         off = 2 * np.pi * k
-        y_lfp = np.sin(x_curve + lfp_fit["phi"])
-        ax.plot(x_curve + off, y_lfp, color="black", lw=1.5, label="LFP (ref.)" if k == 0 else None)
-        if markers:
-            ax.errorbar(
-                lfp_phases + off,
-                lfp_mean_n,
-                yerr=lfp_sem_n,
-                fmt="o",
-                color="black",
-                markersize=4,
-                elinewidth=1.5,
-            )
+        if show_lfp:
+            y_lfp = np.sin(x_curve + lfp_fit["phi"])
+            ax.plot(x_curve + off, y_lfp, color="black", lw=1.5, label="LFP (ref.)" if k == 0 else None)
+            if markers:
+                ax.errorbar(
+                    lfp_phases + off,
+                    lfp_mean_n,
+                    yerr=lfp_sem_n,
+                    fmt="o",
+                    color="black",
+                    markersize=4,
+                    elinewidth=1.5,
+                )
         for name, d in dec_fits.items():
             if markers:
                 ax.errorbar(
@@ -409,17 +398,19 @@ def plot_decoder_vs_lfp(
                 label=name if (not markers and k == 0) else None,
             )
 
-    # dashed verticals at inner cycle boundaries
-    for k in range(1, n_cycles):
-        ax.axvline(-np.pi + 2 * np.pi * k, color="k", ls="--", alpha=0.5)
+    # dashed verticals at inner cycle boundaries (left edge of every cycle except the first)
+    for k in cycles:
+        if k != cycles.start:
+            ax.axvline(2 * np.pi * k - np.pi, color="k", ls="--", alpha=0.5)
 
-    # per-cycle labels ("cycle i", "cycle i+1", ...) at top of axes
-    for k in range(n_cycles):
-        label = "cycle i" if k == 0 else f"cycle i+{k}"
+    # per-cycle labels ("cycle i-1", "cycle i", "cycle i+1", ...) at top of axes
+    for k in cycles:
+        label = _cycle_label(k)
         ax.text(2 * np.pi * k, 1.02, label, transform=ax.get_xaxis_transform(), ha="center", va="bottom", fontsize=8)
 
     # π-spaced ticks, labelled per-cycle (-π → π each cycle; inner boundaries = "π/-π")
-    tick_locs = np.arange(-np.pi, -np.pi + 2 * np.pi * n_cycles + 0.01, np.pi)
+    min_off, max_off = 2 * np.pi * cycles.start, 2 * np.pi * (cycles.stop - 1)
+    tick_locs = np.arange(min_off - np.pi, max_off + np.pi + 0.01, np.pi)
     tick_labels = []
     for i in range(len(tick_locs)):
         if i == 0:
