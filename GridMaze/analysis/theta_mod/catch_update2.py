@@ -24,6 +24,15 @@ Main result (n=6): per-subject correlation distance_update ↔ place_update →
 t≈6.2, p≈0.0016; pooled standardised β≈+0.045. See `link_per_subject` /
 `link_pooled` / `plot_link`.
 
+Stage 5 (general): `get_sliding_update_df` / `link_matrix` / `plot_link_matrix` generalise
+this single test into a full lag × lag scan — one fixed decoder per code trained on
+width-`window_width` sliding theta-phase windows and read out at every window, the JS²
+"update" taken at every SIGNED lag from one cycle before the anchor to one cycle after
+(`span_cycles` cycles each way), then distance- vs place-update lag profiles correlated across
+codes. The result above is one entry of that matrix; signed lags make it a lead/lag map
+(distance-leads-place vs place-leads-distance), and which code is "within" vs "across" is just
+which axis you read.
+
 HARD RULE: this file is the only place new behaviour is written; everything
 reusable is imported (notably the per-cycle backbone from `catch_update`) and
 never modified.
@@ -933,6 +942,497 @@ def test_session(session, cpd_scores=None, **kwargs):
     for col, m in [(("distance", "update"), "distance_update"), (("place", "update"), "place_update")]:
         v = df[col].astype(float)
         print(f"  {m:16s} mean={v.mean():+.4f}  std={v.std():.4f}  nan={v.isna().mean():.1%}")
+    return df
+
+
+# %% Stage 5 — general sliding-window cross-code update (lag × lag scan)
+#
+# Generalises the single-cell catch_update2 test (distance within-cycle peak→trough vs
+# place across-cycle) into a full lag × lag scan. For each code ONE decoder is trained on
+# width-`window_width` sliding theta-phase windows — every phase position × cycle of the
+# training trials, pooled, labelled by the code value at the window — and read out at
+# EVERY sliding window of the held-out cycles. Training and readout therefore use the same
+# k-bin window features, and the decoder is held fixed across readout positions, so the
+# JS² "update" stays a clean measure of how much the decoded posterior moved (not a
+# decoder-vs-decoder artefact). The update at SIGNED lag L is JS²(posterior at anchor,
+# posterior L bins away) in phase unrolled from one cycle before the anchor to one cycle after
+# (`span_cycles` cycles each way); distance- and place-update lag profiles are then correlated
+# across codes (per-subject partial correlation → cross-subject t-test) into a signed
+# (lag_distance × lag_place) lead/lag coupling matrix. The original catch_update2 result is a
+# single entry of that matrix. Reuses the catch_update backbone (`_cycle_subset_rates`,
+# `_split_fold`) and `get_input_data` unchanged.
+
+# code → (label column in input_data, key into the pools dict from get_input_data)
+CODE_LABELS = {"distance": ("distance_bin_id", ""), "place": ("maze_position", "simple")}
+
+# per-(cycle, start) covariates carried for the link tests (hd expanded to sin/cos in the matrix)
+SLIDING_CONFOUNDS = ["speed", "theta_amp", "n_sp_place", "n_sp_dist", "dist2goal", "hd_sin", "hd_cos"]
+
+# raw confound columns pulled from input_data at the anchor (cycle, start) row
+_SLIDING_CONF_COLS = {
+    "speed": ("speed", ""),
+    "theta_amp": ("cycle_metrics", "amplitude"),
+    "n_sp_place": ("n_spikes", "place_pool"),
+    "n_sp_dist": ("n_spikes", "distance_pool"),
+    "dist2goal": ("distance_to_goal", "geodesic"),
+    "hd": ("head_direction", "value"),
+}
+
+
+def _sliding_window_bins(p, k, n_bins):
+    """The k consecutive phase bins of the window starting at bin p, wrapping past
+    `n_bins-1` into the next cycle (e.g. p=10, k=3, n_bins=12 → [10, 11, 0]). The wrap is
+    exactly the descending-step form `_cycle_subset_rates` reads as 'borrow bin 0 of the
+    successor cycle', so a late-cycle window correctly straddles the cycle boundary and is
+    attributed to the starting cycle."""
+    return [(p + j) % n_bins for j in range(k)]
+
+
+def _js2_rows(A, B):
+    """Row-wise squared Jensen–Shannon divergence (natural log), the vectorised twin of
+    `_js2`: for posteriors from the SAME decoder, `_js2_rows(A, B)[i] == _js2(A[i], B[i])`.
+    A, B are (m, n_classes) posterior arrays. Identical rows → genuine 0 (tiny negatives
+    from floating point are clipped)."""
+    M = 0.5 * (A + B)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ka = np.where(A > 0, A * np.log(A / M), 0.0).sum(axis=1)
+        kb = np.where(B > 0, B * np.log(B / M), 0.0).sum(axis=1)
+    return np.clip(0.5 * ka + 0.5 * kb, 0.0, None)
+
+
+def _train_code_decoder(train_df, cells, label_col, n_bins, window_width, normalise_X, C):
+    """Train ONE decoder for a code on the pooled width-`window_width` sliding windows of the
+    training trials. Each (cycle, window-start p) contributes one firing-rate sample
+    (sum spikes / sum durations over the window's bins, via `_cycle_subset_rates`) labelled
+    by the code value at the window-start bin. Labels are stringified so distance bin ids and
+    maze positions share one path; `nan` labels are dropped. Returns (decoder, scaler) or
+    (None, None) when fewer than two classes survive."""
+    X_parts, y_parts = [], []
+    for p in range(n_bins):
+        rates_p = cu._cycle_subset_rates(train_df, cells, _sliding_window_bins(p, window_width, n_bins))
+        if rates_p.empty:
+            continue
+        raw = train_df.xs(p, level="phase_bin")[label_col].reindex(rates_p.index)
+        valid = raw.notna().values  # filter NA on the pre-cast series (Int64 NA → "<NA>" once stringified)
+        if valid.sum() == 0:
+            continue
+        X_parts.append(rates_p.values[valid])
+        y_parts.append(raw.astype(str).values[valid])
+    if not X_parts:
+        return None, None
+    X, y = np.vstack(X_parts), np.concatenate(y_parts)
+    if len(np.unique(y)) < 2:
+        return None, None
+    scaler = StandardScaler().fit(X) if normalise_X else None
+    Xs = scaler.transform(X) if scaler is not None else X
+    lr_kwargs = {"random_state": 0, "max_iter": 2000, "class_weight": "balanced"}
+    lr_kwargs["penalty" if C is None else "C"] = None if C is None else C
+    return LogisticRegression(**lr_kwargs).fit(Xs, y), scaler
+
+
+def _code_window_posteriors(test_df, cells, decoder, scaler, n_bins, window_width):
+    """Decode the held-out cycles at every sliding window. Returns a dict
+    p → DataFrame(predict_proba, index=cycle_idx) for p in 0..n_bins-1; columns are the
+    decoder's classes (shared across p, so JS² between any two windows is well defined).
+    Empty windows map to an empty DataFrame."""
+    out = {}
+    for p in range(n_bins):
+        rates_p = cu._cycle_subset_rates(test_df, cells, _sliding_window_bins(p, window_width, n_bins))
+        if rates_p.empty:
+            out[p] = pd.DataFrame()
+            continue
+        Xs = scaler.transform(rates_p.values) if scaler is not None else rates_p.values
+        out[p] = pd.DataFrame(decoder.predict_proba(Xs), index=rates_p.index)
+    return out
+
+
+def _sliding_update_table(P_code, s, lag_range, n_bins, trial_of, prefix):
+    """For one code and one anchor start bin `s`, the per-cycle update at each lag.
+
+    The update at lag L compares the window at (anchor cycle c, start s) to the window L bins
+    later in unrolled phase — bin (s+L) % n_bins of cycle c + (s+L) // n_bins — keeping only
+    pairs whose two cycles fall in the same trial. Returns a DataFrame indexed by anchor
+    cycle with columns `{prefix}_L{L}` (JS² update); missing lags are simply absent columns.
+    """
+    base = P_code[s]
+    cols = {}
+    if not base.empty:
+        for L in lag_range:
+            q, dc = (s + L) % n_bins, (s + L) // n_bins
+            tgt = P_code[q]
+            if tgt.empty:
+                continue
+            common = base.index.intersection(tgt.index - dc).values  # anchor cycles c with c+dc decoded
+            if common.size == 0:
+                continue
+            same_trial = trial_of.reindex(common).values == trial_of.reindex(common + dc).values
+            keep = common[same_trial]
+            if keep.size == 0:
+                continue
+            js2 = _js2_rows(base.loc[keep].values, tgt.loc[keep + dc].values)
+            cols[f"{prefix}_L{L}"] = pd.Series(js2, index=keep)
+    return pd.DataFrame(cols)
+
+
+def get_session_sliding_update_df(
+    session,
+    window_width=3,
+    span_cycles=1,
+    normalise_X=True,
+    C=1.0,
+    n_folds=10,
+    cv_seed=0,
+    cpd_scores=None,
+    verbose=False,
+    **input_data_kwargs,
+):
+    """One row per (cycle, anchor start bin) with the distance- and place-update at every lag.
+
+    Trial CV; per fold each code's fixed decoder is trained on sliding windows of the training
+    trials (`_train_code_decoder`) and read out at every sliding window of the held-out cycles
+    (`_code_window_posteriors`). For each anchor start bin s the per-cycle update at signed lags
+    L = ±1..±span_cycles*n_bins is computed for both codes (`_sliding_update_table`) and merged
+    on the shared anchor cycles, with confounds + metadata attached at (cycle, s). `span_cycles`
+    is the number of theta cycles spanned in EACH direction, so lags run from one cycle before
+    the anchor (L<0) to one cycle after (L>0) at the default span_cycles=1; this makes the
+    `link_matrix` a lead/lag map rather than a forward-only one. Columns: `distance_L{L}` /
+    `place_L{L}` (JS² updates, L signed), the `_SLIDING_CONF_COLS` confounds, and
+    cycle / start / fold / subject / session / maze. Feed to `get_sliding_update_df` /
+    `link_matrix`.
+    """
+    input_data, pools = get_input_data(session, cpd_scores=cpd_scores, verbose=verbose, **input_data_kwargs)
+    n_bins = int(input_data.index.get_level_values("phase_bin").max()) + 1
+    max_lag = span_cycles * n_bins
+    lag_range = [L for L in range(-max_lag, max_lag + 1) if L != 0]  # signed, excludes the trivial L=0
+    cells_by_code = {"distance": pools["distance"], "place": pools["place"]}
+
+    trials = input_data.trial.dropna().unique()
+    if n_folds == -1:
+        folds = [np.array([t]) for t in trials]
+    elif n_folds > 0:
+        if n_folds > len(trials):
+            raise ValueError(f"n_folds={n_folds} > n_trials={len(trials)} for {session.name}")
+        rng = np.random.default_rng(cv_seed)
+        folds = np.array_split(rng.permutation(trials), n_folds)
+    else:
+        raise ValueError(f"n_folds must be -1 or positive, got {n_folds!r}")
+
+    out_rows = []
+    for fold_idx, held_out in enumerate(folds):
+        train_df, test_df = cu._split_fold(input_data, held_out)
+        trial_of = test_df.trial.groupby(level="cycle_idx").first()
+
+        P = {}
+        usable = True
+        for code, cells in cells_by_code.items():
+            decoder, scaler = _train_code_decoder(
+                train_df, cells, CODE_LABELS[code], n_bins, window_width, normalise_X, C
+            )
+            if decoder is None:
+                usable = False
+                break
+            P[code] = _code_window_posteriors(test_df, cells, decoder, scaler, n_bins, window_width)
+        if not usable:
+            continue
+
+        for s in range(n_bins):
+            dist_tab = _sliding_update_table(P["distance"], s, lag_range, n_bins, trial_of, "distance")
+            place_tab = _sliding_update_table(P["place"], s, lag_range, n_bins, trial_of, "place")
+            if dist_tab.empty or place_tab.empty:
+                continue
+            common_cyc = dist_tab.index.intersection(place_tab.index)
+            if len(common_cyc) == 0:
+                continue
+            block = pd.concat([dist_tab.loc[common_cyc], place_tab.loc[common_cyc]], axis=1)
+            conf_s = test_df.xs(s, level="phase_bin")
+            for name, col in _SLIDING_CONF_COLS.items():
+                block[name] = conf_s[col].reindex(common_cyc).astype(float).values
+            block["cycle"] = np.asarray(common_cyc)
+            block["start"] = s
+            block["fold"] = fold_idx
+            out_rows.append(block.reset_index(drop=True))
+
+    if not out_rows:
+        raise ValueError(f"{session.name}: no usable sliding-update observations")
+    df = pd.concat(out_rows, ignore_index=True)
+    df["subject"], df["session"], df["maze"] = session.subject_ID, session.name, session.maze_name
+    for code in cells_by_code:  # guarantee a full, contiguous lag grid even if some lags never filled
+        for L in lag_range:
+            if f"{code}_L{L}" not in df.columns:
+                df[f"{code}_L{L}"] = np.nan
+    if verbose:
+        print(f"{session.name}: {len(df)} (cycle,start) rows, signed lags ±1..±{max_lag}")
+    return df
+
+
+# %% Stage 5 — cross-session runner
+
+
+def get_sliding_update_df(save=False, verbose=True, n_jobs=3, tag=None, **session_kwargs):
+    """Run `get_session_sliding_update_df` across every subject × maze × late day and
+    concatenate to one cross-session dataframe, cached under
+    `RESULTS_DIR/runs/sliding_update_df{tag}.parquet`. `**session_kwargs` (window_width,
+    span_cycles, C, n_folds, …) are forwarded per session. Per-session failures are swallowed
+    (printed if verbose). Mirrors `get_catch_update2_df`."""
+    save_path = RESULTS_DIR / "runs" / f"sliding_update_df{tag or ''}.parquet"
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    if save_path.exists() and not save:
+        if verbose:
+            print(f"loading cached: {save_path}")
+        return pd.read_parquet(save_path)
+
+    cpd_scores = get_population_cpd_scores()
+
+    def _process(session):
+        if verbose:
+            print(session.name)
+        try:
+            return get_session_sliding_update_df(session, cpd_scores=cpd_scores, verbose=False, **session_kwargs)
+        except Exception as e:
+            if verbose:
+                print(f"  error on {session.name}: {e}")
+            return None
+
+    all_dfs = []
+    for subject in SUBJECT_IDS:
+        for maze_name in MAZE_NAMES:
+            try:
+                sessions = gs.get_maze_sessions(
+                    subject_IDs=[subject],
+                    maze_names=[maze_name],
+                    days_on_maze="late",
+                    with_data=[
+                        "lfp_times",
+                        "lfp_signal",
+                        "lfp_metrics",
+                        "cluster_metrics",
+                        "navigation_df",
+                        "spike_times",
+                        "spike_clusters",
+                    ],
+                    must_have_data=True,
+                )
+            except FileNotFoundError:
+                if verbose:
+                    print(f"  no sessions for {subject} / {maze_name}")
+                continue
+            if not isinstance(sessions, list):
+                sessions = [sessions]
+            session_dfs = Parallel(n_jobs=n_jobs)(delayed(_process)(s) for s in sessions)
+            all_dfs.extend([d for d in session_dfs if d is not None])
+
+    pop_df = pd.concat(all_dfs, ignore_index=True)
+    if save:
+        pop_df.to_parquet(save_path)
+        if verbose:
+            print(f"saved: {save_path}  ({len(pop_df)} rows)")
+    return pop_df
+
+
+# %% Stage 5 — lag × lag link matrix
+
+
+def _infer_lags(df):
+    """Sorted list of lags L present as `distance_L{L}` columns."""
+    return sorted(int(c.split("_L")[1]) for c in df.columns if c.startswith("distance_L"))
+
+
+def link_matrix(df, confounds=SLIDING_CONFOUNDS, maze_names=None, max_distance=None, min_obs=10):
+    """PRIMARY general test: the (lag_distance × lag_place) coupling matrix.
+
+    For each (L_dist, L_place) pair: within each subject, partial Pearson r between
+    `distance_L{L_dist}` and `place_L{L_place}` (confounds regressed out of both), then a
+    cross-subject one-sample t-test on the subject r's — exactly the `link_per_subject`
+    machinery, evaluated at every cell. The original catch_update2 result is one cell
+    (distance ≈ half-cycle lag, place ≈ +1-cycle lag).
+
+    Returns dict(lags, mean_r, t, p [each (nL, nL), row=distance lag, col=place lag],
+    n_subjects, subjects, r_stack [n_subjects, nL, nL]).
+    """
+    df = df.copy()
+    df["hd_sin"] = np.sin(np.deg2rad(df["hd"].astype(float)))
+    df["hd_cos"] = np.cos(np.deg2rad(df["hd"].astype(float)))
+    if maze_names is not None:
+        df = df[df["maze"].isin(maze_names)]
+    if max_distance is not None:
+        df = df[df["dist2goal"] <= max_distance]
+
+    lags = _infer_lags(df)
+    nL = len(lags)
+    subjects = list(df["subject"].unique())
+    r_stack = np.full((len(subjects), nL, nL), np.nan)
+
+    for si, subj in enumerate(subjects):
+        s = df[df["subject"] == subj]
+        conf = confounds or []
+        for i, Ld in enumerate(lags):
+            xcol = f"distance_L{Ld}"
+            for j, Lp in enumerate(lags):
+                ycol = f"place_L{Lp}"
+                sub = s[[xcol, ycol] + conf].dropna()
+                if len(sub) < min_obs:
+                    continue
+                x, y = sub[xcol].values.astype(float), sub[ycol].values.astype(float)
+                if conf:
+                    X = np.column_stack([np.ones(len(sub))] + [sub[c].values.astype(float) for c in conf])
+                    x = x - X @ np.linalg.lstsq(X, x, rcond=None)[0]
+                    y = y - X @ np.linalg.lstsq(X, y, rcond=None)[0]
+                if np.std(x) == 0 or np.std(y) == 0:
+                    continue
+                r_stack[si, i, j] = pearsonr(x, y)[0]
+
+    mean_r = np.full((nL, nL), np.nan)
+    t_mat = np.full((nL, nL), np.nan)
+    p_mat = np.full((nL, nL), np.nan)
+    for i in range(nL):
+        for j in range(nL):
+            rs = r_stack[:, i, j]
+            rs = rs[~np.isnan(rs)]
+            if len(rs) >= 2:
+                mean_r[i, j] = rs.mean()
+                t_mat[i, j], p_mat[i, j] = ttest_1samp(rs, 0)
+    return {
+        "lags": lags,
+        "mean_r": mean_r,
+        "t": t_mat,
+        "p": p_mat,
+        "n_subjects": len(subjects),
+        "subjects": subjects,
+        "r_stack": r_stack,
+    }
+
+
+def _pi_label(m):
+    """Axis label for an integer multiple m of π: 0 → '0', ±1 → '±π', else 'mπ'."""
+    return {0: "0", 1: "π", -1: "−π"}.get(m, f"{m}π")
+
+
+def _draw_lag_matrix(ax, R, lags, n_bins, diverging=True, cmap=None, cbar_label="partial r", mark_cell=None):
+    """Render a (distance lag × place lag) coupling matrix on `ax` with theta-phase-radian axes
+    (x = distance update lag, y = place update lag; `n_bins` bins = 2π).
+
+    `R` is indexed (distance lag, place lag) on the sorted SIGNED `lags`. A blank row/col is
+    inserted at lag 0 so the signed lags map to their true radian positions (and the blank cross
+    marks the anchor); solid lines mark the anchor (0), dotted lines whole-cycle lags (±2π …).
+    With negative lags the off-diagonal quadrants read as lead/lag: upper-left (distance lag < 0,
+    place lag > 0) = distance leads place; lower-right = place leads distance. `mark_cell` is in
+    BINS. Returns the image handle."""
+    dphi = 2 * np.pi / n_bins
+    full = list(range(lags[0], lags[-1] + 1))  # contiguous lags incl. 0
+    idx = {L: i for i, L in enumerate(full)}
+    D = np.full((len(full), len(full)), np.nan)  # D[place, distance]; lag-0 row/col stays NaN
+    for i, Ld in enumerate(lags):
+        for j, Lp in enumerate(lags):
+            D[idx[Lp], idx[Ld]] = R[i, j]
+    lo, hi = (full[0] - 0.5) * dphi, (full[-1] + 0.5) * dphi
+    if diverging:
+        vlim = np.nanmax(np.abs(D)) or 1.0
+        im = ax.imshow(D, origin="lower", cmap=cmap or "RdBu_r", vmin=-vlim, vmax=vlim,
+                       extent=[lo, hi, lo, hi], aspect="auto")
+    else:
+        im = ax.imshow(D, origin="lower", cmap=cmap or "viridis_r", extent=[lo, hi, lo, hi], aspect="auto")
+    ax.set_xlabel("distance update lag (rad)")
+    ax.set_ylabel("place update lag (rad)")
+    ax.figure.colorbar(im, ax=ax, label=cbar_label, fraction=0.046, pad=0.04)
+    n_pi = int(hi // np.pi)
+    ms = list(range(-n_pi, n_pi + 1))
+    ax.set_xticks([m * np.pi for m in ms])
+    ax.set_xticklabels([_pi_label(m) for m in ms])
+    ax.set_yticks([m * np.pi for m in ms])
+    ax.set_yticklabels([_pi_label(m) for m in ms])
+    ax.axvline(0, color="k", lw=0.8, alpha=0.6)  # anchor
+    ax.axhline(0, color="k", lw=0.8, alpha=0.6)
+    for k in range(1, lags[-1] // n_bins + 1):  # whole-cycle lags at ±k·2π
+        for v in (k * 2 * np.pi, -k * 2 * np.pi):
+            ax.axvline(v, color="k", ls=":", lw=0.8, alpha=0.6)
+            ax.axhline(v, color="k", ls=":", lw=0.8, alpha=0.6)
+    if mark_cell is not None:
+        ax.scatter([mark_cell[0] * dphi], [mark_cell[1] * dphi], marker="*", s=110,
+                   facecolor="none", edgecolor="k", lw=1.2, zorder=5)
+    return im
+
+
+def plot_link_matrix(df, value="mean_r", n_bins=12, mark_cell=None, save_path=None, ax=None, **matrix_kwargs):
+    """Heatmap of the lag × lag coupling matrix (x = distance update lag, y = place update lag,
+    in theta-phase radians). `value` ∈ {"mean_r", "t", "p"}. Solid lines mark the anchor (0),
+    dotted lines whole-cycle lags (±2π); negative-lag quadrants read as lead/lag (see
+    `_draw_lag_matrix`). Pass `mark_cell=(distance_lag, place_lag)` (BINS) to star a cell.
+    Returns (ax, result-from-`link_matrix`)."""
+    res = link_matrix(df, **matrix_kwargs)
+    if ax is None:
+        _, ax = plt.subplots(1, 1, figsize=(4.7, 4))
+    _draw_lag_matrix(ax, res[value], res["lags"], n_bins, diverging=(value != "p"),
+                     cbar_label=value, mark_cell=mark_cell)
+    ax.set_title(f"distance↔place update coupling ({value}, n={res['n_subjects']})", fontsize=8)
+    if save_path:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+        ax.figure.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"saved: {save_path}")
+    return ax, res
+
+
+def plot_session_sliding_update(
+    df, n_bins=12, confounds=SLIDING_CONFOUNDS, mark_cell=None, save_path=None, axes=None
+):
+    """Session-level intuition plot for one `get_session_sliding_update_df` output: the
+    session's OWN lag × lag distance↔place partial-correlation matrix (x = distance update lag,
+    y = place update lag, both in theta-phase radians; n_bins bins = 2π) — exactly the
+    per-subject layer that `link_matrix` averages across subjects. Solid lines mark the anchor
+    (0), dotted lines whole-cycle lags (±2π); the negative-lag quadrants read as lead/lag
+    (distance-leads-place upper-left, place-leads-distance lower-right — see `_draw_lag_matrix`).
+
+    Pass `mark_cell=(distance_lag, place_lag)` (lags in BINS) to star that cell and append a
+    second panel: the raw per-(cycle, start) scatter behind it (distance vs place update),
+    annotated with raw and partial r, so a heatmap entry maps to concrete points. Off by default
+    so the summary shows no arbitrary cell.
+
+    Note: a single session is one subject, so this is descriptive (no cross-subject t-test).
+    Returns (axes, `link_matrix` result).
+    """
+    lags = _infer_lags(df)
+    res = link_matrix(df, confounds=confounds)
+    R = np.nanmean(res["r_stack"], axis=0)  # (lag_distance, lag_place); session df = one subject
+    dphi = 2 * np.pi / n_bins
+
+    n_panels = 2 if mark_cell is not None else 1
+    if axes is None:
+        _, axes = plt.subplots(1, n_panels, figsize=(4.7 * n_panels, 4))
+    axes = np.atleast_1d(axes)
+    axB = axes[0]
+    axC = axes[1] if mark_cell is not None else None
+
+    _draw_lag_matrix(axB, R, lags, n_bins, mark_cell=mark_cell)
+    axB.set_title("lag × lag coupling (session)", fontsize=9)
+
+    # optional — raw scatter behind the marked cell (update magnitudes, not lags)
+    if mark_cell is not None:
+        Ld, Lp = mark_cell
+        xcol, ycol = f"distance_L{Ld}", f"place_L{Lp}"
+        pts = df[[xcol, ycol]].dropna()
+        axC.hexbin(pts[xcol], pts[ycol], gridsize=40, cmap="magma", mincnt=1, bins="log")
+        r_raw = pearsonr(pts[xcol], pts[ycol])[0] if len(pts) > 2 else np.nan
+        r_part = R[lags.index(Ld), lags.index(Lp)]
+        axC.set_xlabel(f"distance update (lag {Ld * dphi / np.pi:.2g}π)")
+        axC.set_ylabel(f"place update (lag {Lp * dphi / np.pi:.2g}π)")
+        axC.set_title(f"marked cell: raw r={r_raw:+.3f}, partial r={r_part:+.3f}", fontsize=9)
+        axC.spines[["top", "right"]].set_visible(False)
+
+    if save_path:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+        axB.figure.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"saved: {save_path}")
+    return axes, res
+
+
+def test_sliding_session(session, cpd_scores=None, **kwargs):
+    """Run one session through the sliding-update pipeline and print a quick diagnostic."""
+    df = get_session_sliding_update_df(session, cpd_scores=cpd_scores, verbose=True, **kwargs)
+    lags = _infer_lags(df)
+    print(f"\n{session.name}  rows={len(df)}  lags={lags[0]}..{lags[-1]}")
+    for code in ("distance", "place"):
+        vals = df[[f"{code}_L{L}" for L in lags]]
+        print(f"  {code:9s} update  mean={vals.values[~np.isnan(vals.values)].mean():+.4f}  "
+              f"nan={np.isnan(vals.values).mean():.1%}")
     return df
 
 
