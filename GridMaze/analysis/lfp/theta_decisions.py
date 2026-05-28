@@ -22,6 +22,7 @@ from joblib import Parallel, delayed
 from matplotlib import colors as mcolors
 from matplotlib import pyplot as plt
 from scipy.ndimage import gaussian_filter1d
+from scipy.signal import butter, filtfilt, hilbert
 from scipy.stats import false_discovery_control, ttest_1samp, ttest_rel, zscore
 from statsmodels.stats.multitest import multipletests
 import statsmodels.formula.api as smf
@@ -97,116 +98,12 @@ def get_session_decision_times(session, decision_points_only=True):
     )
 
 
-def get_session_decision_spectrograms(
-    session,
-    window=(-3, 3),
-    freqs=np.geomspace(1, 250, 100),
-    signal_type="LFP",
-    decision_points_only=True,
-):
-    """
-    Tidy df of decision-aligned spectrograms for a single session, one row per
-    (category, frequency) with absolute time as `time` MultiIndex sub-columns.
-
-    Processing mirrors `lu._get_spectrogram_df`: whole-session wavelet transform,
-    power = |cwt|^2, z-score per frequency across session time, then ±`window`
-    slices around each decision time, averaged within category. Output schema
-    matches `_get_spectrogram_df` with `event` replaced by `category`, so the
-    existing spectrogram plotters in `event_aligned.spectrograms` carry over.
-    """
-    decision_df = get_session_decision_times(session, decision_points_only=decision_points_only)
-    if decision_df is None or decision_df.empty:
-        return None
-
-    # whole-session wavelet decomposition + per-freq zscore across session time
-    signal = lu.get_LFP(session) if signal_type == "LFP" else lu.get_CSD(session)
-    spec = zscore(np.abs(lu.compute_wavelet_transform_fft(signal, freqs, lu.FS)) ** 2, axis=1)
-
-    # slice ±window around each decision time, average within category
-    lfp_times = session.lfp_times
-    samples_before, samples_after = int(window[0] * lu.FS), int(window[1] * lu.FS)
-    n_samples = samples_after - samples_before
-    t = np.linspace(*window, n_samples)
-
-    dfs = []
-    for category, cat_df in decision_df.groupby("category"):
-        nearest = np.array([np.argmin(np.abs(lfp_times - dt)) for dt in cat_df.time.values])
-        windows = [
-            spec[:, s + samples_before : s + samples_after]
-            for s in nearest
-            if 0 <= s + samples_before and s + samples_after <= spec.shape[1]
-        ]
-        if not windows:
-            continue
-        av_df = pd.DataFrame(
-            np.array(windows).mean(axis=0),
-            columns=pd.MultiIndex.from_product([["time"], t]),
-        )
-        info_df = lu._get_info_df(session, av_df.index, signal_type=signal_type, single_channel=False)
-        info_df[("category", "")] = category
-        info_df[("frequency", "")] = freqs
-        info_df[("n_decisions", "")] = len(windows)
-        dfs.append(pd.concat([info_df, av_df], axis=1))
-    return pd.concat(dfs, axis=0).reset_index(drop=True)
-
-
-def plot_session_decision_spectrograms(
-    session_spec_df,
-    categories=("agree", "chose_structure", "chose_habit", "chose_neither"),
-    window=None,
-    axes=None,
-    vmin=None,
-    vmax=None,
-):
-    """
-    Per-session decision-aligned spectrograms, one panel per category, sharing
-    color scale so condition contrasts are comparable. Each panel title shows
-    n_decisions in that category. Input is the output of
-    `get_session_decision_spectrograms`.
-    """
-    available = [c for c in categories if c in session_spec_df.category.unique()]
-    if axes is None:
-        _, axes = plt.subplots(1, len(available), figsize=(2.5 * len(available), 3), sharey=True)
-        if len(available) == 1:
-            axes = [axes]
-
-    cat_specs = {}
-    for cat in available:
-        cdf = session_spec_df[session_spec_df.category == cat]
-        cat_specs[cat] = (
-            cdf.time.values,
-            cdf.time.columns.values.astype(np.float64),
-            cdf[("frequency", "")].values,
-            int(cdf[("n_decisions", "")].iloc[0]),
-        )
-
-    _vmin = min(s[0].min() for s in cat_specs.values()) if vmin is None else vmin
-    _vmax = max(s[0].max() for s in cat_specs.values()) if vmax is None else vmax
-
-    for i, (ax, cat) in enumerate(zip(axes, available)):
-        spec, t, freqs, n_dec = cat_specs[cat]
-        ea._plot_spectrogram(
-            spec,
-            t,
-            freqs,
-            ax=ax,
-            _min=_vmin,
-            _max=_vmax,
-            colorbar=(i == len(available) - 1),
-            y_label=(i == 0),
-        )
-        ax.set_title(f"{cat} (n={n_dec})", fontsize=9)
-        if window is not None:
-            ax.set_xlim(*window)
-    return
-
-
 def get_session_decision_traces(
     session,
     window=(-3, 3),
     smooth_sigma_s=0.1,
     theta_band=lu.THETA_RANGE,
-    freqs=np.geomspace(1, 250, 100),
+    filter_order=4,
     signal_type="LFP",
     decision_points_only=True,
 ):
@@ -216,10 +113,10 @@ def get_session_decision_traces(
     on the navigation_df 60Hz time grid -- for flexible per-category plotting
     and covariate handling around the decision.
 
-    Theta power is computed from the full session: `lu.get_LFP` ->
-    `lu.compute_wavelet_transform_fft` -> |cwt|^2 -> per-frequency z-score
-    across session time -> mean across freqs in `theta_band` -> downsampled to
-    nav rate by nearest LFP sample per nav frame.
+    Theta power is computed from the full session: `lu.get_LFP` (or `get_CSD`)
+    -> 4th-order Butterworth bandpass in `theta_band` -> |Hilbert|^2 ->
+    z-scored across session time -> downsampled to nav rate by nearest LFP
+    sample per nav frame.
 
     `smooth_sigma_s` is the Gaussian smoothing sigma (in seconds) applied to x,
     y, and distance-to-goal at the session level before slicing, to suppress
@@ -231,7 +128,7 @@ def get_session_decision_traces(
       - time_from_decision (s)
       - speed             : from `navigation_df.centroid_position` (x, y) at frame rate
       - distance_to_goal  : `navigation_df.distance_to_goal.geodesic` (geodesic steps)
-      - theta_power       : session-z-scored mean wavelet power in `theta_band`
+      - theta_power       : session-z-scored Hilbert envelope power in `theta_band`
     """
     decision_df = get_session_decision_times(session, decision_points_only=decision_points_only)
     if decision_df is None or decision_df.empty:
@@ -248,11 +145,11 @@ def get_session_decision_traces(
         x, y, dtg = (gaussian_filter1d(v, sigma_frames) for v in (x, y, dtg))
     speed = np.sqrt(np.gradient(x, nav_times) ** 2 + np.gradient(y, nav_times) ** 2)
 
-    # LFP-rate theta power, downsampled to nav grid via nearest-sample lookup
+    # LFP-rate theta power via bandpass + Hilbert envelope, then downsampled to nav grid
     lfp_signal = lu.get_LFP(session) if signal_type == "LFP" else lu.get_CSD(session)
-    spec = zscore(np.abs(lu.compute_wavelet_transform_fft(lfp_signal, freqs, lu.FS)) ** 2, axis=1)
-    theta_mask = (freqs >= theta_band[0]) & (freqs <= theta_band[1])
-    theta_power_lfp = spec[theta_mask].mean(axis=0)
+    nyq = lu.FS / 2
+    b, a = butter(filter_order, [theta_band[0] / nyq, theta_band[1] / nyq], btype="bandpass")
+    theta_power_lfp = zscore(np.abs(hilbert(filtfilt(b, a, lfp_signal))) ** 2)
     lfp_idx = np.clip(np.searchsorted(session.lfp_times, nav_times), 0, len(theta_power_lfp) - 1)
     theta_power = theta_power_lfp[lfp_idx]
 
@@ -286,41 +183,11 @@ def get_session_decision_traces(
     return pd.concat(records, ignore_index=True) if records else None
 
 
-def plot_session_decision_traces(
-    traces_df,
-    variable="speed",
-    categories=("agree", "chose_structure", "chose_habit"),
-    ax=None,
-    palette=None,
-):
-    """
-    Per-category mean ± SE peri-decision trace of `variable` ("speed" or
-    "distance_to_goal") from a `get_session_decision_traces` long df. SE is
-    computed across decisions within category at each timepoint.
-    """
-    if not isinstance(palette, dict):
-        palette = dict(zip(categories, sns.color_palette(palette or "plasma_r", n_colors=len(categories))))
-    if ax is None:
-        _, ax = plt.subplots(figsize=(4, 3))
-    ax.spines[["top", "right"]].set_visible(False)
-    for cat in [c for c in categories if c in traces_df.category.unique()]:
-        sub = traces_df[traces_df.category == cat]
-        agg = sub.groupby("time_from_decision")[variable].agg(["mean", "sem"])
-        n_dec = sub.decision_index.nunique()
-        ax.plot(agg.index, agg["mean"], color=palette[cat], lw=1.5, label=f"{cat} (n={n_dec})")
-        ax.fill_between(agg.index, agg["mean"] - agg["sem"], agg["mean"] + agg["sem"], color=palette[cat], alpha=0.2)
-    ax.axvline(0, color="k", ls="--", alpha=0.3)
-    ax.set_xlabel("decision-aligned time (s)")
-    ax.set_ylabel(variable.replace("_", " "))
-    ax.legend(fontsize=7)
-    return
-
-
 def get_decision_traces_df(
     window=(-3, 3),
     smooth_sigma_s=0.1,
     theta_band=lu.THETA_RANGE,
-    freqs=np.geomspace(1, 250, 100),
+    filter_order=4,
     signal_type="LFP",
     decision_points_only=True,
     maze_names=("maze_1", "maze_2"),
@@ -331,9 +198,11 @@ def get_decision_traces_df(
     """
     Cross-session long df of decision traces: late sessions on the requested
     mazes (default maze_1 + maze_2) across all subjects, concatenating each
-    session's `get_session_decision_traces` output. If the cached parquet at
-    `RESULTS_DIR/decision_traces_df.parquet` exists and `save=False`, the df is
-    loaded from disk; otherwise it is computed (and saved if `save=True`).
+    session's `get_session_decision_traces` output. The cache path includes
+    `signal_type` so LFP and CSD runs save / load separately
+    (`RESULTS_DIR/decision_traces_df_{signal_type}.parquet`). If the cached
+    parquet exists and `save=False`, it is loaded from disk; otherwise the df
+    is computed (and saved if `save=True`).
 
     Sessions are loaded and processed one (subject, maze) group at a time --
     each group's sessions are released before the next group loads. Within a
@@ -341,7 +210,7 @@ def get_decision_traces_df(
     serially one-at-a-time (`n_jobs=False`/None/0), bypassing joblib entirely.
     Use the serial path if joblib workers are leaking memory.
     """
-    save_path = RESULTS_DIR / "decision_traces_df.parquet"
+    save_path = RESULTS_DIR / f"decision_traces_df_{signal_type}.parquet"
     if save_path.exists() and not save:
         if verbose:
             print(f"loading cached traces df from {save_path}")
@@ -353,7 +222,7 @@ def get_decision_traces_df(
             window=window,
             smooth_sigma_s=smooth_sigma_s,
             theta_band=theta_band,
-            freqs=freqs,
+            filter_order=filter_order,
             signal_type=signal_type,
             decision_points_only=decision_points_only,
         )
