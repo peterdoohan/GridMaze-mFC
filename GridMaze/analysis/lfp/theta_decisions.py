@@ -11,16 +11,20 @@ so they can be used directly as event times for LFP wavelet analyses.
 """
 
 # %% Imports
+import json
 from itertools import combinations
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from joblib import Parallel, delayed
 from matplotlib import colors as mcolors
 from matplotlib import pyplot as plt
 from scipy.ndimage import gaussian_filter1d
-from scipy.stats import ttest_rel, zscore
+from scipy.stats import false_discovery_control, ttest_1samp, ttest_rel, zscore
 from statsmodels.stats.multitest import multipletests
+import statsmodels.formula.api as smf
 
 from GridMaze.analysis.core import get_sessions as gs
 from GridMaze.analysis.event_aligned import spectrograms as ea
@@ -29,6 +33,13 @@ from GridMaze.analysis.navigation_strategies import comparisons as sc
 from GridMaze.analysis.navigation_strategies import get_input_data as gid
 
 # %% Global Variables
+from GridMaze.paths import EXPERIMENT_INFO_PATH, RESULTS_PATH
+
+RESULTS_DIR = RESULTS_PATH / "lfp"
+
+with open(EXPERIMENT_INFO_PATH / "subject_IDs.json", "r") as _f:
+    SUBJECT_IDS = json.load(_f)
+
 FRAME_RATE = 60  # navigation_df sampling rate (Hz)
 
 # %% Functions
@@ -190,11 +201,25 @@ def plot_session_decision_spectrograms(
     return
 
 
-def get_session_decision_traces(session, window=(-3, 3), smooth_sigma_s=0.1, decision_points_only=True):
+def get_session_decision_traces(
+    session,
+    window=(-3, 3),
+    smooth_sigma_s=0.1,
+    theta_band=lu.THETA_RANGE,
+    freqs=np.geomspace(1, 250, 100),
+    signal_type="LFP",
+    decision_points_only=True,
+):
     """
     Long-format df with one row per (decision, peri-decision timepoint), carrying
-    speed and geodesic distance-to-goal values per frame. Use for flexible
-    per-category plotting of either variable around the decision.
+    speed, geodesic distance-to-goal, and LFP theta-band power per frame -- all
+    on the navigation_df 60Hz time grid -- for flexible per-category plotting
+    and covariate handling around the decision.
+
+    Theta power is computed from the full session: `lu.get_LFP` ->
+    `lu.compute_wavelet_transform_fft` -> |cwt|^2 -> per-frequency z-score
+    across session time -> mean across freqs in `theta_band` -> downsampled to
+    nav rate by nearest LFP sample per nav frame.
 
     `smooth_sigma_s` is the Gaussian smoothing sigma (in seconds) applied to x,
     y, and distance-to-goal at the session level before slicing, to suppress
@@ -206,11 +231,13 @@ def get_session_decision_traces(session, window=(-3, 3), smooth_sigma_s=0.1, dec
       - time_from_decision (s)
       - speed             : from `navigation_df.centroid_position` (x, y) at frame rate
       - distance_to_goal  : `navigation_df.distance_to_goal.geodesic` (geodesic steps)
+      - theta_power       : session-z-scored mean wavelet power in `theta_band`
     """
     decision_df = get_session_decision_times(session, decision_points_only=decision_points_only)
     if decision_df is None or decision_df.empty:
         return None
 
+    # nav-rate variables (speed, distance_to_goal)
     nav = session.navigation_df
     nav_times = nav[("time", "")].values
     x = nav[("centroid_position", "x")].values
@@ -220,6 +247,14 @@ def get_session_decision_traces(session, window=(-3, 3), smooth_sigma_s=0.1, dec
         sigma_frames = smooth_sigma_s * FRAME_RATE
         x, y, dtg = (gaussian_filter1d(v, sigma_frames) for v in (x, y, dtg))
     speed = np.sqrt(np.gradient(x, nav_times) ** 2 + np.gradient(y, nav_times) ** 2)
+
+    # LFP-rate theta power, downsampled to nav grid via nearest-sample lookup
+    lfp_signal = lu.get_LFP(session) if signal_type == "LFP" else lu.get_CSD(session)
+    spec = zscore(np.abs(lu.compute_wavelet_transform_fft(lfp_signal, freqs, lu.FS)) ** 2, axis=1)
+    theta_mask = (freqs >= theta_band[0]) & (freqs <= theta_band[1])
+    theta_power_lfp = spec[theta_mask].mean(axis=0)
+    lfp_idx = np.clip(np.searchsorted(session.lfp_times, nav_times), 0, len(theta_power_lfp) - 1)
+    theta_power = theta_power_lfp[lfp_idx]
 
     samples_before, samples_after = int(window[0] * FRAME_RATE), int(window[1] * FRAME_RATE)
     t = np.linspace(*window, samples_after - samples_before)
@@ -244,6 +279,7 @@ def get_session_decision_traces(session, window=(-3, 3), smooth_sigma_s=0.1, dec
                     "time_from_decision": t,
                     "speed": speed[start:end],
                     "distance_to_goal": dtg[start:end],
+                    "theta_power": theta_power[start:end],
                 }
             )
         )
@@ -283,35 +319,243 @@ def plot_session_decision_traces(
 def get_decision_traces_df(
     window=(-3, 3),
     smooth_sigma_s=0.1,
+    theta_band=lu.THETA_RANGE,
+    freqs=np.geomspace(1, 250, 100),
+    signal_type="LFP",
     decision_points_only=True,
     maze_names=("maze_1", "maze_2"),
+    n_jobs=False,
+    save=False,
     verbose=False,
 ):
     """
     Cross-session long df of decision traces: late sessions on the requested
     mazes (default maze_1 + maze_2) across all subjects, concatenating each
-    session's `get_session_decision_traces` output.
+    session's `get_session_decision_traces` output. If the cached parquet at
+    `RESULTS_DIR/decision_traces_df.parquet` exists and `save=False`, the df is
+    loaded from disk; otherwise it is computed (and saved if `save=True`).
+
+    Sessions are loaded and processed one (subject, maze) group at a time --
+    each group's sessions are released before the next group loads. Within a
+    group, sessions are processed either via joblib (`n_jobs` workers > 0) or
+    serially one-at-a-time (`n_jobs=False`/None/0), bypassing joblib entirely.
+    Use the serial path if joblib workers are leaking memory.
     """
-    sessions = gs.get_maze_sessions(
-        subject_IDs="all",
-        maze_names=list(maze_names),
-        days_on_maze="late",
-        with_data=["navigation_df", "trials_df"],
-        must_have_data=True,
-    )
-    dfs = []
-    for session in sessions:
+    save_path = RESULTS_DIR / "decision_traces_df.parquet"
+    if save_path.exists() and not save:
         if verbose:
-            print(f"processing {session.name}")
-        traces = get_session_decision_traces(
+            print(f"loading cached traces df from {save_path}")
+        return pd.read_parquet(save_path)
+
+    def _run(session):
+        return get_session_decision_traces(
             session,
             window=window,
             smooth_sigma_s=smooth_sigma_s,
+            theta_band=theta_band,
+            freqs=freqs,
+            signal_type=signal_type,
             decision_points_only=decision_points_only,
         )
-        if traces is not None:
-            dfs.append(traces)
-    return pd.concat(dfs, ignore_index=True) if dfs else None
+
+    all_dfs = []
+    for subject in SUBJECT_IDS:
+        for maze in maze_names:
+            if verbose:
+                print(f"processing {subject} / {maze}")
+            sessions = gs.get_maze_sessions(
+                subject_IDs=[subject],
+                maze_names=[maze],
+                days_on_maze="late",
+                with_data=[
+                    "navigation_df",
+                    "trials_df",
+                    "lfp_times",
+                    "lfp_signal",
+                    "lfp_metrics",
+                    "cluster_metrics",
+                ],
+                must_have_data=True,
+            )
+            if n_jobs:
+                dfs = Parallel(n_jobs=n_jobs)(delayed(_run)(session) for session in sessions)
+            else:
+                dfs = [_run(session) for session in sessions]
+            all_dfs.extend(d for d in dfs if d is not None)
+    if not all_dfs:
+        return None
+    traces_df = pd.concat(all_dfs, ignore_index=True)
+    if save:
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        if verbose:
+            print(f"saving traces df to {save_path}")
+        traces_df.to_parquet(save_path)
+    return traces_df
+
+
+def residualize_traces(traces_df, target="theta_power", covariates=("speed",), by_subject=True):
+    """
+    Linearly regress `target` on `covariates` at each `time_from_decision` (per
+    subject if `by_subject=True`, else pooled across subjects) and return
+    `traces_df` with a new `{target}_resid` column carrying the residuals. Use
+    to remove movement covariates (default: `speed`) from neural signals
+    (default: `theta_power`) before category contrasts.
+    """
+    df = traces_df.copy()
+    new_col = f"{target}_resid"
+    cov_list = list(covariates)
+    group_keys = ["subject_ID", "time_from_decision"] if by_subject else ["time_from_decision"]
+
+    def _residualize(g):
+        y = g[target].values
+        X = g[cov_list].values
+        mask = ~(np.isnan(y) | np.isnan(X).any(axis=1))
+        out = np.full(len(y), np.nan)
+        if mask.sum() >= len(cov_list) + 2:
+            X_design = np.column_stack([np.ones(mask.sum()), X[mask]])
+            beta, *_ = np.linalg.lstsq(X_design, y[mask], rcond=None)
+            out[mask] = y[mask] - X_design @ beta
+        return pd.Series(out, index=g.index)
+
+    df[new_col] = df.groupby(group_keys, sort=False, group_keys=False).apply(_residualize)
+    return df
+
+
+def regress_traces(
+    traces_df,
+    formula="theta_power ~ speed + distance_to_goal + choice_alignment",
+    standardize=("speed", "distance_to_goal", "choice_alignment"),
+    time_window=(-1, 1),
+    downsample_to_hz=None,
+    fdr_across_time=True,
+    verbose=False,
+):
+    """ """
+    traces_df = traces_df.copy()
+    traces_df["choice_alignment"] = traces_df.category.map(
+        {"chose_structure": 1, "chose_habit": -1, "chose_neither": np.nan, "agree": np.nan}
+    )
+    if standardize:
+        for col in standardize:
+            traces_df[col] = traces_df.groupby("subject_ID")[col].transform(lambda x: (x - x.mean()) / x.std())
+
+    all_times = np.sort(traces_df.time_from_decision.unique())
+    if time_window is not None:
+        all_times = all_times[(all_times >= time_window[0]) & (all_times <= time_window[1])]
+    if downsample_to_hz is not None:
+        step = max(1, int(round(FRAME_RATE / downsample_to_hz)))
+        times = all_times[::step]
+    else:
+        times = all_times
+
+    coefs_rows = []
+    for subject in traces_df.subject_ID.unique():
+        if verbose:
+            print(f"regressing {subject}")
+        sub_all = traces_df[traces_df.subject_ID == subject]
+        for t in times:
+            sub_t = sub_all[sub_all.time_from_decision == t]
+            if len(sub_t) < 5:
+                continue
+            try:
+                fit = smf.ols(formula, data=sub_t).fit()
+            except Exception as e:
+                if verbose:
+                    print(f"  fit failed at t={t}: {e}")
+                continue
+            for predictor, beta in fit.params.items():
+                coefs_rows.append(
+                    {
+                        "subject_ID": subject,
+                        "time_from_decision": float(t),
+                        "predictor": predictor,
+                        "beta": float(beta),
+                    }
+                )
+    coefs_df = pd.DataFrame(coefs_rows)
+
+    pvals_rows = []
+    for predictor in coefs_df.predictor.unique():
+        pivot = coefs_df[coefs_df.predictor == predictor].pivot(
+            index="subject_ID", columns="time_from_decision", values="beta"
+        )
+        result = ttest_1samp(pivot.values, 0, axis=0, nan_policy="omit")
+        ts, ps = np.asarray(result.statistic), np.asarray(result.pvalue)
+        p_fdr = np.full_like(ps, np.nan, dtype=float)
+        finite = np.isfinite(ps)
+        if finite.any():
+            p_fdr[finite] = false_discovery_control(ps[finite]) if fdr_across_time else ps[finite]
+        n_subj = pivot.notna().sum(axis=0).values
+        for tcol, t_, p_raw_, p_fdr_, n_ in zip(pivot.columns, ts, ps, p_fdr, n_subj):
+            pvals_rows.append(
+                {
+                    "time_from_decision": float(tcol),
+                    "predictor": predictor,
+                    "t": float(t_) if np.isfinite(t_) else np.nan,
+                    "p_raw": float(p_raw_) if np.isfinite(p_raw_) else np.nan,
+                    "p_fdr": float(p_fdr_) if np.isfinite(p_fdr_) else np.nan,
+                    "n_subjects": int(n_),
+                    "significant": bool(np.isfinite(p_fdr_) and p_fdr_ < 0.05),
+                }
+            )
+    pvals_df = pd.DataFrame(pvals_rows)
+    return coefs_df, pvals_df
+
+
+def plot_regression_betas(coefs_df, pvals_df, predictors=None, alpha=0.05, plot_intercept=False, ax=None, palette=None):
+    """
+    Mean ± SE beta across subjects per predictor over `time_from_decision`,
+    one line per predictor, with FDR-corrected significance markers drawn as
+    colored horizontal segments above the traces (one row per predictor).
+    Input: `coefs_df` and `pvals_df` from `regress_traces`.
+
+    `plot_intercept=False` (default) hides the Intercept row; set True to
+    include it. Explicit `predictors=[...]` overrides both.
+    """
+    if predictors is None:
+        predictors = list(coefs_df.predictor.unique())
+        if not plot_intercept:
+            predictors = [p for p in predictors if p != "Intercept"]
+    if not isinstance(palette, dict):
+        palette = dict(zip(predictors, sns.color_palette(palette or "plasma_r", n_colors=len(predictors))))
+    if ax is None:
+        _, ax = plt.subplots(figsize=(6, 4))
+    ax.spines[["top", "right"]].set_visible(False)
+
+    # mean ± SE beta over time, one line per predictor
+    for pred in predictors:
+        sub = coefs_df[coefs_df.predictor == pred]
+        agg = sub.groupby("time_from_decision").beta.agg(["mean", "sem"])
+        ax.plot(agg.index, agg["mean"], color=palette[pred], lw=1.5, label=pred)
+        ax.fill_between(agg.index, agg["mean"] - agg["sem"], agg["mean"] + agg["sem"], color=palette[pred], alpha=0.2)
+    ax.axhline(0, color="k", lw=0.5)
+    ax.axvline(0, color="k", ls="--", alpha=0.3)
+    ax.set_xlabel("decision-aligned time (s)")
+    ax.set_ylabel("beta")
+    ax.legend(fontsize=7, loc="best")
+
+    # FDR-significance overlay rows (one per predictor)
+    times = np.sort(coefs_df.time_from_decision.unique())
+    seg_w = float(np.median(np.diff(times))) if len(times) > 1 else 0.1
+    ymin, ymax = ax.get_ylim()
+    row_h = (ymax - ymin) * 0.05
+    for i, pred in enumerate(predictors):
+        sig = pvals_df[(pvals_df.predictor == pred) & (pvals_df.p_fdr < alpha)]
+        y = ymax + row_h * (i + 1)
+        for _, row in sig.iterrows():
+            ax.hlines(
+                y,
+                row.time_from_decision - seg_w / 2,
+                row.time_from_decision + seg_w / 2,
+                color=palette[pred],
+                lw=3,
+            )
+        label = pred[:14] + "…" if len(pred) > 14 else pred
+        ax.text(
+            times.max() + (times.max() - times.min()) * 0.02, y, label, va="center", fontsize=6, color=palette[pred]
+        )
+    ax.set_ylim(ymin, ymax + row_h * (len(predictors) + 1))
+    return ax
 
 
 def test_decision_traces_pairwise(
