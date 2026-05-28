@@ -318,6 +318,7 @@ def get_init_df(
         _df = pd.DataFrame(index=locs.index)
         _df[("trial", "")] = t
         _df[("trial_unique_ID", "")] = gs.get_session_name(session_info) + f"_trial{t}"
+        _df[("time", "")] = times.values  # absolute session time (aligns with lfp_times / trials_df.time)
         _df[("time_in_trial", "")] = times.sub(start_time)
         _df[("goal", "")] = trials_df.loc[t, ("goal", "")]
         _df[("location", "")] = locs.values
