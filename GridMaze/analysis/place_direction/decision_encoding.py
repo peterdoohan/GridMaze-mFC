@@ -59,6 +59,8 @@ def get_session_decision_aligned_pd_encoding(
     max_steps_to_goal=30,
     include_multi_units=False,
     alpha=1.0,
+    alpha_range=np.logspace(-3, 3, 10),
+    n_inner_folds=5,
     categories=("agree", "chose_structure", "chose_habit"),
     random_state=0,
     verbose=False,
@@ -67,10 +69,14 @@ def get_session_decision_aligned_pd_encoding(
     Fit per-cluster Poisson GLMs (null = speed; full = speed + 30 PD-PCs) under trial-CV
     and score held-out bins at offsets ± `window` around each decision arrival time.
 
+    `alpha` can be a scalar (fixed regularisation) or the string `"opt"`, in which case
+    each cluster's α is picked by inner k-fold CV (`n_inner_folds` folds over training
+    trials) over `alpha_range`, independently for null and full models. Scoring uses
+    `PoissonRegressor.score` (pseudo-D²).
+
     Returns
     -------
     summary_df : long-form per (cluster_unique_ID, category, offset) with d2, n_bins, n_decisions
-    samples_df : per-bin records (cluster, decision, offset, y, mu_full, mu_null) for re-aggregation
     """
     # 1) PD bases: all OTHER same-maze sessions (cached, see bases.get_pd_heatmaps_df)
     bases_df = pdb.get_session_pd_bases(session, n_bases=n_bases, dim_red="pca")
@@ -130,6 +136,9 @@ def get_session_decision_aligned_pd_encoding(
             offsets_s=offsets_s,
             offsets_bins=offsets_bins,
             alpha=alpha,
+            alpha_range=alpha_range,
+            n_inner_folds=n_inner_folds,
+            random_state=random_state,
             verbose=verbose,
         )
         for i in range(n_folds)
@@ -234,6 +243,9 @@ def _process_fold(
     offsets_s,
     offsets_bins,
     alpha,
+    alpha_range,
+    n_inner_folds,
+    random_state,
     verbose,
 ):
     """Fit null & full Poisson GLMs per cluster on train bins; score held-out test bins
@@ -242,6 +254,9 @@ def _process_fold(
     Train/test masks are built by trial number: `train_trials = all_trials - test_trials`.
     Bins with NaN trial label (inter-trial filler) match neither set, so they're
     excluded from train and from scoring.
+
+    If `alpha == "opt"`, each cluster's α is selected by inner k-fold CV over training
+    trials (`_search_alpha_per_cluster`), independently for null and full models.
     """
     if verbose:
         print(f"  fold {fold}")
@@ -262,15 +277,29 @@ def _process_fold(
     in_test_trial = np.isin(bin_trial_of_grid, test_trials)
     valid = in_range & in_test_trial
 
+    # per-cluster alpha: fixed scalar or inner-CV searched
+    if alpha == "opt":
+        if verbose:
+            print(f"    inner-CV α search (fold {fold})")
+        alpha_null_per_cluster = _search_alpha_per_cluster(
+            X_null, Y, train_trials, bin_trials, alpha_range, n_inner_folds, random_state + fold,
+        )
+        alpha_full_per_cluster = _search_alpha_per_cluster(
+            X_full, Y, train_trials, bin_trials, alpha_range, n_inner_folds, random_state + fold,
+        )
+    else:
+        alpha_null_per_cluster = np.full(len(cluster_unique_IDs), float(alpha))
+        alpha_full_per_cluster = np.full(len(cluster_unique_IDs), float(alpha))
+
     rows = []
     for c_idx, cuid in enumerate(cluster_unique_IDs):
         y_train = Y[train_mask, c_idx]
         # null: intercept + speed
-        null_model = PoissonRegressor(alpha=alpha, max_iter=10_000)
+        null_model = PoissonRegressor(alpha=alpha_null_per_cluster[c_idx], max_iter=10_000)
         null_model.fit(X_null[train_mask], y_train)
         mu_null = null_model.predict(X_null)
         # full: intercept + speed + PD bases
-        full_model = PoissonRegressor(alpha=alpha, max_iter=10_000)
+        full_model = PoissonRegressor(alpha=alpha_full_per_cluster[c_idx], max_iter=10_000)
         full_model.fit(X_full[train_mask], y_train)
         mu_full = full_model.predict(X_full)
         # collect per-(decision, offset) records
@@ -296,6 +325,34 @@ def _process_fold(
                     }
                 )
     return pd.DataFrame(rows)
+
+
+def _search_alpha_per_cluster(
+    X, Y, train_trials, bin_trials, alpha_range, n_inner_folds, random_state,
+):
+    """Inner k-fold CV search for the best α per cluster on the outer fold's
+    training bins.
+
+    Splits `train_trials` into `n_inner_folds`, fits PoissonRegressor at each α in
+    `alpha_range`, accumulates `PoissonRegressor.score` (pseudo-D²) across inner
+    folds, and picks the α maximising mean inner-fold score per cluster.
+
+    Returns: 1D array of optimal α values, length = Y.shape[1].
+    """
+    rng = np.random.default_rng(random_state)
+    inner_test_per_fold = np.array_split(rng.permutation(train_trials), n_inner_folds)
+    n_clusters = Y.shape[1]
+    scores = np.zeros((n_clusters, len(alpha_range)))
+    for inner_test_trials in inner_test_per_fold:
+        inner_train_trials = np.setdiff1d(train_trials, inner_test_trials)
+        itr_mask = np.isin(bin_trials, inner_train_trials)
+        ite_mask = np.isin(bin_trials, inner_test_trials)
+        for a_i, alpha in enumerate(alpha_range):
+            for c in range(n_clusters):
+                m = PoissonRegressor(alpha=alpha, max_iter=10_000)
+                m.fit(X[itr_mask], Y[itr_mask, c])
+                scores[c, a_i] += m.score(X[ite_mask], Y[ite_mask, c])
+    return alpha_range[scores.argmax(axis=1)]
 
 
 def _aggregate_to_d2(samples_df):
