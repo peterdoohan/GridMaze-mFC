@@ -23,9 +23,12 @@ theta_decisions.get_session_decision_times). Offset Δ < 0 = approach,
 
 # %% Imports
 import json
+from itertools import combinations
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib import colors as mcolors
+from scipy.stats import ttest_rel, false_discovery_control
 from sklearn.linear_model import PoissonRegressor
 
 from GridMaze.analysis.core import get_sessions as gs
@@ -282,10 +285,22 @@ def _process_fold(
         if verbose:
             print(f"    inner-CV α search (fold {fold})")
         alpha_null_per_cluster = _search_alpha_per_cluster(
-            X_null, Y, train_trials, bin_trials, alpha_range, n_inner_folds, random_state + fold,
+            X_null,
+            Y,
+            train_trials,
+            bin_trials,
+            alpha_range,
+            n_inner_folds,
+            random_state + fold,
         )
         alpha_full_per_cluster = _search_alpha_per_cluster(
-            X_full, Y, train_trials, bin_trials, alpha_range, n_inner_folds, random_state + fold,
+            X_full,
+            Y,
+            train_trials,
+            bin_trials,
+            alpha_range,
+            n_inner_folds,
+            random_state + fold,
         )
     else:
         alpha_null_per_cluster = np.full(len(cluster_unique_IDs), float(alpha))
@@ -328,7 +343,13 @@ def _process_fold(
 
 
 def _search_alpha_per_cluster(
-    X, Y, train_trials, bin_trials, alpha_range, n_inner_folds, random_state,
+    X,
+    Y,
+    train_trials,
+    bin_trials,
+    alpha_range,
+    n_inner_folds,
+    random_state,
 ):
     """Inner k-fold CV search for the best α per cluster on the outer fold's
     training bins.
@@ -494,14 +515,94 @@ def plot_session_decision_encoding(
     ax.legend(fontsize=8, frameon=False)
 
 
+def _pairwise_category_stats(summary_df, categories, alpha=0.05, fdr_across="offsets"):
+    """Per-offset paired t-tests across subjects between every pair of `categories`,
+    BH-FDR corrected.
+
+    Per-subject value at each (category, offset) is the mean d² across that subject's
+    clusters at that combination.
+
+    fdr_across:
+        "offsets"            : BH across offsets within each pair (each pair tested
+                               independently of the others).
+        "pairs_and_offsets"  : BH jointly over the full set of (pair × offset) p-values.
+        "none"               : raw p-values, no correction (p_fdr = p_raw).
+
+    Returns long df with cols: pair_a, pair_b, offset, t, p_raw, p_fdr, n_subjects, significant.
+    """
+    per_subj = summary_df.groupby(["category", "subject_ID", "offset"]).d2.mean()
+    rows = []
+    for a, b in combinations(categories, 2):
+        try:
+            a_df = per_subj.loc[a].unstack("offset")
+            b_df = per_subj.loc[b].unstack("offset")
+        except KeyError:
+            continue
+        common_subjects = a_df.index.intersection(b_df.index)
+        if len(common_subjects) < 2:
+            continue
+        a_df, b_df = a_df.loc[common_subjects], b_df.loc[common_subjects]
+        common_offsets = a_df.columns.intersection(b_df.columns)
+        for o in common_offsets:
+            paired = pd.DataFrame({"a": a_df[o], "b": b_df[o]}).dropna()
+            if len(paired) < 2:
+                t, p = np.nan, np.nan
+            else:
+                t, p = ttest_rel(paired["a"], paired["b"])
+            rows.append(
+                {
+                    "pair_a": a,
+                    "pair_b": b,
+                    "offset": float(o),
+                    "t": float(t) if np.isfinite(t) else np.nan,
+                    "p_raw": float(p) if np.isfinite(p) else np.nan,
+                    "n_subjects": int(len(common_subjects)),
+                }
+            )
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+
+    df["p_fdr"] = np.nan
+    if fdr_across == "none":
+        df["p_fdr"] = df["p_raw"]
+    elif fdr_across == "offsets":
+        for (a, b), sub in df.groupby(["pair_a", "pair_b"], sort=False):
+            mask = sub.p_raw.notna()
+            if mask.any():
+                df.loc[sub.index[mask], "p_fdr"] = false_discovery_control(sub.loc[mask, "p_raw"].values)
+    elif fdr_across == "pairs_and_offsets":
+        mask = df.p_raw.notna()
+        if mask.any():
+            df.loc[df.index[mask], "p_fdr"] = false_discovery_control(df.loc[mask, "p_raw"].values)
+    else:
+        raise ValueError(f"fdr_across must be 'offsets', 'pairs_and_offsets', or 'none'; got {fdr_across!r}")
+
+    df["significant"] = df.p_fdr.lt(alpha).fillna(False)
+    return df
+
+
 def plot_decision_encoding(
     summary_df,
-    categories=("agree", "chose_structure", "chose_habit"),
+    categories=("chose_structure", "chose_habit"),  # agree
     colors=None,
     weight_by="uniform",  # "uniform" | "n_bins"
+    stats_alpha=0.05,
+    fdr_across="offsets",  # "offsets" | "pairs_and_offsets" | "none"
     ax=None,
 ):
-    """Mean ± SEM PD-specific D² across subjects, split by category."""
+    """Mean ± SEM PD-specific D² across subjects, split by category, with pairwise
+    paired-t significance overlaid.
+
+    `fdr_across` controls multiple-comparison correction scope (see
+    `_pairwise_category_stats`):
+        "offsets"           : BH across offsets within each pair (default).
+        "pairs_and_offsets" : BH jointly over the full pair × offset grid.
+        "none"              : no correction.
+
+    Returns stats_df from `_pairwise_category_stats` for inspection.
+    """
+    category_abbr = {"agree": "A", "chose_structure": "S", "chose_habit": "H", "chose_neither": "N"}
     if ax is None:
         _, ax = plt.subplots(1, 1, figsize=(5, 3))
     if colors is None:
@@ -539,4 +640,34 @@ def plot_decision_encoding(
             color=colors.get(cat, "k"),
             alpha=0.2,
         )
+
+    # pairwise significance overlay
+    stats_df = _pairwise_category_stats(
+        summary_df, categories=categories, alpha=stats_alpha, fdr_across=fdr_across,
+    )
+    if not stats_df.empty:
+        ymin, ymax = ax.get_ylim()
+        row_h = (ymax - ymin) * 0.05
+        offsets_arr = np.sort(stats_df.offset.unique())
+        seg_w = float(np.median(np.diff(offsets_arr))) if len(offsets_arr) > 1 else 0.1
+        pairs = list(combinations(categories, 2))
+        for i, (a, b) in enumerate(pairs):
+            if a not in colors or b not in colors:
+                continue
+            pair_color = tuple(np.mean([mcolors.to_rgb(colors[a]), mcolors.to_rgb(colors[b])], axis=0))
+            y = ymax + row_h * (i + 1)
+            sig = stats_df[(stats_df.pair_a == a) & (stats_df.pair_b == b) & stats_df.significant]
+            for _, row in sig.iterrows():
+                ax.hlines(y, row.offset - seg_w / 2, row.offset + seg_w / 2, color=pair_color, lw=3)
+            ax.text(
+                offsets_arr.max() + (offsets_arr.max() - offsets_arr.min()) * 0.02,
+                y,
+                f"{category_abbr.get(a, a)}↔{category_abbr.get(b, b)}",
+                va="center",
+                fontsize=7,
+                color=pair_color,
+            )
+        ax.set_ylim(ymin, ymax + row_h * (len(pairs) + 1))
+
     ax.legend(fontsize=8, frameon=False)
+    return stats_df
