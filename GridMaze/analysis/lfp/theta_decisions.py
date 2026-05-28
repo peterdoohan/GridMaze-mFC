@@ -487,24 +487,29 @@ def test_decision_traces_pairwise(
 
 def plot_decision_traces(
     traces_df,
-    variable="speed",
-    categories=("agree", "chose_structure", "chose_habit"),
-    test_window=(-2, 0),
-    test_step=0.2,
+    variable="theta_power",
+    categories=("chose_structure", "chose_habit"),
+    window=(-1, 1),
+    show_stats=True,
+    test_window=(-1, 0),
+    test_step=0.1,
     alpha=0.05,
     ax=None,
     palette="tab10",
 ):
     """
-    Cross-subject mean ± SE peri-decision trace of `variable` ("speed" or
-    "distance_to_goal") -- per-subject mean across decisions, then mean ± SE
-    across subjects -- with pairwise paired-test significance overlaid. In each
-    `test_step`-wide bin within `test_window`, per-subject mean `variable` is
-    compared between every pair of categories via `ttest_rel`, Holm-corrected
+    Cross-subject mean ± SE peri-decision trace of `variable` -- per-subject
+    mean across decisions, then mean ± SE across subjects per category.
+    `window` sets the x-axis range (does not affect underlying aggregation).
+
+    If `show_stats=True`, pairwise paired-test significance is overlaid: in
+    each `test_step`-wide bin within `test_window`, per-subject mean `variable`
+    is compared between every pair of categories via `ttest_rel`, Holm-corrected
     across pairs within bin (see `test_decision_traces_pairwise`). Significant
     pairs are drawn as colored horizontal segments above the traces, one row
-    per category pair; segment color blends the two category colors. Returns
-    the underlying stats df.
+    per category pair; segment color blends the two category colors.
+
+    Returns the underlying stats df if `show_stats=True`, else None.
     """
     category_abbr = {"agree": "A", "chose_structure": "S", "chose_habit": "H", "chose_neither": "N"}
     if not isinstance(palette, dict):
@@ -524,6 +529,11 @@ def plot_decision_traces(
     ax.set_xlabel("decision-aligned time (s)")
     ax.set_ylabel(variable.replace("_", " "))
     ax.legend(fontsize=7)
+    if window is not None:
+        ax.set_xlim(*window)
+
+    if not show_stats:
+        return None
 
     # pairwise significance overlay
     stats_df = test_decision_traces_pairwise(
@@ -560,3 +570,4 @@ def plot_decision_traces(
             color=pair_color,
         )
     ax.set_ylim(ymin, ymax + row_h * (len(pairs) + 1))
+    return stats_df
