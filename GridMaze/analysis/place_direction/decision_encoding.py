@@ -1,18 +1,27 @@
 """
-Decision-aligned Poisson encoding of place-direction in mFC.
+Decision-aligned Poisson encoding of place-direction and distance-to-goal in mFC.
 
-Tests whether mFC encoding of place-direction is stronger at decision points where
-structure != habit and the animal chose the structure action vs the habit action
-(with structure == habit decisions as a baseline).
+Tests whether mFC encoding of place-direction (PD) and distance-to-goal (DTG) is
+stronger at decision points where structure != habit and the animal chose the
+structure action vs the habit action (with structure == habit decisions as a
+baseline).
 
-Per-cluster Poisson GLM is fit twice on training bins:
-    null : intercept + speed
-    full : intercept + speed + PD bases (top 30 PCs of place-direction tuning,
-           learned from all OTHER sessions on this maze)
-PD-specific deviance explained, per (cluster, category, offset), is computed by
-pooling test bins:
-    D2_pd = 1 - D(y, mu_full) / D(y, mu_null)
-where D is Poisson deviance and mu_full/mu_null are model predictions on held-out bins.
+Per-cluster Poisson GLM is fit four times on training bins, with speed and
+trial_phase always present as nuisance regressors:
+    null         : speed + trial_phase
+    reduced_pd   : speed + trial_phase + DTG bases
+    reduced_dtg  : speed + trial_phase + PD bases
+    full         : speed + trial_phase + PD bases + DTG bases
+
+PD bases are the top 20 PCs of place-direction tuning learned from all OTHER same-maze
+sessions; DTG bases are 8 gamma functions over the geodesic distance domain.
+Per (cluster, category, offset), held-out test bins are pooled and unique D² is
+computed by deviance ratio against the reduced models:
+    d2_place_direction  = 1 - D(y, mu_full) / D(y, mu_reduced_pd)
+    d2_distance_to_goal = 1 - D(y, mu_full) / D(y, mu_reduced_dtg)
+    d2_combined         = 1 - D(y, mu_full) / D(y, mu_null)
+The bare null adds a shared-variance diagnostic (combined ≥ pd_unique + dtg_unique
+when PD and DTG share variance).
 
 Decision events are arrival times at choice nodes (matches
 theta_decisions.get_session_decision_times). Offset Δ < 0 = approach,
@@ -38,6 +47,8 @@ from GridMaze.analysis.core import downsample as ds
 from GridMaze.analysis.core import convert
 from GridMaze.analysis.lfp import theta_decisions as tdec
 from GridMaze.analysis.place_direction import bases as pdb
+from GridMaze.analysis.distance_to_goal import bases as db
+from GridMaze.analysis.distance_to_goal import distributions as dd
 from GridMaze.maze import representations as mr
 
 # %% Global Variables
@@ -56,7 +67,11 @@ def get_session_decision_aligned_pd_encoding(
     session,
     resolution=0.2,
     window=(-3.0, 3.0),
-    n_bases=30,
+    n_bases=20,
+    dtg_metric=("distance_to_goal", "geodesic"),
+    dtg_n_bases=8,
+    dtg_basis="gamma",
+    dtg_max_distance_pct=90,
     n_folds=10,
     min_spikes=300,
     max_steps_to_goal=30,
@@ -69,22 +84,32 @@ def get_session_decision_aligned_pd_encoding(
     verbose=False,
 ):
     """
-    Fit per-cluster Poisson GLMs (null = speed; full = speed + 30 PD-PCs) under trial-CV
-    and score held-out bins at offsets ± `window` around each decision arrival time.
+    Fit per-cluster Poisson GLMs under trial-CV and score held-out bins at offsets ±
+    `window` around each decision arrival time. Four model variants are fit per
+    cluster per fold:
+        null         : speed + trial_phase
+        reduced_pd   : speed + trial_phase + DTG bases
+        reduced_dtg  : speed + trial_phase + PD bases
+        full         : speed + trial_phase + PD bases + DTG bases
+
+    Unique deviance explained per variable (PD, DTG) is derived from full vs the
+    corresponding reduced model; the bare null gives a joint-encoding sanity check.
 
     `alpha` can be a scalar (fixed regularisation) or the string `"opt"`, in which case
     each cluster's α is picked by inner k-fold CV (`n_inner_folds` folds over training
-    trials) over `alpha_range`, independently for null and full models. Scoring uses
+    trials) over `alpha_range`, independently per feature set. Scoring uses
     `PoissonRegressor.score` (pseudo-D²).
 
     Returns
     -------
-    summary_df : long-form per (cluster_unique_ID, category, offset) with d2, n_bins, n_decisions
+    summary_df : long-form, one row per (cluster_unique_ID, category, offset, variable)
+        with `variable ∈ {"place_direction", "distance_to_goal", "combined"}`, `d2`,
+        `n_bins`, `n_decisions`, plus session metadata.
     """
     # 1) PD bases: all OTHER same-maze sessions (cached, see bases.get_pd_heatmaps_df)
     bases_df = pdb.get_session_pd_bases(session, n_bases=n_bases, dim_red="pca")
 
-    # 2) Binned navigation + spike data
+    # 2) Binned navigation + spike data (all phases, DTG plumbed through)
     navigation_spikes_df = _build_navigation_spikes_df(
         session,
         resolution=resolution,
@@ -94,20 +119,43 @@ def get_session_decision_aligned_pd_encoding(
     )
     simple_maze = session.simple_maze()
 
-    # 3) Feature matrices: X_null = [speed], X_full = [speed, PD-PCs]
+    # 3) Feature blocks
+    # speed
+    X_speed = navigation_spikes_df[("speed", "")].fillna(0).values.reshape(-1, 1)
+    # phase: 3-level one-hot, drop ITI (intercept absorbs it)
+    phase_cat = pd.Categorical(
+        navigation_spikes_df[("trial_phase", "")].values,
+        categories=["ITI", "navigation", "reward_consumption"],
+    )
+    X_phase = pd.get_dummies(phase_cat, drop_first=True).values.astype(float)
+    # PD: 20-dim projection of place-direction one-hot onto PD-PC bases
     pd_strings = navigation_spikes_df.place_direction.values.astype(str)
-    X_onehot = convert.place_direction2onehot(pd_strings, simple_maze)
-    X_basis = _project_onehot_onto_bases(X_onehot, simple_maze, bases_df)
-    speed = navigation_spikes_df[("speed", "")].fillna(0).values.reshape(-1, 1)
-    X_null = speed
-    X_full = np.hstack([speed, X_basis])
+    X_pd_onehot = convert.place_direction2onehot(pd_strings, simple_maze)
+    X_pd = _project_onehot_onto_bases(X_pd_onehot, simple_maze, bases_df)
+    # DTG: gamma bases over the geodesic-distance domain (max at 90th pct)
+    dtg_max = dd.get_distance_percentile(dtg_metric, percentile=dtg_max_distance_pct)
+    dtg_basis_fn = db.distance_basis_generator(
+        n_bases=dtg_n_bases, basis=dtg_basis, btype="distance", max_distance=dtg_max,
+    )
+    dtg_values = navigation_spikes_df[dtg_metric].values.astype(float)
+    # NaN DTG (e.g. inter-trial bins) → project to 0
+    X_dtg = np.nan_to_num(dtg_basis_fn(dtg_values), nan=0.0)
+
+    # 4) Assemble feature_sets dict {name → matrix}
+    nuisance = np.hstack([X_speed, X_phase])
+    feature_sets = {
+        "null":        nuisance,
+        "reduced_pd":  np.hstack([nuisance, X_dtg]),
+        "reduced_dtg": np.hstack([nuisance, X_pd]),
+        "full":        np.hstack([nuisance, X_pd, X_dtg]),
+    }
     Y = navigation_spikes_df.spike_count.values  # (n_bins, n_clusters)
     cluster_unique_IDs = list(navigation_spikes_df.spike_count.columns)
 
-    # 4) Decision events with categories
+    # 5) Decision events with categories
     decision_df = tdec.get_session_decision_times(session, decision_points_only=True)
     if decision_df is None or decision_df.empty:
-        return pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame()
     decision_df = decision_df[decision_df.category.isin(list(categories))].reset_index(drop=True)
     # map each decision's session-clock arrival time to its bin index in navigation_spikes_df
     bin_times = navigation_spikes_df[("time", "")].values
@@ -115,12 +163,12 @@ def get_session_decision_aligned_pd_encoding(
     decision_df = decision_df.dropna(subset=["bin_idx"]).reset_index(drop=True)
     decision_df["bin_idx"] = decision_df["bin_idx"].astype(int)
 
-    # 5) Random k-fold split by trial number
+    # 6) Random k-fold split by trial number
     all_trials = navigation_spikes_df.trial.dropna().unique()
     rng = np.random.default_rng(seed=random_state)
     test_trials_per_fold = np.array_split(rng.permutation(all_trials), n_folds)
 
-    # 6) Run per-fold per-cluster fitting + scoring
+    # 7) Run per-fold per-cluster fitting + scoring
     offsets_s = np.round(np.arange(window[0], window[1] + resolution / 2, resolution), 6)
     offsets_bins = np.round(offsets_s / resolution).astype(int)
     bin_trials = navigation_spikes_df.trial.values.ravel()
@@ -132,8 +180,7 @@ def get_session_decision_aligned_pd_encoding(
             all_trials=all_trials,
             bin_trials=bin_trials,
             decision_df=decision_df,
-            X_full=X_full,
-            X_null=X_null,
+            feature_sets=feature_sets,
             Y=Y,
             cluster_unique_IDs=cluster_unique_IDs,
             offsets_s=offsets_s,
@@ -152,7 +199,7 @@ def get_session_decision_aligned_pd_encoding(
         else pd.DataFrame()
     )
 
-    # 7) Aggregate to D2 per (cluster, category, offset)
+    # 8) Aggregate to D2 per (cluster, category, offset, variable)
     summary_df = _aggregate_to_d2(samples_df)
     summary_df["subject_ID"] = session.subject_ID
     summary_df["maze_name"] = session.maze_name
@@ -170,7 +217,14 @@ def _build_navigation_spikes_df(
     min_spikes,
     include_multi_units,
 ):
-    """Bin + filter session data into a per-bin DataFrame with PD string and speed."""
+    """Bin + filter session data into a per-bin DataFrame with PD string, speed,
+    trial_phase, and distance_to_goal.
+
+    Keeps all three trial_phases (navigation, reward_consumption, ITI) so post-decision
+    bins near the goal aren't silently dropped — phase enters the model as a nuisance
+    regressor instead. `max_steps_to_goal` is applied inline only to navigation rows
+    (steps_to_goal is NaN in reward_consumption/ITI, which would otherwise drop them).
+    """
     navigation_df = session.navigation_df
     spike_counts_df = session.navigation_spike_counts_df.reset_index(drop=True)
 
@@ -186,17 +240,23 @@ def _build_navigation_spikes_df(
         navigation_df,
         spike_counts_df,
         resolution=resolution,
-        distance_metrics=[("steps_to_goal", "future")],
+        distance_metrics=[("steps_to_goal", "future"), ("distance_to_goal", "geodesic")],
     )
     df = pd.concat([ds_nav_df, ds_spikes_df], axis=1)
     df[("place_direction", "")] = df.maze_position.simple + "_" + df.cardinal_movement_direction
+    # keep all phases, no at-goal exclusion — phase is a nuisance regressor downstream
     df = filt.filter_navigation_rates_df(
         df,
-        navigation_only=True,
+        navigation_only=False,
         moving_only=False,
-        exclude_time_at_goal=True,
-        max_steps_to_goal=max_steps_to_goal,
+        exclude_time_at_goal=False,
+        max_steps_to_goal=None,
     )
+    # apply max_steps_to_goal only to navigation rows (steps_to_goal is NaN elsewhere)
+    if max_steps_to_goal is not None:
+        is_nav = df[("trial_phase", "")] == "navigation"
+        nav_far = is_nav & df.steps_to_goal.future.ge(max_steps_to_goal)
+        df = df[~nav_far].reset_index(drop=True)
     if min_spikes is not None:
         _sp = df.spike_count
         reject = _sp.columns[_sp.sum(axis=0) < min_spikes].values
@@ -239,8 +299,7 @@ def _process_fold(
     all_trials,
     bin_trials,
     decision_df,
-    X_full,
-    X_null,
+    feature_sets,
     Y,
     cluster_unique_IDs,
     offsets_s,
@@ -251,15 +310,19 @@ def _process_fold(
     random_state,
     verbose,
 ):
-    """Fit null & full Poisson GLMs per cluster on train bins; score held-out test bins
-    aligned to each test decision × offset.
+    """Fit Poisson GLMs per cluster per feature set on train bins; score held-out
+    test bins aligned to each test decision × offset.
+
+    `feature_sets` is a dict mapping name -> (n_bins, n_features) matrix. One model
+    per (cluster, feature_set) is fit on the outer-fold training bins; predictions
+    are stored per bin under `mu_{name}`.
 
     Train/test masks are built by trial number: `train_trials = all_trials - test_trials`.
     Bins with NaN trial label (inter-trial filler) match neither set, so they're
     excluded from train and from scoring.
 
     If `alpha == "opt"`, each cluster's α is selected by inner k-fold CV over training
-    trials (`_search_alpha_per_cluster`), independently for null and full models.
+    trials (`_search_alpha_per_cluster`) independently per feature set.
     """
     if verbose:
         print(f"  fold {fold}")
@@ -280,43 +343,30 @@ def _process_fold(
     in_test_trial = np.isin(bin_trial_of_grid, test_trials)
     valid = in_range & in_test_trial
 
-    # per-cluster alpha: fixed scalar or inner-CV searched
+    # per-feature-set per-cluster α: fixed scalar or inner-CV searched
     if alpha == "opt":
         if verbose:
             print(f"    inner-CV α search (fold {fold})")
-        alpha_null_per_cluster = _search_alpha_per_cluster(
-            X_null,
-            Y,
-            train_trials,
-            bin_trials,
-            alpha_range,
-            n_inner_folds,
-            random_state + fold,
-        )
-        alpha_full_per_cluster = _search_alpha_per_cluster(
-            X_full,
-            Y,
-            train_trials,
-            bin_trials,
-            alpha_range,
-            n_inner_folds,
-            random_state + fold,
-        )
+        alphas_per_set = {
+            name: _search_alpha_per_cluster(
+                X, Y, train_trials, bin_trials, alpha_range, n_inner_folds, random_state + fold,
+            )
+            for name, X in feature_sets.items()
+        }
     else:
-        alpha_null_per_cluster = np.full(len(cluster_unique_IDs), float(alpha))
-        alpha_full_per_cluster = np.full(len(cluster_unique_IDs), float(alpha))
+        alphas_per_set = {
+            name: np.full(len(cluster_unique_IDs), float(alpha)) for name in feature_sets
+        }
 
     rows = []
     for c_idx, cuid in enumerate(cluster_unique_IDs):
         y_train = Y[train_mask, c_idx]
-        # null: intercept + speed
-        null_model = PoissonRegressor(alpha=alpha_null_per_cluster[c_idx], max_iter=10_000)
-        null_model.fit(X_null[train_mask], y_train)
-        mu_null = null_model.predict(X_null)
-        # full: intercept + speed + PD bases
-        full_model = PoissonRegressor(alpha=alpha_full_per_cluster[c_idx], max_iter=10_000)
-        full_model.fit(X_full[train_mask], y_train)
-        mu_full = full_model.predict(X_full)
+        # fit each feature set for this cluster, predict over all bins
+        cluster_mu = {}
+        for name, X in feature_sets.items():
+            m = PoissonRegressor(alpha=alphas_per_set[name][c_idx], max_iter=10_000)
+            m.fit(X[train_mask], y_train)
+            cluster_mu[name] = m.predict(X)
         # collect per-(decision, offset) records
         for d_i in range(bin_grid.shape[0]):
             cat = test_decisions.category.iloc[d_i]
@@ -326,19 +376,18 @@ def _process_fold(
                 if not valid[d_i, o_i]:
                     continue
                 b = int(bin_grid[d_i, o_i])
-                rows.append(
-                    {
-                        "cluster_unique_ID": cuid,
-                        "decision_id": decision_id,
-                        "trial": trial,
-                        "category": cat,
-                        "offset": float(off_s),
-                        "y": float(Y[b, c_idx]),
-                        "mu_full": float(mu_full[b]),
-                        "mu_null": float(mu_null[b]),
-                        "fold": fold,
-                    }
-                )
+                row = {
+                    "cluster_unique_ID": cuid,
+                    "decision_id": decision_id,
+                    "trial": trial,
+                    "category": cat,
+                    "offset": float(off_s),
+                    "y": float(Y[b, c_idx]),
+                    "fold": fold,
+                }
+                for name in feature_sets:
+                    row[f"mu_{name}"] = float(cluster_mu[name][b])
+                rows.append(row)
     return pd.DataFrame(rows)
 
 
@@ -377,29 +426,44 @@ def _search_alpha_per_cluster(
 
 
 def _aggregate_to_d2(samples_df):
-    """Pool test bins within each (cluster, category, offset) and compute Poisson D²."""
+    """Pool test bins within each (cluster, category, offset) and compute unique
+    Poisson D² per variable (place_direction, distance_to_goal, combined).
+
+    Output is long-form with one row per (cluster, category, offset, variable):
+        place_direction  : 1 - D_full / D_reduced_pd
+        distance_to_goal : 1 - D_full / D_reduced_dtg
+        combined         : 1 - D_full / D_null
+    """
     if samples_df.empty:
-        return pd.DataFrame(columns=["cluster_unique_ID", "category", "offset", "d2", "n_bins", "n_decisions"])
+        return pd.DataFrame(
+            columns=["cluster_unique_ID", "category", "offset", "variable", "d2", "n_bins", "n_decisions"]
+        )
     return (
         samples_df.groupby(["cluster_unique_ID", "category", "offset"])
-        .apply(_d2_from_group, include_groups=False)
+        .apply(_d2_rows_from_group, include_groups=False)
         .reset_index()
     )
 
 
-def _d2_from_group(g):
+def _d2_rows_from_group(g):
     y = g.y.values.astype(float)
-    mu_full = np.clip(g.mu_full.values.astype(float), 1e-12, None)
-    mu_null = np.clip(g.mu_null.values.astype(float), 1e-12, None)
-    d_full = _poisson_deviance(y, mu_full)
-    d_null = _poisson_deviance(y, mu_null)
-    d2 = 1.0 - d_full / d_null if d_null > 0 else np.nan
-    return pd.Series(
+    d_null = _poisson_deviance(y, np.clip(g.mu_null.values.astype(float), 1e-12, None))
+    d_reduced_pd = _poisson_deviance(y, np.clip(g.mu_reduced_pd.values.astype(float), 1e-12, None))
+    d_reduced_dtg = _poisson_deviance(y, np.clip(g.mu_reduced_dtg.values.astype(float), 1e-12, None))
+    d_full = _poisson_deviance(y, np.clip(g.mu_full.values.astype(float), 1e-12, None))
+    n_bins = int(len(y))
+    n_decisions = int(g.decision_id.nunique())
+
+    def _d2(denom):
+        return 1.0 - d_full / denom if denom > 0 else np.nan
+
+    return pd.DataFrame(
         {
-            "d2": d2,
-            "n_bins": int(len(y)),
-            "n_decisions": int(g.decision_id.nunique()),
-        }
+            "d2": [_d2(d_reduced_pd), _d2(d_reduced_dtg), _d2(d_null)],
+            "n_bins": [n_bins] * 3,
+            "n_decisions": [n_decisions] * 3,
+        },
+        index=pd.Index(["place_direction", "distance_to_goal", "combined"], name="variable"),
     )
 
 
@@ -478,29 +542,40 @@ def get_decision_encoding_summary(
 # %% Plotting
 
 
+_VARIABLE_YLABEL = {
+    "place_direction": "PD deviance explained (D²)",
+    "distance_to_goal": "DTG deviance explained (D²)",
+    "combined": "PD+DTG deviance explained (D²)",
+}
+
+
 def plot_session_decision_encoding(
     summary_df,
+    variable="place_direction",
     categories=("agree", "chose_structure", "chose_habit"),
     colors=None,
     ax=None,
 ):
-    """Mean ± SEM PD-specific D² across clusters in one session, split by category.
+    """Mean ± SEM D² across clusters in one session, split by category.
 
-    Expects the single-session output of `get_session_decision_aligned_pd_encoding`.
+    `variable ∈ {"place_direction", "distance_to_goal", "combined"}` selects which
+    unique-variance metric to plot. Expects the single-session output of
+    `get_session_decision_aligned_pd_encoding`.
     """
     if ax is None:
         _, ax = plt.subplots(1, 1, figsize=(5, 3))
     if colors is None:
         colors = {"agree": "grey", "chose_structure": "blueviolet", "chose_habit": "hotpink"}
 
+    df_var = summary_df[summary_df.variable == variable]
     ax.spines[["top", "right"]].set_visible(False)
     ax.axvline(0, color="k", ls="--", alpha=0.5)
     ax.axhline(0, color="k", ls="--", alpha=0.5)
     ax.set_xlabel("offset from decision arrival (s)")
-    ax.set_ylabel("PD deviance explained (D²)")
+    ax.set_ylabel(_VARIABLE_YLABEL.get(variable, "D²"))
 
     for cat in categories:
-        df = summary_df[summary_df.category == cat]
+        df = df_var[df_var.category == cat]
         if df.empty:
             continue
         agg = df.groupby("offset").d2.agg(["mean", "sem"])
@@ -515,9 +590,9 @@ def plot_session_decision_encoding(
     ax.legend(fontsize=8, frameon=False)
 
 
-def _pairwise_category_stats(summary_df, categories, alpha=0.05, fdr_across="offsets"):
+def _pairwise_category_stats(summary_df, categories, variable="place_direction", alpha=0.05, fdr_across="offsets"):
     """Per-offset paired t-tests across subjects between every pair of `categories`,
-    BH-FDR corrected.
+    BH-FDR corrected. Operates on the rows of `summary_df` matching `variable`.
 
     Per-subject value at each (category, offset) is the mean d² across that subject's
     clusters at that combination.
@@ -530,7 +605,8 @@ def _pairwise_category_stats(summary_df, categories, alpha=0.05, fdr_across="off
 
     Returns long df with cols: pair_a, pair_b, offset, t, p_raw, p_fdr, n_subjects, significant.
     """
-    per_subj = summary_df.groupby(["category", "subject_ID", "offset"]).d2.mean()
+    df_var = summary_df[summary_df.variable == variable]
+    per_subj = df_var.groupby(["category", "subject_ID", "offset"]).d2.mean()
     rows = []
     for a, b in combinations(categories, 2):
         try:
@@ -584,6 +660,7 @@ def _pairwise_category_stats(summary_df, categories, alpha=0.05, fdr_across="off
 
 def plot_decision_encoding(
     summary_df,
+    variable="place_direction",
     categories=("chose_structure", "chose_habit"),  # agree
     colors=None,
     weight_by="uniform",  # "uniform" | "n_bins"
@@ -591,8 +668,11 @@ def plot_decision_encoding(
     fdr_across="offsets",  # "offsets" | "pairs_and_offsets" | "none"
     ax=None,
 ):
-    """Mean ± SEM PD-specific D² across subjects, split by category, with pairwise
-    paired-t significance overlaid.
+    """Mean ± SEM D² across subjects, split by category, with pairwise paired-t
+    significance overlaid.
+
+    `variable ∈ {"place_direction", "distance_to_goal", "combined"}` selects the
+    unique-variance metric to plot.
 
     `fdr_across` controls multiple-comparison correction scope (see
     `_pairwise_category_stats`):
@@ -608,14 +688,15 @@ def plot_decision_encoding(
     if colors is None:
         colors = {"agree": "grey", "chose_structure": "blueviolet", "chose_habit": "hotpink"}
 
+    df_var = summary_df[summary_df.variable == variable]
     ax.spines[["top", "right"]].set_visible(False)
     ax.axvline(0, color="k", ls="--", alpha=0.5)
     ax.axhline(0, color="k", ls="--", alpha=0.5)
     ax.set_xlabel("offset from decision arrival (s)")
-    ax.set_ylabel("PD deviance explained (D²)")
+    ax.set_ylabel(_VARIABLE_YLABEL.get(variable, "D²"))
 
     for cat in categories:
-        df = summary_df[summary_df.category == cat]
+        df = df_var[df_var.category == cat]
         if df.empty:
             continue
         if weight_by == "uniform":
@@ -643,7 +724,7 @@ def plot_decision_encoding(
 
     # pairwise significance overlay
     stats_df = _pairwise_category_stats(
-        summary_df, categories=categories, alpha=stats_alpha, fdr_across=fdr_across,
+        summary_df, categories=categories, variable=variable, alpha=stats_alpha, fdr_across=fdr_across,
     )
     if not stats_df.empty:
         ymin, ymax = ax.get_ylim()
