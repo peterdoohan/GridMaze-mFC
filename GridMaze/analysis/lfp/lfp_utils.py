@@ -349,6 +349,34 @@ def _remove_artifacts(signal, thres=500, window=(-100, 100)):
     return new_signal
 
 
+def get_best_theta_shank(session, theta_band=THETA_RANGE, filter_order=4, return_powers=False):
+    """
+    Pick the shank whose channel-averaged LFP carries the most theta.
+
+    For every shank with enough good contacts, the shank-averaged LFP (`get_LFP`)
+    is bandpassed to `theta_band` and its mean Hilbert-envelope power
+    (|analytic|^2 averaged over the whole session) is measured; the shank with
+    the highest mean theta power is returned. Shanks with too few good contacts
+    (raising in `_get_shank_channels_for_LFP`) are skipped.
+
+    Returns the best shank (int), or `(best_shank, {shank: theta_power})` if
+    `return_powers=True`.
+    """
+    nyq = FS / 2
+    b, a = butter(filter_order, [theta_band[0] / nyq, theta_band[1] / nyq], btype="bandpass")
+    powers = {}
+    for shank in sorted(session.lfp_metrics.contact.shank.unique()):
+        try:
+            lfp = get_LFP(session, shank=int(shank))
+        except ValueError:
+            continue
+        powers[int(shank)] = float(np.mean(np.abs(hilbert(filtfilt(b, a, lfp))) ** 2))
+    if not powers:
+        raise ValueError("No shank has enough good contacts for theta-power selection")
+    best_shank = max(powers, key=powers.get)
+    return (best_shank, powers) if return_powers else best_shank
+
+
 # %% Oscillation phase extraction
 
 
