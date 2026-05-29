@@ -293,7 +293,7 @@ def get_LFP(session, shank=3, single_channel=False, remove_artifacts=True):
         lfp = lfp_signal[:, channel_index]
     else:  # average lfp over multiple channels
         channel_ids = _get_shank_channels_for_LFP(lfp_metrics, cluster_metrics, shank)
-        channel_indices = lfp_metrics.contact.id.isin(channel_ids).index.values
+        channel_indices = lfp_metrics[lfp_metrics.contact.id.isin(channel_ids)].index.values
         lfp = lfp_signal[:, channel_indices].mean(axis=1)
     if remove_artifacts:
         lfp = _remove_artifacts(lfp, thres=500)
