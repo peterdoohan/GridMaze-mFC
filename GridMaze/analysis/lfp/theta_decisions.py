@@ -100,11 +100,12 @@ def get_session_decision_times(session, decision_points_only=True):
 
 def get_session_decision_traces(
     session,
-    window=(-3, 3),
+    window=(-1.5, 1.5),
     smooth_sigma_s=0.1,
     theta_band=lu.THETA_RANGE,
     filter_order=4,
     signal_type="LFP",
+    shank="best",
     decision_points_only=True,
 ):
     """
@@ -118,6 +119,11 @@ def get_session_decision_traces(
     z-scored across session time -> downsampled to nav rate by nearest LFP
     sample per nav frame.
 
+    `shank` selects the LFP source (only when `signal_type="LFP"`; ignored for
+    CSD): an int is forwarded straight to `lu.get_LFP`, while `"best"` picks the
+    shank with the highest mean theta power via `lu.get_best_theta_shank` (using
+    the same `theta_band` and `filter_order`).
+
     `smooth_sigma_s` is the Gaussian smoothing sigma (in seconds) applied to x,
     y, and distance-to-goal at the session level before slicing, to suppress
     frame-rate-sampling noise. Set 0 to disable.
@@ -129,6 +135,7 @@ def get_session_decision_traces(
       - speed             : from `navigation_df.centroid_position` (x, y) at frame rate
       - distance_to_goal  : `navigation_df.distance_to_goal.geodesic` (geodesic steps)
       - theta_power       : session-z-scored Hilbert envelope power in `theta_band`
+      - theta_power_raw   : raw Hilbert envelope power in `theta_band` (pre z-score)
     """
     decision_df = get_session_decision_times(session, decision_points_only=decision_points_only)
     if decision_df is None or decision_df.empty:
@@ -146,12 +153,22 @@ def get_session_decision_traces(
     speed = np.sqrt(np.gradient(x, nav_times) ** 2 + np.gradient(y, nav_times) ** 2)
 
     # LFP-rate theta power via bandpass + Hilbert envelope, then downsampled to nav grid
-    lfp_signal = lu.get_LFP(session) if signal_type == "LFP" else lu.get_CSD(session)
+    if signal_type == "LFP":
+        lfp_shank = (
+            lu.get_best_theta_shank(session, theta_band=theta_band, filter_order=filter_order)
+            if shank == "best"
+            else shank
+        )
+        lfp_signal = lu.get_LFP(session, shank=lfp_shank)
+    else:
+        lfp_signal = lu.get_CSD(session)
     nyq = lu.FS / 2
     b, a = butter(filter_order, [theta_band[0] / nyq, theta_band[1] / nyq], btype="bandpass")
-    theta_power_lfp = zscore(np.abs(hilbert(filtfilt(b, a, lfp_signal))) ** 2)
-    lfp_idx = np.clip(np.searchsorted(session.lfp_times, nav_times), 0, len(theta_power_lfp) - 1)
-    theta_power = theta_power_lfp[lfp_idx]
+    theta_power_raw_lfp = np.abs(hilbert(filtfilt(b, a, lfp_signal))) ** 2
+    theta_power_z_lfp = zscore(theta_power_raw_lfp)
+    lfp_idx = np.clip(np.searchsorted(session.lfp_times, nav_times), 0, len(theta_power_raw_lfp) - 1)
+    theta_power = theta_power_z_lfp[lfp_idx]
+    theta_power_raw = theta_power_raw_lfp[lfp_idx]
 
     samples_before, samples_after = int(window[0] * FRAME_RATE), int(window[1] * FRAME_RATE)
     t = np.linspace(*window, samples_after - samples_before)
@@ -177,6 +194,7 @@ def get_session_decision_traces(
                     "speed": speed[start:end],
                     "distance_to_goal": dtg[start:end],
                     "theta_power": theta_power[start:end],
+                    "theta_power_raw": theta_power_raw[start:end],
                 }
             )
         )
@@ -184,11 +202,12 @@ def get_session_decision_traces(
 
 
 def get_decision_traces_df(
-    window=(-3, 3),
+    window=(-1.5, 1.5),
     smooth_sigma_s=0.1,
     theta_band=lu.THETA_RANGE,
     filter_order=4,
     signal_type="LFP",
+    shank="best",
     decision_points_only=True,
     maze_names=("maze_1", "maze_2"),
     n_jobs=False,
@@ -203,6 +222,11 @@ def get_decision_traces_df(
     (`RESULTS_DIR/decision_traces_df_{signal_type}.parquet`). If the cached
     parquet exists and `save=False`, it is loaded from disk; otherwise the df
     is computed (and saved if `save=True`).
+
+    `shank` is forwarded to `get_session_decision_traces` (int → that shank;
+    `"best"` → highest-theta-power shank per session); it only affects LFP.
+    Note: it is not part of the cache filename, so different `shank` choices
+    share one parquet per `signal_type` -- pass `save=True` to overwrite.
 
     Sessions are loaded and processed one (subject, maze) group at a time --
     each group's sessions are released before the next group loads. Within a
@@ -224,6 +248,7 @@ def get_decision_traces_df(
             theta_band=theta_band,
             filter_order=filter_order,
             signal_type=signal_type,
+            shank=shank,
             decision_points_only=decision_points_only,
         )
 
@@ -293,10 +318,11 @@ def residualize_traces(traces_df, target="theta_power", covariates=("speed",), b
 def regress_traces(
     traces_df,
     formula="theta_power ~ speed + distance_to_goal + choice_alignment",
-    standardize=("speed", "distance_to_goal", "choice_alignment"),
+    standardize=("speed", "distance_to_goal"),
     time_window=(-1, 1),
     downsample_to_hz=None,
     fdr_across_time=True,
+    alternative=None,
     verbose=False,
 ):
     """ """
@@ -343,12 +369,14 @@ def regress_traces(
                 )
     coefs_df = pd.DataFrame(coefs_rows)
 
+    alternative = alternative or {}
     pvals_rows = []
     for predictor in coefs_df.predictor.unique():
         pivot = coefs_df[coefs_df.predictor == predictor].pivot(
             index="subject_ID", columns="time_from_decision", values="beta"
         )
-        result = ttest_1samp(pivot.values, 0, axis=0, nan_policy="omit")
+        alt = alternative.get(predictor, "two-sided")
+        result = ttest_1samp(pivot.values, 0, axis=0, nan_policy="omit", alternative=alt)
         ts, ps = np.asarray(result.statistic), np.asarray(result.pvalue)
         p_fdr = np.full_like(ps, np.nan, dtype=float)
         finite = np.isfinite(ps)
@@ -424,6 +452,162 @@ def plot_regression_betas(coefs_df, pvals_df, predictors=None, alpha=0.05, plot_
             times.max() + (times.max() - times.min()) * 0.02, y, label, va="center", fontsize=6, color=palette[pred]
         )
     ax.set_ylim(ymin, ymax + row_h * (len(predictors) + 1))
+    return ax
+
+
+def regress_traces_in_window(
+    traces_df,
+    window=(-0.3, -0.1),
+    formula="theta_power ~ speed + distance_to_goal + choice_alignment",
+    standardize=("speed", "distance_to_goal"),
+    alpha=0.05,
+    alternative=None,
+    verbose=False,
+):
+    """
+    Per-subject OLS regression of the signal on covariates within a single
+    peri-decision window (one fit per subject, not per timepoint). For each
+    subject, the signal and continuous covariates are averaged within `window`
+    per decision, then one OLS fit yields one beta per predictor. Second-level
+    inference: one-sample t-test per predictor of beta-across-subjects against 0.
+
+    Collapses the per-timepoint multiple-comparisons problem in `regress_traces`
+    into a single test per predictor in the chosen window. Same `choice_alignment`
+    mapping (chose_structure → +1, chose_habit → -1, chose_neither → 0,
+    agree → NaN drop) and `standardize` semantics as `regress_traces`.
+
+    Returns:
+      coefs_df: long, columns [subject_ID, predictor, beta]
+      pvals_df: long, columns [predictor, t, p, n_subjects, significant]
+    """
+    traces_df = traces_df.copy()
+    traces_df["choice_alignment"] = traces_df.category.map(
+        {"chose_structure": 1, "chose_habit": -1, "chose_neither": np.nan, "agree": np.nan}
+    )
+    if standardize:
+        for col in standardize:
+            traces_df[col] = traces_df.groupby("subject_ID")[col].transform(lambda x: (x - x.mean()) / x.std())
+
+    # restrict to window and aggregate per decision (mean over the window timepoints).
+    # NOTE: decision_index alone is only unique within a session, so the groupby key
+    # must include (maze_name, day_on_maze) to avoid lumping decisions from different
+    # sessions of the same subject that share a decision_index.
+    in_win = traces_df.time_from_decision.between(window[0], window[1])
+    numeric_cols = [c for c in ("theta_power", "theta_power_raw", "speed", "distance_to_goal") if c in traces_df.columns]
+    per_decision = (
+        traces_df[in_win]
+        .groupby(["subject_ID", "maze_name", "day_on_maze", "decision_index"])
+        .agg({**{c: "mean" for c in numeric_cols}, "choice_alignment": "first", "category": "first"})
+        .reset_index()
+    )
+
+    coefs_rows = []
+    for subject in per_decision.subject_ID.unique():
+        sub_data = per_decision[per_decision.subject_ID == subject]
+        if len(sub_data.dropna()) < 5:
+            if verbose:
+                print(f"skipping {subject}: too few decisions in window")
+            continue
+        try:
+            fit = smf.ols(formula, data=sub_data).fit()
+        except Exception as e:
+            if verbose:
+                print(f"fit failed for {subject}: {e}")
+            continue
+        for predictor, beta in fit.params.items():
+            coefs_rows.append({"subject_ID": subject, "predictor": predictor, "beta": float(beta)})
+    coefs_df = pd.DataFrame(coefs_rows)
+
+    alternative = alternative or {}
+    pvals_rows = []
+    for predictor in coefs_df.predictor.unique():
+        betas = coefs_df[coefs_df.predictor == predictor].beta.values
+        if len(betas) < 2:
+            continue
+        alt = alternative.get(predictor, "two-sided")
+        result = ttest_1samp(betas, 0, alternative=alt)
+        t, p = float(result.statistic), float(result.pvalue)
+        pvals_rows.append(
+            {
+                "predictor": predictor,
+                "t": t,
+                "p": p,
+                "alternative": alt,
+                "n_subjects": len(betas),
+                "significant": bool(p < alpha),
+            }
+        )
+    pvals_df = pd.DataFrame(pvals_rows)
+    return coefs_df, pvals_df
+
+
+def plot_window_betas(
+    coefs_df,
+    pvals_df,
+    predictors=None,
+    plot_intercept=False,
+    ax=None,
+    palette="plasma_r",
+):
+    """
+    Strip + point plot of per-subject betas per predictor from
+    `regress_traces_in_window`. Each subject's beta is a dot; mean ± SE
+    overlaid as a black point; significance asterisks (vs 0, uncorrected
+    across predictors) above each predictor based on `pvals_df.p`.
+    """
+    if predictors is None:
+        predictors = list(coefs_df.predictor.unique())
+        if not plot_intercept:
+            predictors = [p for p in predictors if p != "Intercept"]
+    if not isinstance(palette, dict):
+        palette = dict(zip(predictors, sns.color_palette(palette, n_colors=len(predictors))))
+    if ax is None:
+        _, ax = plt.subplots(figsize=(max(3, 0.9 * len(predictors)), 3.5))
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.axhline(0, color="k", lw=0.5)
+
+    plot_df = coefs_df[coefs_df.predictor.isin(predictors)]
+    sns.stripplot(
+        data=plot_df,
+        x="predictor",
+        y="beta",
+        order=predictors,
+        hue="predictor",
+        hue_order=predictors,
+        palette=palette,
+        alpha=0.6,
+        size=4,
+        jitter=True,
+        legend=False,
+        ax=ax,
+    )
+    sns.pointplot(
+        data=plot_df,
+        x="predictor",
+        y="beta",
+        order=predictors,
+        color="k",
+        errorbar="se",
+        linestyle="none",
+        markersize=8,
+        ax=ax,
+    )
+
+    # significance asterisks above each predictor
+    y_range = plot_df.beta.max() - plot_df.beta.min()
+    offset = y_range * 0.05 if y_range > 0 else 0.05
+    for i, predictor in enumerate(predictors):
+        row = pvals_df[pvals_df.predictor == predictor]
+        if row.empty:
+            continue
+        p = float(row.iloc[0].p)
+        sig = "***" if p < 0.001 else "**" if p < 0.01 else "*" if p < 0.05 else "ns"
+        pred_max = plot_df[plot_df.predictor == predictor].beta.max()
+        ax.text(i, pred_max + offset, sig, ha="center", va="bottom", fontsize=10)
+
+    ax.set_ylabel("beta")
+    ax.set_xlabel("")
+    plt.setp(ax.get_xticklabels(), rotation=20, ha="right")
     return ax
 
 
